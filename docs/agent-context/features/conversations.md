@@ -73,9 +73,13 @@ private drafts. Concurrent revision conflicts require explicit load or reapply.
 
 SVG/dashboard reuse adds bounded reactive drawing primitives and pure aggregations
 inside the same OpenUI library. Existing MiniApp drafts and document task identities
-remain unchanged; static SVG captures join current exports. Private reactive export
-snapshots and HtmlView execution remain separate phases. See the
-[rich artifact qualification](../architecture/openui-rich-artifacts-plan.md#phase-a-implementation-and-qualification-2026-10-18).
+remain unchanged; static and saved reactive SVG/chart captures join current exports.
+Explicit saved-view exports flush pending drafts and preserve private typed filters,
+table/chart selections and authorized completed results. HTML/PDF/DOCX downloads do
+not change the transcript; Create with agent sends the visible snapshot as an explicit
+new turn through the configured MCP interpreter. Editable PPTX live qualification is
+blocked by existing connector transport errors. HtmlView execution remains separately
+scoped. See the [rich artifact qualification](../architecture/openui-rich-artifacts-plan.md#phase-b-implementation-and-qualification-2026-10-18).
 
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an

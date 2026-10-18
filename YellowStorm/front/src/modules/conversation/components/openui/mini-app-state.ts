@@ -27,6 +27,28 @@ export interface MiniAppStateWrite {
   state: Record<string, unknown>;
 }
 
+type MiniAppExportGuard = (snapshot?: MiniAppStateSnapshot) => Promise<void>;
+// Lifecycle callbacks only: private state remains owned by its mounted draft hook.
+const exportGuards = new Map<string, Set<MiniAppExportGuard>>();
+function exportIdentityKey(identity: MiniAppStateIdentity): string {
+  return JSON.stringify([identity.userId, identity.conversationId, identity.messageId, identity.componentId, identity.programDigest]);
+}
+export function registerMiniAppExportGuard(identity: MiniAppStateIdentity, guard: MiniAppExportGuard): () => void {
+  const key = exportIdentityKey(identity);
+  const guards = exportGuards.get(key) ?? new Set<MiniAppExportGuard>();
+  guards.add(guard);
+  exportGuards.set(key, guards);
+  return () => {
+    guards.delete(guard);
+    if (!guards.size && exportGuards.get(key) === guards) exportGuards.delete(key);
+  };
+}
+/** Flush before fetching, then compare the authenticated snapshot before capture. */
+export async function assertMiniAppExportReady(identity: MiniAppStateIdentity, snapshot?: MiniAppStateSnapshot): Promise<void> {
+  if (snapshot) validateMiniAppSnapshot(snapshot, identity.programDigest);
+  for (const guard of exportGuards.get(exportIdentityKey(identity)) ?? []) await guard(snapshot);
+}
+
 export function validateMiniAppState(value: unknown): ReturnType<typeof typedActionData> {
   const state = typedActionData(value);
   // PostgreSQL JSONB cannot represent NUL or unpaired UTF-16 surrogates.

@@ -1,6 +1,67 @@
 import type { Message, MessageComponent } from '../types';
 import { componentToMarkdown, componentsToMarkdown, isVisualConversationComponent } from '../utils';
 import { createOpenUiTextProjector, exportPartsToMarkdown, isOpenUiProgram, projectOpenUiProgram, type OpenUiExportPart } from '../components/openui/plain-text';
+import { fetchConversationFiles, fetchMessage, fetchOpenUiAppState } from '../api';
+import { assertMiniAppExportReady, validateMiniAppSnapshot } from '../components/openui/mini-app-state';
+import type { OpenUiReactiveExportSnapshot } from '../components/openui/plain-text';
+
+/** Local downloads never modify the transcript. The explicit agent export action
+ * sends only projected visible parts through the existing authorized MCP flow. */
+async function reactiveExportState(message: Message, component: MessageComponent, actorId?: string, messages: readonly Message[] = []): Promise<OpenUiReactiveExportSnapshot | undefined> {
+  const program = String(component.data?.content);
+  if (!/\bMiniApp\s*\(/.test(program)) return undefined;
+  if (!actorId || !component.id || !message.isComplete || message.isStreaming) throw new Error('Saved private dashboard required');
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(program));
+  const programDigest = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+  const identity = { userId: actorId, conversationId: message.conversationId, messageId: message.id, componentId: component.id, programDigest };
+  await assertMiniAppExportReady(identity);
+  const snapshot = validateMiniAppSnapshot(await fetchOpenUiAppState(identity), programDigest);
+  if (snapshot.canWrite === false) throw new Error('Private dashboard access required');
+  await assertMiniAppExportReady(identity, snapshot);
+  const ownSubmissions = messages.filter(task => task.senderId === actorId && (task.interaction?.type !== 'openui'
+    || !task.interaction.appTask || task.interaction.appTask.programDigest === programDigest));
+  const result: OpenUiReactiveExportSnapshot = { reactiveState: snapshot.stateRevision === 0 ? savedViewState(message, component.id, ownSubmissions) : snapshot.state };
+  if (/\bMiniDocument\s*\(/.test(program)) {
+    result.documents = {};
+    for (let page = 1; page <= 100; page++) {
+      const files = await fetchConversationFiles(message.conversationId, { page, limit: 50 });
+      for (const file of files.documents) if (file.status === 'completed' && !file.isFolder) result.documents[file.id] = file.originalName || file.filename;
+      if (page >= files.pagination.totalPages) break;
+      if (page === 100) throw new Error('Document export pagination limit');
+    }
+  }
+  if (/\bMiniTaskResult\s*\(/.test(program)) {
+    result.taskResults = {};
+    const tasks = messages.filter(task => task.conversationId === message.conversationId && task.conversationType === 'user'
+      && task.senderId === actorId && task.interaction?.type === 'openui' && task.interaction.sourceMessageId === message.id
+      && task.interaction.componentId === component.id && task.interaction.appTask?.programDigest === programDigest)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    // Latest task per form wins, including failed/stale tasks: never fall back to
+    // an older successful result that the displayed app would no longer show.
+    const latest = new Map(tasks.map(task => [task.interaction?.type === 'openui' ? task.interaction.formName : '', task]));
+    for (const [formName, task] of latest) {
+      const interaction = task.interaction;
+      if (!formName || interaction?.type !== 'openui' || interaction.appTask?.stateRevision !== snapshot.stateRevision || !task.answerMessageId) continue;
+      const answer = await fetchMessage(message.conversationId, task.answerMessageId);
+      if (answer.conversationId !== message.conversationId || answer.id !== task.answerMessageId || answer.questionMessageId !== task.id
+        || !answer.isComplete || answer.isStreaming || ['failed', 'interrupted', 'cancelled'].includes(answer.terminalStatus ?? '')
+        || answer.components?.some(part => part.type === 'error')) continue;
+      if (answer.components?.some(part => part.type === 'text' && /\bMiniApp\s*\(/.test(String(part.data?.content)))) throw new Error('Nested interactive task result export is unsupported');
+      const { resolveOpenUiExportImage } = await import('./openui-export-assets');
+      const blocks = await buildStructuredExportBlocks([answer], { user: '', assistant: '' }, undefined, resolveOpenUiExportImage);
+      const parts: OpenUiExportPart[] = blocks.flatMap(block => block.parts ?? [{ kind: 'markdown', markdown: block.markdown }]);
+      result.taskResults[formName] = { inputs: interaction.params?.inputs as Record<string, unknown> ?? {}, parts };
+    }
+  }
+  return result;
+}
+
+async function captureExportVisual(name: string, props: Record<string, unknown>): Promise<string> {
+  const { captureOpenUiChartPng, captureOpenUiSvgPng } = await import('./docx-capture');
+  const image = await (name === 'Svg' ? captureOpenUiSvgPng(props) : captureOpenUiChartPng(name, props));
+  if (!image) throw new Error('OpenUI chart capture failed');
+  return image.dataUrl;
+}
 
 /** One conversational turn in an exported document. */
 export interface ExportBlock {
@@ -17,7 +78,7 @@ export type ExportImageResolver = (source: string, component: MessageComponent, 
 
 /** Ephemeral instructions for the existing MCP export flow. Persistent selectors
  * are preserved exactly; the authorized agent resolves them before execution. */
-export async function buildMcpExportManifest(message: Message, submissionMessages: readonly Message[] = []): Promise<{ parts: Array<OpenUiExportPart & { componentId?: string }> }> {
+export async function buildMcpExportManifest(message: Message, submissionMessages: readonly Message[] = [], actorId?: string): Promise<{ parts: Array<OpenUiExportPart & { componentId?: string }> }> {
   const parts: Array<OpenUiExportPart & { componentId?: string }> = [];
   if (message.conversationType === 'user') {
     if (message.content?.trim()) parts.push({ kind: 'markdown', markdown: message.content });
@@ -25,7 +86,8 @@ export async function buildMcpExportManifest(message: Message, submissionMessage
   }
   for (const component of message.components ?? []) {
     if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
-      parts.push(...(await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages))).map((part) => ({ ...part, componentId: component.id })));
+      const reactive = await reactiveExportState(message, component, actorId, submissionMessages);
+      parts.push(...(await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), reactive ? captureExportVisual : undefined, reactive)).map((part) => ({ ...part, componentId: component.id })));
     } else {
       if (isVisualConversationComponent(component)) throw new Error('Legacy visual MCP export is unsupported');
       const markdown = componentToMarkdown(component);
@@ -54,6 +116,7 @@ export async function buildStructuredExportBlocks(
   formatTimestamp?: (iso: string) => string,
   resolveImage?: ExportImageResolver,
   submissionMessages: readonly Message[] = messages,
+  actorId?: string,
 ): Promise<ExportBlock[]> {
   // Choose the saved branch before parsing/resolving it. An obsolete answer's
   // deleted image must not prevent exporting the replacement answer.
@@ -79,14 +142,13 @@ export async function buildStructuredExportBlocks(
     const components: MessageComponent[] = [];
     for (const component of message.components ?? []) {
       if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
-        const chartImages = new Set<string>();
-        const projectedParts = await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages), async (name, props) => {
-          const { captureOpenUiChartPng, captureOpenUiSvgPng } = await import('./docx-capture');
-          const image = await (name === 'Svg' ? captureOpenUiSvgPng(props) : captureOpenUiChartPng(name, props));
-          if (!image) throw new Error('OpenUI chart capture failed');
-          chartImages.add(image.dataUrl);
-          return image.dataUrl;
-        });
+        const reactive = await reactiveExportState(message, component, actorId, submissionMessages);
+        const chartImages = new Set<string>(Object.values(reactive?.taskResults ?? {}).flatMap(result => result.parts.flatMap(part => part.kind === 'image' ? [part.source] : [])));
+        const projectedParts = await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), async (name, props) => {
+          const source = await captureExportVisual(name, props);
+          chartImages.add(source);
+          return source;
+        }, reactive);
         for (const part of projectedParts) {
           if (part.kind !== 'image') { parts.push(part); continue; }
           if (!chartImages.has(part.source) && !resolveImage) throw new Error('OpenUI export image resolver required');

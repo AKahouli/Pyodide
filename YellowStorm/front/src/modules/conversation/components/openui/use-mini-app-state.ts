@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOpenUiAppState, saveOpenUiAppState } from '../../api';
-import { miniAppStateSignature, validateMiniAppSnapshot, validateMiniAppState } from './mini-app-state';
+import { miniAppStateSignature, registerMiniAppExportGuard, validateMiniAppSnapshot, validateMiniAppState } from './mini-app-state';
 import type { MiniAppStateIdentity } from './mini-app-state';
 
 export type MiniAppSaveStatus = 'loading' | 'saved' | 'unsaved' | 'saving' | 'error' | 'conflict' | 'readonly';
@@ -131,5 +131,18 @@ export function useMiniAppState({ identity, enabled, fallbackState = {} }: Optio
     if (!current.active || current.key !== key || current.blocked || (current.draft && miniAppStateSignature(current.draft) !== current.saved)) throw new Error('Draft is not saved');
     return { programDigest: identity.programDigest, stateRevision: current.revision };
   }, [enabled, key, identity.programDigest]);
+  useEffect(() => {
+    if (!enabled) return;
+    return registerMiniAppExportGuard(identity, async snapshot => {
+      await flush();
+      const current = session.current;
+      if (snapshot && (snapshot.canWrite === false || snapshot.programDigest !== identity.programDigest
+        || snapshot.stateRevision !== current.revision || miniAppStateSignature(snapshot.state) !== current.saved)) {
+        throw new Error('Dashboard export snapshot is no longer current');
+      }
+    });
+    // The key includes every identity field; never register another actor's guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, key, flush]);
   return { ...view, stateRevision: session.current.revision, flush, ready: view.key === key && view.ready, handleStateUpdate, reload, reapply, retry };
 }

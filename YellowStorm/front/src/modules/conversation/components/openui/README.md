@@ -223,8 +223,8 @@ start/center/end alignment. MiniText offers heading/body/caption/display roles
 and citation-aware text. Local actions remain local, document tasks stay explicit,
 and layouts preserve private autosave and saved-result identity. New programs do
 not migrate old private drafts across program digests. Static MiniText fallback
-projection retains text while excluding presentation enums; dynamic app snapshots
-remain the separately scoped export phase.
+projection retains text while excluding presentation enums; saved reactive exports
+are described below.
 
 The generated prompt exposes exactly these schemas. Full worked generation
 examples and broader visual qualification remain the next migration-map commit.
@@ -246,8 +246,8 @@ for the enclosing app and signed-in actor. It restores saved text without execut
 an action. Its inputs should match AskAgent. Host revision and dirty-state checks
 also mark any changed component snapshot stale, even when generated inputs omit a
 changed field. Cancelled/failed/interrupted partial output is not a completed result.
-The normal conversation answer retains its full content and export actions; dynamic
-mini-app snapshot export remains phase 5. No result body is stored in private drafts.
+The normal conversation answer retains its full content and export actions; matching
+completed results can join saved snapshots. No result body is stored in private drafts.
 
 ### Generation composition guidance
 
@@ -261,8 +261,8 @@ Document generation uses MiniDocument with an empty initial ID, explicit validat
 AskAgent and a MiniTaskResult with matching typed inputs. The host owns private
 autosave/status, access checks and saved-result correlation. Generation must not
 invent documents, automatically summarize, write results into drafts or recreate
-the source app when answering a task. Static answer exports remain supported;
-private dynamic snapshots remain the separately scoped phase 5.
+the source app when answering a task. Static and saved reactive exports remain
+separate from executable HTML artifacts.
 
 ### Accepted-submission fallback isolation
 
@@ -287,7 +287,7 @@ paints, spaced/comma-separated path numbers and checked transforms. Supply the
 optional final Svg title in the user's language. Null optional argument placeholders
 remain valid. Nested drawings are bounded to 200 nodes/depth 20; unsupported children
 cannot render host Image/HTML components. Static export uses the same strict SVG
-renderer and existing PNG capture flow; reactive private snapshots remain phase B.
+renderer and existing PNG capture flow, also used by saved reactive snapshots.
 
 Dashboard functions validate at execution as well as schema generation, cap arrays
 at 200 items and nested JSON at 5000 nodes/20k characters. Bucket uses UTC ISO dates,
@@ -300,4 +300,26 @@ failure behavior and must have meaningful generated empty/error presentation.
 Wrap reactive controls in the existing MiniApp. These additions own no state,
 execute no agent tasks and do not change private autosave, document selection or
 saved-result identities. See dashboard-examples.ts and the rich artifact plan for
-qualification and the deliberately separate HTML/snapshot phases.
+qualification and the separately scoped executable HTML phase.
+
+### Saved reactive export snapshots
+
+Explicit HTML/PDF/DOCX exports fetch the current actor's authenticated private
+snapshot. Mounted draft guards flush pending writes, block conflicts/errors/loading
+and verify the fetched revision/state before capture. No draft cache or shared
+program mutation is added. Revision-zero fallback uses the same actor/digest filters
+as OpenUiAnswer. The pure SDK evaluator rejects queries/mutations; it never mounts
+a Renderer or runs an action. Evaluated output is bounded to 20000 nodes/depth60.
+
+Inputs and selections project to labelled text, outputs/lists to native content,
+tables and chart data to native tables, SVG/charts to PNG. Private saved table/chart
+views take precedence. Authorized document labels and matching completed task
+results restore without rerunning tasks; missing/stale/revoked results fail explicitly.
+Nested interactive task results are unsupported. Account changes cancel delivery.
+
+Direct downloads do not modify the transcript. Existing Create with agent actions
+explicitly send projected visible parts in a new conversation turn to the configured
+MCP interpreter. PNG/JPEG data URIs are decoded directly; persistent selectors use
+the existing authorized reuse path. This can create editable text/tables/charts where
+supported, with SVG visuals as images. Live editable PPTX qualification is currently
+blocked by configured MCP transport errors; do not claim it passed.

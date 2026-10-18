@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchOpenUiAppState, saveOpenUiAppState } from '../../api';
 import { useMiniAppState } from './use-mini-app-state';
 import type { MiniAppStateIdentity, MiniAppStateSnapshot } from './mini-app-state';
-import { validateMiniAppState } from './mini-app-state';
+import { assertMiniAppExportReady, registerMiniAppExportGuard, validateMiniAppState } from './mini-app-state';
 
 vi.mock('../../api', () => ({ fetchOpenUiAppState: vi.fn(), saveOpenUiAppState: vi.fn() }));
 const identity: MiniAppStateIdentity = { userId: 'user-a', conversationId: 'conversation', messageId: 'answer', componentId: 'app', programDigest: 'digest' };
@@ -15,6 +15,65 @@ const settle = async () => { await act(async () => { await Promise.resolve(); })
 describe('private mini-app autosave', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.mocked(fetchOpenUiAppState).mockResolvedValue(snapshot()); vi.mocked(saveOpenUiAppState).mockImplementation(async (_, payload) => snapshot(payload.state, payload.expectedRevision + 1)); });
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+
+  it('flushes pending export edits, compares acknowledged state and cleans up on unmount', async () => {
+    const { result, unmount } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    act(() => result.current.handleStateUpdate({ minimum: 0, selected: false }));
+    await act(async () => { await assertMiniAppExportReady(identity); });
+    expect(saveOpenUiAppState).toHaveBeenCalledOnce();
+    await act(async () => { await assertMiniAppExportReady(identity, snapshot({ minimum: 0, selected: false }, 1)); });
+    await act(async () => { await expect(assertMiniAppExportReady(identity, snapshot({ minimum: 5 }, 1))).rejects.toThrow('no longer current'); });
+    await act(async () => { await expect(assertMiniAppExportReady(identity, snapshot({}, 0))).rejects.toThrow('no longer current'); });
+    unmount();
+    await expect(assertMiniAppExportReady(identity, snapshot({}, 0))).resolves.toBeUndefined();
+  });
+
+  it('keeps export guards isolated by actor and every source identity field', async () => {
+    const guard = vi.fn(async () => {});
+    const cleanup = registerMiniAppExportGuard(identity, guard);
+    try {
+      for (const field of ['userId', 'conversationId', 'messageId', 'componentId', 'programDigest'] as const) {
+        await assertMiniAppExportReady({ ...identity, [field]: 'other' });
+      }
+      expect(guard).not.toHaveBeenCalled();
+      await assertMiniAppExportReady(identity);
+      expect(guard).toHaveBeenCalledOnce();
+    } finally { cleanup(); }
+    await assertMiniAppExportReady(identity);
+    expect(guard).toHaveBeenCalledOnce();
+  });
+
+  it('blocks exports while loading and after a save conflict', async () => {
+    vi.mocked(fetchOpenUiAppState).mockImplementationOnce(() => new Promise(() => {}));
+    const loading = renderHook(() => useMiniAppState({ identity, enabled: true }));
+    await expect(assertMiniAppExportReady(identity)).rejects.toThrow('not writable');
+    loading.unmount();
+    const { result } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    vi.mocked(saveOpenUiAppState).mockRejectedValueOnce({ statusCode: 409 });
+    act(() => result.current.handleStateUpdate({ minimum: 10 }));
+    await act(async () => { await expect(assertMiniAppExportReady(identity)).rejects.toThrow('not saved'); });
+    await expect(assertMiniAppExportReady(identity)).rejects.toThrow('not writable');
+  });
+
+  it('rejects a fetched view when an edit was acknowledged during the fetch', async () => {
+    vi.mocked(fetchOpenUiAppState).mockResolvedValueOnce(snapshot({ minimum: 20 }, 2));
+    const { result } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    await assertMiniAppExportReady(identity);
+    const fetched = snapshot({ minimum: 20 }, 2);
+    act(() => result.current.handleStateUpdate({ minimum: 30 }));
+    await act(async () => { await expect(assertMiniAppExportReady(identity, fetched)).rejects.toThrow('no longer current'); });
+    expect(vi.mocked(saveOpenUiAppState).mock.calls[0][1].expectedRevision).toBe(2);
+  });
+
+  it('blocks readonly snapshots and failed state loads', async () => {
+    vi.mocked(fetchOpenUiAppState).mockResolvedValueOnce({ ...snapshot(), canWrite: false });
+    const readonly = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    await expect(assertMiniAppExportReady(identity)).rejects.toThrow('not writable');
+    readonly.unmount();
+    vi.mocked(fetchOpenUiAppState).mockRejectedValueOnce(new Error('offline'));
+    renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    await expect(assertMiniAppExportReady(identity)).rejects.toThrow('not writable');
+  });
 
   it('flushes before an explicit task and rejects conflicts instead of executing against an unsaved revision', async () => {
     const { result } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();

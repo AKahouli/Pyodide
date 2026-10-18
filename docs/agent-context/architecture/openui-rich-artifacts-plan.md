@@ -1,6 +1,6 @@
 # OpenUI rich dashboard and HTML artifact reuse plan
 
-Status: **phase A implemented and qualified; phases B–E proposed**.
+Status: **phase A qualified; phase B implemented, editable PPTX live qualification blocked; phases C–E proposed**.
 Assessed 2026-10-18. Complements the [mini-app plan](openui-mini-apps-plan.md)
 and [library reuse map](openui-mini-app-library-map.md); completed phases remain
 unchanged. Each implementation phase below has a separate commit and test gate.
@@ -40,7 +40,7 @@ Source evidence: `library.tsx`, `mini-app-functions.ts`, `mini-app-state.ts`,
 `use-mini-app-state.ts`, `OpenUiAnswer.tsx`, `MiniApp.tsx`, `plain-text.ts`,
 `utils/document-export.ts`, `utils/openui-export-assets.ts`, and existing backend
 state/task/file contracts. The current exporter derives accepted table/chart state;
-it does not yet materialize private reactive drafts. An iframe's internal state
+it now materializes authenticated private reactive snapshots for explicit exports. An iframe's internal state
 is also not automatically visible to OpenUI autosave.
 
 ## Governing decisions and proposed boundary
@@ -195,7 +195,7 @@ The fixture also exercised the real static projection/capture/HTML download pipe
 zero-valued SVG text and caption; no raw program or remote image resolver. PNG
 visually inspected. Temporary fixture sources are removed before commit.
 
-Private dynamic exports remain rejected explicitly and belong to phase B; this is
+At the phase A commit, private dynamic exports remained rejected explicitly; phase B below extends that path. This is
 not an interactive HTML artifact or a new editable PPTX qualification. Existing
 chart/table/image/report/slide pipelines are covered by compatibility tests.
 The prompt is generated from mounted schemas and parsed examples, 59390 characters,
@@ -207,3 +207,56 @@ Qualification: 189 distinct frontend tests across 19 suites, TypeScript and the
 production build passed. Independent source review accepted the corrected implementation.
 Final documentation review and commit evidence are recorded in the checkpoint;
 acceptance gates above remain future requirements for phases B–E.
+
+## Phase B implementation and qualification (2026-10-18)
+
+User authorized exporting saved reactive dashboard views, HTML/PDF/DOCX/editable
+PPTX checks after reload and a separate commit. The existing export utilities and
+private state hook own this change; no new persistence, service or runtime.
+ADR-0025 and ADR-0017/0018 remain unchanged.
+
+On explicit export, mounted identity-scoped callbacks flush pending autosave and
+reject loading, errors, conflicts and read-only drafts. Authenticated GET then
+freezes the program digest, library version, revision and typed state. A second
+guard verifies the returned snapshot against the acknowledged draft before capture.
+Callbacks are removed on unmount and never cache private state. Delivery checks
+the current actor again. Unmounted sources use the same authenticated state API;
+revision zero uses the same actor/digest-scoped accepted fallback as the renderer.
+No public share or stored assistant program is modified.
+
+The installed OpenUI pure evaluator materializes registered components/functions
+with bounded typed state; queries and mutations are rejected before evaluation.
+No Renderer/query manager, agent action or task is started during snapshot capture.
+Saved private table/chart selections override legacy accepted views. Native text,
+tables and chart data remain structured; SVG/chart visuals are PNG captures, not
+editable vector objects. Input labels/selections are included, local action buttons
+are omitted. This is a static saved-view export, not executable HTML.
+
+Document labels come from the existing authenticated conversation-file API. Saved
+task results require matching actor, source/component/digest, form, revision and
+typed inputs, plus an authenticated completed answer belonging to the task. Stale,
+failed, revoked or unavailable results fail explicitly without rerunning inference.
+Nested interactive result exports remain unsupported and fail explicitly.
+
+Local HTML/PDF/DOCX downloads do not write private draft content into the transcript.
+Choosing the existing **Create DOCX/PPTX with agent** action explicitly submits the
+projected visible view as a new conversation turn to the configured MCP workflow;
+it therefore shares that exported content with the conversation's participants.
+Raw private state is not attached. Captured PNG/JPEG data URIs are decoded directly
+in the sandbox; persistent image selectors retain their existing authorized reuse
+path. An unavailable connector never triggers substitution or image regeneration.
+
+Live sales/operations conversation `ae30ed8cb3e7a9afa00b872f` restored threshold
+100 and smoothing window 3 after reload. Downloaded HTML embeds both PNGs; DOCX
+contains native text plus captured visuals and was rendered with LibreOffice;
+the user-saved PDF contains two pages with both diagrams and matching values
+North 120 and latest 6.7/5.0/4.7. Every rendered page was inspected. Automated
+coverage additionally checks table sort/filter/selected rows, chart series/point
+selection including zero, typed false/null, revision-zero actor fallback,
+conflicts/pending writes, access rejection and completed saved document results.
+
+Editable PPTX live qualification is **BLOCKED**: the existing configured MCP
+interpreter reported startup/status HTTP transport errors. The projected manifest
+is covered by tests, but this is not evidence of a successfully downloaded editable
+PowerPoint. Test/build/review counts, retry outcome and the separate commit are
+recorded in the delivery checkpoint. No four-format end-to-end pass is claimed.

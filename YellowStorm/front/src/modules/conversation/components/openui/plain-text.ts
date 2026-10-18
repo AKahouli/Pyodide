@@ -2,6 +2,10 @@ import type { MessageComponent } from '../../types';
 import { splitReportProgram } from './report-program';
 import { getChartData, getTableRows, tableView } from './data-exploration';
 import { svgDefinitions } from './svg-definitions';
+import { askAgentAction, miniAppDefinitions } from './mini-app-definitions';
+import { miniAppFunctions } from './mini-app-functions';
+import { dashboardFunctions } from './dashboard-functions';
+import { miniAppStateSignature, validateMiniAppState } from './mini-app-state';
 
 /** An OpenUI Lang program always opens with its `root = Component(...)` statement. */
 const OPENUI_PROGRAM = /^\s*root\s*=\s*[A-Z]\w*\(/m;
@@ -87,6 +91,12 @@ export function programToPlainText(program: string): string {
 /** Saved-program content, independent of mounted/collapsed components. Image references
  * stay opaque until the caller resolves them in the answer's authorized scope. */
 export type OpenUiExportPart = { kind: 'markdown'; markdown: string } | { kind: 'image'; source: string; caption: string };
+/** The host supplies only an acknowledged private state and separately authorized references. */
+export interface OpenUiReactiveExportSnapshot {
+  reactiveState: Record<string, unknown>;
+  documents?: Record<string, string>;
+  taskResults?: Record<string, { inputs: Record<string, unknown>; parts: OpenUiExportPart[] }>;
+}
 
 const CONTENT_FIELDS = new Set(['title', 'subtitle', 'heading', 'description', 'text', 'textMarkdown', 'body', 'content', 'label', 'trigger', 'helperText', 'author', 'value', 'subtext', 'left', 'right', 'metric', 'caption', 'headline', 'eyebrow', 'name', 'role', 'primaryText', 'secondaryText']);
 const IMAGE_FIELDS = new Set(['src', 'imageSrc', 'bgImageSrc']);
@@ -94,11 +104,15 @@ const INTERACTIVE = /^(?:Action|Button|FollowUp|Form|Input|Select|Checkbox|Radio
 
 /** Parsing never executes queries/mutations. Partial/dynamic content fails explicitly
  * rather than producing a plausible but incomplete document. */
-export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>): Promise<OpenUiExportPart[]> {
-  const [{ createParser, createLibrary }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
+export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>, snapshot?: OpenUiReactiveExportSnapshot): Promise<OpenUiExportPart[]> {
+  if (snapshot) {
+    const state = validateMiniAppState(snapshot.reactiveState);
+    viewState = { ...viewState, ...(Object.hasOwn(state, '__ysExplore') ? { __ysExplore: state.__ysExplore } : {}) };
+  }
+  const [{ createParser, createLibrary, createStore, evaluateRoot, isReactiveAssign }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
     import('@openuidev/lang-core'), import('@openuidev/thesys'),
   ]);
-  const svgChatLibrary = createLibrary({ root: chatLibrary.root, components: [...Object.values(chatLibrary.components), ...svgDefinitions] });
+  const svgChatLibrary = createLibrary({ root: chatLibrary.root, components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
   const charts: Array<{ part: Extract<OpenUiExportPart, { kind: 'image' }>; name: string; props: Record<string, unknown> }> = [];
@@ -109,6 +123,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     charts.push({ part, name, props });
   };
   let chatExploration = false;
+  let appName = '';
   const add = (markdown: string) => { if (markdown.trim()) parts.push({ kind: 'markdown', markdown }); };
   const cell = (value: unknown): string => {
     if (value === null || value === undefined) return '';
@@ -130,6 +145,34 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     if (node.type && node.type !== 'element') throw new Error('Unsupported OpenUI export node');
     const props = (node.type === 'element' ? node.props : node) as Record<string, unknown>;
     if (!props || typeof props !== 'object') throw new Error('Invalid OpenUI export props');
+    if (name === 'MiniButton') return;
+    if (name === 'MiniApp') {
+      add(`## ${props.title}`); add(String(props.description ?? ''));
+      const previous = appName; appName = String(props.name);
+      try { walk(props.children, depth + 1); } finally { appName = previous; }
+      return;
+    }
+    if (name === 'MiniTaskResult') {
+      const result = snapshot?.taskResults?.[appName];
+      if (!result || !props.inputs || typeof props.inputs !== 'object'
+        || miniAppStateSignature(validateMiniAppState(props.inputs)) !== miniAppStateSignature(validateMiniAppState(result.inputs))) throw new Error('Saved mini-app result is missing or does not match the saved inputs');
+      add(String(props.label)); parts.push(...result.parts); return;
+    }
+    if (['MiniInput', 'MiniSelect', 'MiniToggle', 'MiniDocument'].includes(name)) {
+      const raw = props.value;
+      const value = isReactiveAssign(raw) ? snapshot?.reactiveState[raw.target] : raw;
+      if (name === 'MiniDocument') {
+        const filename = typeof value === 'string' && value ? snapshot?.documents?.[value] : '';
+        if (value && !filename) throw new Error('Saved mini-app document requires authorized document resolution');
+        add(`${props.label}: ${filename ?? ''}`); return;
+      }
+      const selected = name === 'MiniSelect' && Array.isArray(props.options)
+        ? props.options.find((option: { value?: unknown }) => option.value === value)?.label : undefined;
+      add(`${props.label}: ${selected ?? (value == null ? '' : String(value))}`);
+      return;
+    }
+    if (name === 'MiniOutput') { add(`${props.label}: ${props.value != null && typeof props.value === 'object' ? JSON.stringify(props.value) : props.value == null ? '' : String(props.value)}`); return; }
+    if (name === 'MiniList') { add(Array.isArray(props.items) && props.items.length ? props.items.map(item => `- ${item}`).join('\n') : String(props.emptyText ?? '')); return; }
     if (name === 'Svg') {
       if (!renderChart) throw new Error('SVG export requires visual capture');
       chartImage(name, props);
@@ -211,8 +254,40 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     const library = /^\s*root\s*=\s*Presentation\(/.test(source) ? presentationLibrary : /^\s*root\s*=\s*Report\(/.test(source) ? reportLibrary : chatLibrary;
     chatExploration = library === chatLibrary;
     const parsed = createParser((chatExploration ? svgChatLibrary : library).toJSONSchema()).parse(source);
-    if (!parsed.root || parsed.meta.incomplete || parsed.meta.errors.length || parsed.meta.unresolved.length || Object.keys(parsed.stateDeclarations).length || parsed.queryStatements.length || parsed.mutationStatements.length) throw new Error('Invalid or interactive OpenUI export');
-    walk(parsed.root);
+    if ((!parsed.root && !parsed.rootExpression) || parsed.meta.incomplete || parsed.meta.errors.length || parsed.meta.unresolved.length || parsed.queryStatements.length || parsed.mutationStatements.length || (!snapshot && (Object.keys(parsed.stateDeclarations).length || parsed.rootExpression))) throw new Error('Invalid or interactive OpenUI export');
+    if (!snapshot || !chatExploration) { walk(parsed.root); continue; }
+    const state = validateMiniAppState(snapshot.reactiveState);
+    const store = createStore();
+    try {
+      const bindings = Object.fromEntries(Object.entries(state).filter(([key]) => key.startsWith('$')));
+      store.initialize(parsed.stateDeclarations, bindings);
+      const schema = svgChatLibrary.toJSONSchema();
+      const functions = Object.fromEntries(Object.entries(schema.functions ?? {}).flatMap(([key, definition]) => {
+        return [[key, { ...definition, fn: svgChatLibrary.functions[key].fn }]];
+      }));
+      const errors: import('@openuidev/lang-core').OpenUIError[] = [];
+      // Match the installed Renderer: form entries may wrap their typed value.
+      const getState = (key: string): unknown => { const value = store.get(key); return value && typeof value === 'object' && 'value' in value ? value.value : value; };
+      const root = evaluateRoot(parsed, { library: svgChatLibrary, store: null, errors, ctx: {
+        getState,
+        resolveRef: () => { throw new Error('Runtime references cannot execute during export'); }, functions,
+      } });
+      if (!root || errors.length) throw new Error('Unable to evaluate saved OpenUI view');
+      let count = 0;
+      const materialize = (value: unknown, depth = 0): unknown => {
+        if (++count > 20_000 || depth > 60) throw new Error('Saved OpenUI view exceeds export limits');
+        if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid saved OpenUI number');
+        if (Array.isArray(value)) return value.map(entry => materialize(entry, depth + 1));
+        if (!value || typeof value !== 'object') return value;
+        const entry = value as Record<string, unknown>;
+        if (entry.type === 'element' && (entry.typeName === 'MiniButton' || (typeof entry.typeName === 'string' && INTERACTIVE.test(entry.typeName)))) return null;
+        // Reactive input descriptors remain inert and are resolved only by their saved target.
+        if (isReactiveAssign(entry)) return getState(entry.target);
+        if ('k' in entry || (entry.type === 'element' && entry.partial)) throw new Error('Unresolved saved OpenUI expression');
+        return Object.fromEntries(Object.entries(entry).map(([key, child]) => [key, entry.type === 'element' && key === 'hasDynamicProps' ? false : materialize(child, depth + 1)]));
+      };
+      walk(materialize(root));
+    } finally { store.dispose(); }
   }
   // Capture only after the complete saved program has passed validation. Keep
   // captures sequential so their offscreen theme/style scopes cannot race.

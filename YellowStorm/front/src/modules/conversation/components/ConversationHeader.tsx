@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,6 +29,7 @@ export function ConversationHeader() {
   const setContextPanel = useConversationUiStore((s) => s.setContextPanel);
   const conversation = useCurrentConversation();
   const { user } = useAuth();
+  const exportActor = useRef(user?.id); exportActor.current = user?.id;
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const typewriterConversationId = useConversationStore((s) => s.typewriterConversationId);
@@ -65,7 +66,10 @@ export function ConversationHeader() {
       const date = new Date(iso);
       return Number.isNaN(date.getTime()) ? iso : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
     };
-    return buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage);
+    const actorId = user?.id;
+    const blocks = await buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage, messages, actorId);
+    if (exportActor.current !== actorId) throw new Error('Export actor changed');
+    return blocks;
   };
 
   const handleExportDocx = async () => {

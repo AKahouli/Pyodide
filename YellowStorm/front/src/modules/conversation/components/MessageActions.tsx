@@ -21,6 +21,7 @@ import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import { useAuth } from '@/modules/auth';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PdfExportPortal } from './PdfExportPortal';
@@ -44,6 +45,8 @@ interface MessageActionsProps {
 }
 
 export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion = 'original', className, latencyInstrumentationEnabled }: MessageActionsProps) {
+  const { user } = useAuth();
+  const exportActor = useRef(user?.id); exportActor.current = user?.id;
   const updateFeedback = useConversationStore((s) => s.updateFeedback);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
@@ -171,9 +174,14 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
   const savedExportMessages = () => message.components?.some(component => component.type === 'text' && isOpenUiProgram(component.data?.content))
     ? fetchAllMessagesForExport(conversationId, fetchMessages) : Promise.resolve(messages);
-  const buildAnswerExportBlocks = async () => buildStructuredExportBlocks([message],
-    { user: t('export.userLabel'), assistant: t('export.assistantLabel') },
-    () => formattedCreatedAt, resolveOpenUiExportImage, await savedExportMessages());
+  const buildAnswerExportBlocks = async () => {
+    const actorId = user?.id;
+    const blocks = await buildStructuredExportBlocks([message],
+      { user: t('export.userLabel'), assistant: t('export.assistantLabel') },
+      () => formattedCreatedAt, resolveOpenUiExportImage, await savedExportMessages(), actorId);
+    if (exportActor.current !== actorId) throw new Error('Export actor changed');
+    return blocks;
+  };
 
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
@@ -225,7 +233,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     agentExportLock.current = true;
     setIsExportingViaAgent(true);
     try {
-      const manifest = await buildMcpExportManifest(message, await savedExportMessages());
+      const actorId = user?.id;
+      const manifest = await buildMcpExportManifest(message, await savedExportMessages(), actorId);
+      if (exportActor.current !== actorId) throw new Error('Export actor changed');
       if (!manifest.parts.length) throw new Error('Empty export');
       const citationMappings = mapConversationComponentsToContentParts(message.components ?? []).flatMap((part) => {
         if (part.type !== 'text') return [];
