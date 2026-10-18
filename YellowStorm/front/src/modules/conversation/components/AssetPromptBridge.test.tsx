@@ -28,6 +28,7 @@ it('shows a readable removable chip while keeping its exact ref out of the draft
   render(<AssetPromptBridge conversationId='c1' />);
   act(() => useConversationUiStore.getState().requestAssetPrompt('alice', 'c1', 'opaque-private-ref', 'chart.png'));
   expect(screen.getByText('chart.png')).toHaveAttribute('title', 'chart.png');
+  expect(screen.getByRole('group', { name: 'assets.selectedFiles' })).toHaveAttribute('data-align', 'block-start');
   expect(screen.queryByText(/opaque-private-ref/)).toBeNull();
   expect(useConversationUiStore.getState().selectedAssets?.items[0].ref).toBe('opaque-private-ref');
   expect(useConversationUiStore.getState().assetPromptRequest).toBeNull();

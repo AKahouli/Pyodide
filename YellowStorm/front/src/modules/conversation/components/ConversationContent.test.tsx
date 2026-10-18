@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from '@/modules/agent/store';
 import type { Message, MessageComponent } from '../types';
 import { useConversationUiStore } from '../uiStore';
+import { GroupConversationContent } from './GroupConversationContent';
 import { ConversationContent } from './ConversationContent';
 import type { LiveAnswer } from '../live-streams';
 
@@ -19,7 +20,7 @@ vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationFollow: ({ active }: { active: boolean }) => <div data-testid='conversation-follow' data-active={active} />,
-  ChatMessageBubble: ({ footerActions }: { footerActions?: ReactNode }) => <div>bubble{footerActions}</div>,
+  ChatMessageBubble: ({ message, contentFooter, footerActions }: { message: { content: string }; contentFooter?: ReactNode; footerActions?: ReactNode }) => <div><div data-testid='user-bubble'>bubble<span>{message.content}</span>{contentFooter}</div>{footerActions}</div>,
   ChatScrollButton: ({ className }: { className?: string }) => <button type='button' className={className}>scroll</button>,
   ChatConversationEmptyState: () => <div>empty-state</div>,
 }));
@@ -29,12 +30,16 @@ vi.mock('@/components/ai-elements/message-context', () => ({
 }));
 
 vi.mock('./MessageActions', () => ({ MessageActions: () => <div>message-actions</div> }));
-vi.mock('./UserMessageActions', () => ({ UserMessageActions: () => <div>user-actions</div> }));
+const actionMessage = vi.hoisted(() => vi.fn());
+vi.mock('./UserMessageActions', () => ({ UserMessageActions: ({ message }: { message: Message }) => { actionMessage(message); return <div>user-actions</div>; } }));
 vi.mock('./EditableUserMessage', () => ({ EditableUserMessage: () => <div>editable-message</div> }));
 vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</div> }));
 vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageReliabilityCard', () => ({ MessageReliabilityCard: () => <div>reliability-card</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
+vi.mock('./MessageAvatar', () => ({ MessageAvatar: () => null }));
+vi.mock('./ParentMessagePreview', () => ({ ParentMessagePreview: () => null }));
+vi.mock('./MentionMessageJump', () => ({ MentionMessageJump: () => null }));
 vi.mock('./BackgroundResultNotice', () => ({ BackgroundResultNotice: () => null }));
 vi.mock('./outline/OutlineAnchorScroller', () => ({ OutlineAnchorScroller: () => null }));
 
@@ -75,6 +80,34 @@ vi.mock('../store', () => ({
 }));
 
 describe('ConversationContent', () => {
+  it('shows readable artifact tags inside sent user bubbles after remount while preserving raw action payloads', () => {
+    const ref = btoa(JSON.stringify(['document', 'workspace', 'document'])).replace(/=/g, '');
+    const content = `Summarize the report.\n\nUse this conversation asset: Report [Q1].pdf [${ref}]`;
+    const message = { id: 'user-assets', conversationId: 'conv-1', conversationType: 'user', content, createdAt: '2026-01-01T00:00:00Z' } as Message;
+    displayMessages = [message]; storeState.messages = [message];
+    const mounted = render(<ConversationContent />);
+    expect(screen.getByText('Summarize the report.')).toBeInTheDocument();
+    const chip = screen.getByText('Report [Q1].pdf');
+    expect(screen.getByTestId('user-bubble')).toContainElement(chip);
+    expect(document.body.textContent).not.toContain(ref);
+    expect(document.body.innerHTML).not.toContain(ref);
+    expect(actionMessage).toHaveBeenCalledWith(message);
+    expect(message.content).toBe(content);
+    mounted.unmount(); render(<ConversationContent />);
+    expect(screen.getByText('Report [Q1].pdf')).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(ref);
+  });
+
+  it.each(['owner', 'other-member'])('shows historical asset tags for %s in group conversations without changing source text', senderId => {
+    const ref = btoa(JSON.stringify(['artifact', 'message', 'output'])).replace(/=/g, '');
+    const content = `Utiliser ce contenu de la conversation : Résumé.docx [${ref}]`;
+    const message = { id: 'group-user', conversationId: 'conv-1', conversationType: 'user', senderId, content, createdAt: '2026-01-01T00:00:00Z' } as Message;
+    displayMessages = [message]; storeState.messages = [message];
+    render(<GroupConversationContent />);
+    expect(screen.getByTestId('user-bubble')).toContainElement(screen.getByText('Résumé.docx'));
+    expect(document.body.innerHTML).not.toContain(ref);
+    expect(message.content).toBe(content);
+  });
   beforeEach(() => {
     vi.useRealTimers();
     displayMessages = [];

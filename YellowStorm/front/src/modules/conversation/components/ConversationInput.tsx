@@ -315,15 +315,13 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
             <ReliabilityCheckToggle />
           </>
         }
+        aboveTextarea={<AssetPromptBridge conversationId={conversationId} />}
         belowTextarea={
-          <>
-          <AssetPromptBridge conversationId={conversationId} />
           <ComposerSuggestionChips
             fetchDisabled={
               inputDisabled || isLimitExceeded || isStreaming || isAwaitingFirstChunk || isUploading
             }
           />
-          </>
         }
       />
       {(!runtimeManaged || latestContextTelemetry) && <div className='mt-1 flex min-h-0 items-center justify-between gap-3 px-1'>

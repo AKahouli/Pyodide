@@ -20,7 +20,11 @@ Model-supplied filenames, paths and URLs do not grant access.
 Use adds a removable filename chip without sending. Up to eight exact references
 are serialized only at submission; chips are transient and scoped to the current
 actor/conversation. Failed sends retain selections and successful sends clear only
-their submitted nonces. The agent can
+their submitted nonces. Composer chips appear at the top left above the textarea.
+Sent user messages show readable filename tags for recognized trailing EN/FR
+asset selectors, including historical messages after reload. This is display-only:
+stored content and exact references sent to the agent remain unchanged. Ordinary
+or malformed text stays visible, and tags do not grant file access. The agent can
 call `prepare_conversation_asset` for selected ready files before creating the
 existing code-interpreter sandbox. Preparation rechecks access and returns an
 exact content-addressed input path; receipts belong to the current invocation.

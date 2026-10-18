@@ -100,6 +100,8 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
   isStreaming?: boolean;
   showTaskDiagnostics?: boolean;
   footerActions?: ReactNode;
+  /** Attachment/context tags rendered inside the message surface. */
+  contentFooter?: ReactNode;
   /**
    * Visual density. `comfortable` (default) is the full main-app chat sizing.
    * `compact` shrinks padding, type, and max-width so the same bubble fits a
@@ -113,7 +115,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
  * User messages appear on the right, AI messages on the left
  * AI messages support structured activity, queues, plans, and answer content.
  */
-export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, footerActions, density = 'comfortable', ...props }: ChatMessageBubbleProps) => {
+export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, footerActions, contentFooter, density = 'comfortable', ...props }: ChatMessageBubbleProps) => {
   const { t: tCommon, language } = useModuleTranslation('common');
   const isUser = message.role === 'user';
   const isStructuredContent = Array.isArray(message.content);
@@ -155,6 +157,7 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
               // Plain user message
               <p className='whitespace-pre-wrap break-words'>{message.content as string}</p>
             )}
+            {contentFooter}
           </div>
         )}
         <div className='flex flex-1 items-end justify-end gap-2 mt-2'>

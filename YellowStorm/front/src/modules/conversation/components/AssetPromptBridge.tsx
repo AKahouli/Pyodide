@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileText, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { InputGroupAddon } from '@/components/ui/input-group';
 import { usePromptInputController } from '@/components/ai-elements/prompt-input';
 import { useAuth } from '@/modules/auth/useAuth';
 import { useModuleTranslation } from '@/modules/localization';
@@ -31,8 +32,8 @@ export function AssetPromptBridge({ conversationId }: { conversationId: string }
     useConversationUiStore.getState().consumeAssetPrompt();
   }, [request, conversationId, actorId, textInput, t]);
   if (!items.length && !limitReached) return null;
-  return <div className='px-3 pb-2' role='group' aria-label={t('assets.selectedFiles')}>
-    <div className='flex flex-wrap gap-1.5'>
+  return <InputGroupAddon align='block-start' className='flex-col items-start' aria-label={t('assets.selectedFiles')}>
+    <div className='flex w-full flex-wrap justify-start gap-1.5'>
       {items.map(item => <span key={item.nonce} className='inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pl-2 text-xs'>
         <FileText className='size-3 shrink-0 text-muted-foreground' aria-hidden />
         <span className='min-w-0 truncate' title={item.name}>{item.name}</span>
@@ -40,5 +41,5 @@ export function AssetPromptBridge({ conversationId }: { conversationId: string }
       </span>)}
     </div>
     {limitReached && <p role='status' className='mt-1 text-xs text-muted-foreground'>{t('assets.selectionLimit', { count: MAX_SELECTED_CONVERSATION_ASSETS })}</p>}
-  </div>;
+  </InputGroupAddon>;
 }

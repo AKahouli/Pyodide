@@ -1,3 +1,5 @@
+import { MessageAssetTags } from './MessageAssetTags';
+import { assetMessageDisplay } from '../utils/asset-message-display';
 import { useMemo, memo, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatConversationFollow, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
@@ -63,6 +65,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
     }
     return { ...chatMsg, onComponentAction: handleComponentAction, onSubmitQuestions: handleSubmitQuestions, choiceInteractions } as const;
   }, [message, currentUserId, handleComponentAction, handleSubmitQuestions, choiceInteractions]);
+  const userDisplay = useMemo(() => assetMessageDisplay(typeof chatMessage.content === 'string' ? chatMessage.content : ''), [chatMessage.content]);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -145,7 +148,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
             {isCurrentUser ? (
               <>
                 <div className="flex justify-end min-w-0">
-                  <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={inlineUserActions} />
+                  <ChatMessageBubble message={{ ...chatMessage, content: userDisplay.text }} contentFooter={<MessageAssetTags assets={userDisplay.assets} inverse />} isStreaming={isStreaming} footerActions={inlineUserActions} />
                 </div>
                 <MessageAvatar message={message} currentConversation={currentConversation} />
               </>
@@ -154,7 +157,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <MessageAvatar message={message} currentConversation={currentConversation} />
                 <div className="flex justify-start min-w-0">
                   {isUser
-                    ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
+                    ? <ChatMessageBubble message={{ ...chatMessage, content: userDisplay.text }} contentFooter={<MessageAssetTags assets={userDisplay.assets} />} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
                     : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0]} showUiTargets />}
                 </div>
               </>

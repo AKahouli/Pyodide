@@ -88,6 +88,8 @@ interface InputProps {
   enableTeamMentions?: boolean;
   workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
   onWorkspaceSelectionChange?: (workspaceIds: string[]) => void;
+  /** Rendered inside PromptInputProvider before the textarea (e.g. selected context). */
+  aboveTextarea?: ReactNode;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
   belowTextarea?: ReactNode;
   /** Rendered inside PromptInputTools, after built-in tools. */
@@ -98,7 +100,7 @@ interface InputProps {
   autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, hasSelectedContext = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, hasSelectedContext = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, aboveTextarea, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -543,6 +545,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
               return <PromptInputAttachment data={attachment} uploadStatus={uploadInfo?.status} uploadProgress={uploadInfo?.progress} />;
             }}
           </PromptInputAttachments>
+          {aboveTextarea}
           <PromptInputBody>
             {governedMode
               ? <PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />

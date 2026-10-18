@@ -1,9 +1,11 @@
+import { MessageAssetTags } from './MessageAssetTags';
 import { useMemo, memo, useEffect, useRef, useLayoutEffect, useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatConversationFollow, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
 import { useConversationUiStore } from '../uiStore';
+import { assetMessageDisplay } from '../utils/asset-message-display';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import { BackgroundResultContext } from './BackgroundResultContext';
@@ -46,6 +48,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const activeComponents = useMemo(() => getAnswerComponents(message, displayedVersion, t('correction.abstention')), [message, displayedVersion, t]);
   const displayedMessage = useMemo(() => ({ ...message, components: activeComponents }), [message, activeComponents]);
   const chatMessage = useMemo(() => messageToChat(displayedMessage), [displayedMessage]);
+  const userDisplay = useMemo(() => assetMessageDisplay(typeof chatMessage.content === 'string' ? chatMessage.content : ''), [chatMessage.content]);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const branchCache = useBranchCache();
@@ -169,7 +172,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
         {isUser && isEditing
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
-            ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
+            ? <ChatMessageBubble message={{ ...chatMessage, content: userDisplay.text }} isStreaming={isStreaming} contentFooter={<MessageAssetTags assets={userDisplay.assets} inverse />} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
             : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} activityPaneState={activityPaneState} requestInputState={requestInputState} workState={workState} workActivity={<RequestWorkStatus conversationId={conversationId} messageId={message.id} />} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets>
               {creatorId && <RootInputPanel conversationId={conversationId} creatorId={creatorId} messageId={message.id} variant='inline' />}
             </ConversationAssistantBubble>}

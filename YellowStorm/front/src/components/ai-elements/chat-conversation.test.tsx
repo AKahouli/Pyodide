@@ -103,3 +103,11 @@ describe('ChatMessageBubble layout', () => {
     expect(screen.getByText('Custom description')).toBeInTheDocument();
   });
 });
+
+it('places optional context tags inside the text bubble and leaves actions outside', () => {
+  const { container } = render(<ChatMessageBubble message={{ id: 'user', role: 'user', content: 'Summarize' }} contentFooter={<span>Report.pdf</span>} footerActions={<button>Copy raw</button>} />);
+  const paragraph = screen.getByText('Summarize');
+  expect(paragraph.parentElement).toContainElement(screen.getByText('Report.pdf'));
+  expect(paragraph.parentElement).not.toContainElement(screen.getByRole('button', { name: 'Copy raw' }));
+  expect(container.innerHTML).not.toContain('contentFooter=');
+});
