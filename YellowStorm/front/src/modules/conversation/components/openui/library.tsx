@@ -14,6 +14,8 @@ import { withChartExplorer } from './ChartExplorer';
 import { miniAppComponents } from './MiniApp';
 import { askAgentAction } from './mini-app-definitions';
 import { miniAppFunctions } from './mini-app-functions';
+import { dashboardFunctions } from './dashboard-functions';
+import { svgComponents } from './svg';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -110,7 +112,7 @@ export const openUiLibrary = createLibrary({
     let component = override ? override(definition.component as StockComponent) : definition.component as StockComponent;
     if (IMAGE_COMPONENTS.has(definition.name)) component = withDocumentImages(component, definition.name);
     return { ...definition, component } as DefinedComponent;
-  }), ...miniAppComponents],
-  functions: miniAppFunctions,
+  }), ...miniAppComponents, ...svgComponents],
+  functions: [...miniAppFunctions, ...dashboardFunctions],
   actions: [askAgentAction],
 });

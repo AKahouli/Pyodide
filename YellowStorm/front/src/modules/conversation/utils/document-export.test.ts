@@ -6,6 +6,7 @@ import { exportBlocksToHtml } from './html-export';
 import { captureOpenUiChartPng } from './docx-capture';
 
 vi.mock('./docx-capture', () => ({
+  captureOpenUiSvgPng: vi.fn(async () => ({ dataUrl: 'data:image/png;base64,c3Zn', width: 200, height: 100 })),
   captureOpenUiChartPng: vi.fn(async (): Promise<{ dataUrl: string; width: number; height: number } | null> => ({ dataUrl: 'data:image/png;base64,Y2hhcnQ=', width: 640, height: 320 })),
 }));
 
@@ -27,6 +28,17 @@ const messages = (content = program): Message[] => [{
 } as unknown as Message];
 
 describe('saved OpenUI export projection', () => {
+  it('embeds validated static SVG captures without a remote asset resolver', async () => {
+    const source = 'root = Card([drawing])\n drawing = Svg([Rect(0,0,20,10,"primary")], "0 0 20 10", null, null, "Saved SVG")';
+    const resolver = vi.fn();
+    const [block] = await buildStructuredExportBlocks(messages(source), { user: 'U', assistant: 'A' }, undefined, resolver);
+    expect(block.parts).toEqual([{ kind: 'image', source: 'data:image/png;base64,c3Zn', caption: 'Saved SVG' }]);
+    expect(resolver).not.toHaveBeenCalled();
+    const blob = exportBlocksToHtml([block], 'SVG');
+    const html = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+    expect(html).toContain('data:image/png;base64,c3Zn');
+  });
+
   const chartProgram = 'root = Card([chart])\nchart = BarChart(["Jan","Feb","Mar"], [{category:"Visits",values:[2,5,0]},{category:"Sales",values:[4,6,8]}])';
   const chartState = { __ysExplore: { 'chart:chart': { componentType: 'ChartView', value: { seriesIndex: 0, labelIndex: 2 } } } };
   it.each(['BarChart', 'HorizontalBarChart', 'LineChart'])('projects %s series index zero and a selected category without losing numeric zero', async (chartType) => {

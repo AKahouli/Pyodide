@@ -81,8 +81,8 @@ export async function buildStructuredExportBlocks(
       if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
         const chartImages = new Set<string>();
         const projectedParts = await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages), async (name, props) => {
-          const { captureOpenUiChartPng } = await import('./docx-capture');
-          const image = await captureOpenUiChartPng(name, props);
+          const { captureOpenUiChartPng, captureOpenUiSvgPng } = await import('./docx-capture');
+          const image = await (name === 'Svg' ? captureOpenUiSvgPng(props) : captureOpenUiChartPng(name, props));
           if (!image) throw new Error('OpenUI chart capture failed');
           chartImages.add(image.dataUrl);
           return image.dataUrl;

@@ -71,6 +71,12 @@ actor and the current task program digest. Same-actor legacy submissions remain 
 compatibility fallback; other participants and replaced task programs do not seed
 private drafts. Concurrent revision conflicts require explicit load or reapply.
 
+SVG/dashboard reuse adds bounded reactive drawing primitives and pure aggregations
+inside the same OpenUI library. Existing MiniApp drafts and document task identities
+remain unchanged; static SVG captures join current exports. Private reactive export
+snapshots and HtmlView execution remain separate phases. See the
+[rich artifact qualification](../architecture/openui-rich-artifacts-plan.md#phase-a-implementation-and-qualification-2026-10-18).
+
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an
 uploaded file; nonempty plain text takes precedence over Office clipboard bitmaps.

@@ -455,6 +455,8 @@ fixes generation without changing transport validation. The real compiled schema
 factory passes; removing the explicit metadata reproduces the exact error. A
 focused schema-generation regression and production TypeScript check pass.
 
+The proposed [rich artifact reuse plan](openui-rich-artifacts-plan.md) refines the remaining export and HTML phases using upstream HtmlView, SVG and dashboard primitives; it does not mark them implemented.
+
 ## Exports from dynamic apps
 
 Extend `buildStructuredExportBlocks` with a saved-snapshot materialization step:

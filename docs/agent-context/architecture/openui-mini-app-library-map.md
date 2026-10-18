@@ -5,6 +5,8 @@ Assessed 2026-10-17; composition phase authorized 2026-10-17.
 Scope: polished, reusable mini-apps in Conversation v1. A generated-code sandbox
 remains separately scoped.
 
+The proposed [rich artifact reuse plan](openui-rich-artifacts-plan.md) scopes the next SVG/dashboard, saved-view export and upstream HtmlView phases with separate commits. Phase A SVG/dashboard reuse is implemented; saved-view exports and HtmlView remain separately scoped.
+
 ## Outcome and evidence
 
 Adapt the demo's composable layout and visual primitives inside YellowStorm's

@@ -1,6 +1,7 @@
 import type { MessageComponent } from '../../types';
 import { splitReportProgram } from './report-program';
 import { getChartData, getTableRows, tableView } from './data-exploration';
+import { svgDefinitions } from './svg-definitions';
 
 /** An OpenUI Lang program always opens with its `root = Component(...)` statement. */
 const OPENUI_PROGRAM = /^\s*root\s*=\s*[A-Z]\w*\(/m;
@@ -94,9 +95,10 @@ const INTERACTIVE = /^(?:Action|Button|FollowUp|Form|Input|Select|Checkbox|Radio
 /** Parsing never executes queries/mutations. Partial/dynamic content fails explicitly
  * rather than producing a plausible but incomplete document. */
 export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>): Promise<OpenUiExportPart[]> {
-  const [{ createParser }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
+  const [{ createParser, createLibrary }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
     import('@openuidev/lang-core'), import('@openuidev/thesys'),
   ]);
+  const svgChatLibrary = createLibrary({ root: chatLibrary.root, components: [...Object.values(chatLibrary.components), ...svgDefinitions] });
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
   const charts: Array<{ part: Extract<OpenUiExportPart, { kind: 'image' }>; name: string; props: Record<string, unknown> }> = [];
@@ -128,6 +130,12 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     if (node.type && node.type !== 'element') throw new Error('Unsupported OpenUI export node');
     const props = (node.type === 'element' ? node.props : node) as Record<string, unknown>;
     if (!props || typeof props !== 'object') throw new Error('Invalid OpenUI export props');
+    if (name === 'Svg') {
+      if (!renderChart) throw new Error('SVG export requires visual capture');
+      chartImage(name, props);
+      charts[charts.length - 1].part.caption = typeof props.title === 'string' ? props.title : '';
+      return;
+    }
     if (/ChartV2$/.test(name)) {
       const chartData = props.chartData as { data?: Record<string, unknown> | unknown[]; unit?: string } | undefined;
       const data = chartData?.data;
@@ -202,7 +210,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   for (const source of [split.chat, split.report].filter((entry): entry is string => Boolean(entry))) {
     const library = /^\s*root\s*=\s*Presentation\(/.test(source) ? presentationLibrary : /^\s*root\s*=\s*Report\(/.test(source) ? reportLibrary : chatLibrary;
     chatExploration = library === chatLibrary;
-    const parsed = createParser(library.toJSONSchema()).parse(source);
+    const parsed = createParser((chatExploration ? svgChatLibrary : library).toJSONSchema()).parse(source);
     if (!parsed.root || parsed.meta.incomplete || parsed.meta.errors.length || parsed.meta.unresolved.length || Object.keys(parsed.stateDeclarations).length || parsed.queryStatements.length || parsed.mutationStatements.length) throw new Error('Invalid or interactive OpenUI export');
     walk(parsed.root);
   }

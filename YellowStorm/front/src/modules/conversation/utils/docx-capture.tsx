@@ -179,3 +179,24 @@ export async function captureWebPreviewPng(html: string): Promise<CapturedImage 
     frame.remove();
   }
 }
+
+/** Capture only registered resource-free SVG primitives, never raw generated markup. */
+export async function captureOpenUiSvgPng(props: Record<string, unknown>): Promise<CapturedImage | null> {
+  const { renderSvgNode } = await import('../components/openui/svg');
+  const node = renderSvgNode({ type: 'element', typeName: 'Svg', props });
+  const host = document.createElement('div');
+  host.style.cssText = `position:fixed;left:-9999px;top:0;width:${CHART_WIDTH}px;background:#fff;color:#172033;--foreground:#172033;--muted-foreground:#526078;--primary:#d97550;--accent-foreground:#172033;--destructive:#b91c1c;--chart-1:#d97550;--chart-2:#2563eb;--chart-3:#15803d;--chart-4:#7c3aed;--chart-5:#b45309;`;
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    root.render(<>{node}</>);
+    const svg = await waitFor(() => host.querySelector('svg'));
+    if (!svg) return null;
+    await document.fonts?.ready;
+    const bounds = svg.getBoundingClientRect();
+    const width = Math.ceil(bounds.width); const height = Math.ceil(bounds.height);
+    if (!width || !height || width > 2400 || height > 2400) throw new Error('Invalid SVG export dimensions');
+    const dataUrl = await serializeToPng(svg, width, height);
+    return dataUrl ? { dataUrl, width, height } : null;
+  } finally { root.unmount(); host.remove(); }
+}

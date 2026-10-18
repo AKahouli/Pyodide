@@ -272,3 +272,32 @@ participant's values and previous-program task values cannot seed a private draf
 Same-actor legacy submissions remain compatible; ordinary form/chart/table accepted
 views keep their existing semantics. PostgreSQL draft access remains actor-scoped.
 See the reuse map's integration qualification for concurrency, access and exports.
+
+
+### SVG drawings and dashboard functions
+
+The chat library adapts upstream Svg/G/Circle/Ellipse/Rect/Line/Path/Polyline/
+Polygon/SvgText and ten pure dashboard functions (GroupBy, Pivot, Top, Between,
+Bucket, Cumulative, MovingAvg, Change, Histogram, Stats). Shared SVG definitions
+and function schemas also generate the agent prompt. Upstream attribution is in
+MINI-APP-NOTICE.txt. No dependency or app-specific screen is added.
+
+SVG accepts registered SVG children only, with bounded finite geometry, resource-free
+paints, spaced/comma-separated path numbers and checked transforms. Supply the
+optional final Svg title in the user's language. Null optional argument placeholders
+remain valid. Nested drawings are bounded to 200 nodes/depth 20; unsupported children
+cannot render host Image/HTML components. Static export uses the same strict SVG
+renderer and existing PNG capture flow; reactive private snapshots remain phase B.
+
+Dashboard functions validate at execution as well as schema generation, cap arrays
+at 200 items and nested JSON at 5000 nodes/20k characters. Bucket uses UTC ISO dates,
+up to 200 traversed periods. Cumulative/MovingAvg write only top-level fields (or
+empty field for numeric lists); other functions may read safe dotted own paths.
+Nonfinite arithmetic, unsafe keys and excessive data are rejected. Zero, signed
+and fractional statistics are retained. Invalid function calls follow OpenUI's null
+failure behavior and must have meaningful generated empty/error presentation.
+
+Wrap reactive controls in the existing MiniApp. These additions own no state,
+execute no agent tasks and do not change private autosave, document selection or
+saved-result identities. See dashboard-examples.ts and the rich artifact plan for
+qualification and the deliberately separate HTML/snapshot phases.

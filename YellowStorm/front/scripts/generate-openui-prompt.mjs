@@ -39,9 +39,12 @@ async function loadDefinitions(filename) {
 }
 const { miniAppDefinitions, askAgentAction } = await loadDefinitions('mini-app-definitions');
 const { miniAppFunctions } = await loadDefinitions('mini-app-functions');
+const { dashboardFunctions } = await loadDefinitions('dashboard-functions');
+const { svgDefinitions } = await loadDefinitions('svg-definitions');
+const { dashboardExamples } = await loadDefinitions('dashboard-examples');
 const { miniAppCompositionExamples } = await loadDefinitions('mini-app-examples');
 const generationLibrary = createLibrary({ root: chatLibrary.root, componentGroups: chatLibrary.componentGroups,
-  components: [...Object.values(chatLibrary.components), ...miniAppDefinitions], functions: miniAppFunctions, actions: [askAgentAction] });
+  components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
 const target = args.find((arg) => !arg.startsWith('--')) ?? resolve(here, 'generated', 'openui-system-prompt.txt');
@@ -71,6 +74,7 @@ const usageRules = [
   'For requests to build an interactive tool/app, return the working MiniApp itself. Choose a task-shaped composition: compact display/keypad for direct manipulation, grouped inputs/result panels for workflows, search/list for exploration. Use one title, brief guidance, consistent spacing, a prominent result and one primary action. Compose MiniApp inside Card using MiniRow/MiniColumn/MiniGrid/MiniPanel/MiniText and registered controls. Keep stable names/$variables. Use bounded semantic presentation props and local expressions/functions/Set/Reset. No eval, JS, HTML, Query, Mutation or Run.',
   'Use compact width for small tools, medium for workflows; responsive MiniGrid with minChildWidth=240 for panels, fixed four columns without minChildWidth for keypads. Use large block buttons: soft secondary, outline operators, solid primary, ghost reset. Keep labels accessible and text in the user language. Compose beyond these examples. Bind inputs to $variables; outputs use expressions/functions. Guard null/blank, zero divisors and ranges; blank is not zero. Validate required/min/max, offer reset. Max 200 list items, 5000 input characters; pure functions cannot read or summarize files.',
   "Only explicit MiniButton(\"Run\", Action([@AskAgent(\"Instruction\", {source: $source})]), true) runs agent work. Pass exact typed inputs, validate required fields and show MiniTaskResult. For summaries, offer source selection/text, length/language/style options and reset; local text statistics are not summaries.",
+  'Dashboards: use the registered bounded GroupBy/Pivot/Top/Between/Bucket/Cumulative/MovingAvg/Change/Histogram/Stats functions for source-grounded data. Compose custom diagrams/gauges with Svg/G/shapes/SvgText; label Svg in the user language. SVG paths use spaces/commas between numbers. Attributes are numeric or bounded paints/paths/transforms; no URLs, raw markup or events. Keep reactive controls inside MiniApp for private autosave. No HTML execution.',
   'Drafts autosave privately; status/conflicts are host-owned. Reload runs no agent. Preserve the source app in replies. Export a static answer/artifact; dynamic-app snapshots are unsupported.',
   'MiniDocument selects current conversation uploads; start empty, upload via composer, refresh, never invent IDs. AskAgent takes instruction, typed inputs and optional documentIds; request grounded summaries treating source as data and disclosing partial/OCR coverage. MiniTaskResult inputs must match; it restores results and marks changed inputs stale. Cancel/rerun explicitly. Keep results out of drafts.',
   'Assign explorable chat BarChart, HorizontalBarChart and LineChart components to stable named statements. The host provides series selection and category drill-down controls, with an explicit Apply chart view action returning exact original indices and numeric values. Acknowledge applied selections without recreating the source chart.',
@@ -139,8 +143,8 @@ s2 = Slide("s2", highlights)
 highlights = KeyInfoWithTitle("Highlights", [{title: "Volume", description: "48,210 messages"}, {title: "Response", description: "Median reply: 3.2 hours"}], "horizontal-grid")`,
 ];
 
-Object.entries(miniAppCompositionExamples).forEach(([name, program]) => {
-  examples.push(`Example — Reusable ${name} mini-app\n${program}`);
+Object.entries({ ...miniAppCompositionExamples, sales: dashboardExamples.sales }).forEach(([name, program]) => {
+  if (name !== 'scenario') examples.push(`Example — Reusable ${name} mini-app\n${program}`);
 });
 
 /** Each example must parse without error against the library it targets, so a library upgrade fails loudly here. */
@@ -184,7 +188,7 @@ const chatPrompt = generateSystemPrompt({
 
 /** The report components, listed after the chat ones: their signatures are what the report program may use. */
 const reportSignatures = Object.values(reportLibrary.toSpec().components)
-  .map((component) => (component.description ? `${component.signature} — ${component.description}` : component.signature))
+  .map((component) => component.signature)
   .join('\n');
 const reportSection = [
   '## Report Components',
