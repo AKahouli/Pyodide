@@ -64,6 +64,8 @@ export type DocumentUpdatePatch = Partial<
  * listing queries — those differ (pagination shapes, folder scoping).
  */
 export interface DocumentStore {
+  listPendingAssetCleanup(workspaceId: string, actorId?: string): Promise<WorkspaceDocumentRecord[]>;
+  getAssetRevocationState(workspaceId: string): Promise<{ epoch: string | null; cleanupPending: boolean }>;
   create(input: DocumentCreateInput): Promise<WorkspaceDocumentRecord>;
   findById(id: string): Promise<WorkspaceDocumentRecord | null>;
   findByIdAndWorkspace(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null>;

@@ -85,7 +85,8 @@ export async function buildMcpExportManifest(message: Message, submissionMessage
     return { parts };
   }
   for (const component of message.components ?? []) {
-    if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
+    if (component.data?.assetDeletedAt) continue;
+    if (!component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content)) {
       const reactive = await reactiveExportState(message, component, actorId, submissionMessages);
       parts.push(...(await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), reactive ? captureExportVisual : undefined, reactive)).map((part) => ({ ...part, componentId: component.id })));
     } else {
@@ -125,8 +126,8 @@ export async function buildStructuredExportBlocks(
   messages.forEach((message, index) => {
     if (message.conversationType !== 'ai' || !message.questionMessageId || !questionIds.has(message.questionMessageId)) return;
     const components = message.components ?? [];
-    if (!components.some((component) => isVisualConversationComponent(component)
-      || (component.type === 'text' && isOpenUiProgram(component.data?.content))
+    if (!components.some((component) => component.data?.assetDeletedAt || isVisualConversationComponent(component)
+      || (!component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content))
       || componentToMarkdown(component).trim())) return;
     const parsedTime = Date.parse(message.createdAt);
     const time = Number.isNaN(parsedTime) ? Number.NEGATIVE_INFINITY : parsedTime;
@@ -137,11 +138,12 @@ export async function buildStructuredExportBlocks(
     || !message.questionMessageId || !questionIds.has(message.questionMessageId)
     || selected.get(message.questionMessageId)?.index === index);
   const projected = await Promise.all(selectedMessages.map(async (message) => {
-    if (message.conversationType !== 'ai' || !message.components?.some((component) => component.type === 'text' && isOpenUiProgram(component.data?.content))) return { message, parts: undefined };
+    if (message.conversationType !== 'ai' || !message.components?.some((component) => !component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content))) return { message, parts: undefined };
     const parts: OpenUiExportPart[] = [];
     const components: MessageComponent[] = [];
     for (const component of message.components ?? []) {
-      if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
+      if (component.data?.assetDeletedAt) continue;
+      if (!component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content)) {
         const reactive = await reactiveExportState(message, component, actorId, submissionMessages);
         const chartImages = new Set<string>(Object.values(reactive?.taskResults ?? {}).flatMap(result => result.parts.flatMap(part => part.kind === 'image' ? [part.source] : [])));
         const projectedParts = await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), async (name, props) => {

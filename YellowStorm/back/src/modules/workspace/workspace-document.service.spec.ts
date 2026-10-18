@@ -928,6 +928,13 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     expect(mockedAxios.get).not.toHaveBeenCalled();
   });
 
+  it.each(['assetSourcePath', 'assetStagedActors', 'assetLegacyStagedActors', 'assetDeletedAt', 'assetOrigin'])('rejects forged platform metadata %s before network access', async key => {
+    mockLookup.mockClear();
+    await expect(service.ingestFromUrl(WS_ID, { downloadUrl: 'https://example.com/file.docx', filename: 'report.docx', userId: USER_ID,
+      sourceMeta: { [key]: 'forged' } })).rejects.toThrow('reserved keys');
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
   it('does not follow a redirect to a private host', async () => {
     const mockedAxios = axios as jest.Mocked<typeof axios>;
     mockedAxios.get.mockReset();

@@ -45,6 +45,11 @@ export class RootDelegateInternalController {
     return this.artifacts.inspectAsset(request.conversationId, request.userId, request.ref ?? '');
   }
 
+  @Post('assets/revocation')
+  revocationState(@Body() request: InternalConversationAssetDto) {
+    return this.artifacts.assetRevocationState(request.conversationId, request.userId);
+  }
+
   @Post('assets/read')
   @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'conversation-asset-read' })
   readAsset(@Body() request: InternalConversationAssetDto) {

@@ -88,6 +88,12 @@ export class ConversationController {
     return this.artifactService.assetUrl(id, user._id.toString(), ref);
   }
 
+  @Delete(':id/assets/:ref')
+  @UseGuards(ConversationOwnerGuard)
+  deleteAsset(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Param('ref') ref: string) {
+    return this.artifactService.deleteAsset(id, user._id.toString(), ref);
+  }
+
   @Get(':id')
   @UseGuards(ConversationOwnerGuard)
   async findOne(@Param('id') id: string) {

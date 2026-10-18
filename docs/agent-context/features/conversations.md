@@ -23,8 +23,20 @@ exact content-addressed input path; receipts belong to the current invocation.
 Saved programs/private drafts and governed evidence bytes are not staged.
 Successful interpreter output publication passes through existing workspace
 storage/quota registration before becoming a ready asset. Retry identity is
-server-owned; ordinary downloads do not save extra copies. Deletion remains a
-separate phase. See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
+server-owned; ordinary downloads do not save extra copies.
+
+Conversation-owned files and saved logical artifacts offer confirmed Delete when
+the current actor has permission. Linked sources open their owning workspace.
+Deletion hides the item immediately from active listings and authoritative reads,
+staging, new download resolution and RAG reads. History retains an unavailable
+placeholder; deleting a program does not delete other components or private drafts.
+File quota is refunded once under the workspace lock. Failed blob/index cleanup
+is persisted and shown as retry-only pending cleanup after reload. Type labels use
+readable labels such as PDF, DOCX and PPTX rather than raw MIME strings.
+Interpreter execution rechecks availability and fences output registration against
+deletion; stale sandboxes must be discarded before reuse. Already downloaded bytes,
+independent outputs and existing bearer URLs (up to ten minutes) cannot be recalled.
+See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
 Sources: conversation artifact/controller/attachment services,
 `ConversationFilesPanel`, `AssetPromptBridge` and ADK native-tool registry.
 

@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 import mimetypes
@@ -1159,6 +1160,8 @@ def create_connector_tools(
         binding_auth_env = binding.get("auth_env") or {}
         binding_dynamic_headers = binding.get("dynamic_headers") or []
         image_mount_guards: Dict[str, SandboxMountGuard] = {}
+        sandbox_epochs: Dict[str, Optional[str]] = {}
+        sandbox_lifecycle: Dict[str, Any] = {"known": False, "active": False, "receipts": {}}
         available_actions = {str(action.get("action_key") or "") for action in binding.get("actions") or []}
 
         if not connector_id.strip():
@@ -1266,6 +1269,8 @@ def create_connector_tools(
                 _result_mapping: Dict[str, Any] = result_mapping,
                 _connector_slug: str = connector_slug,
                 _image_mount_guards: Dict[str, SandboxMountGuard] = image_mount_guards,
+                _sandbox_epochs: Dict[str, Optional[str]] = sandbox_epochs,
+                _sandbox_lifecycle: Dict[str, Any] = sandbox_lifecycle,
                 _available_actions: set[str] = available_actions,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
@@ -1396,6 +1401,83 @@ def create_connector_tools(
                     return await call_mcp_tool(_transport_type, _server_url, effective_server_config,
                         action, params, auth_headers=effective_auth_headers, auth_env=_auth_env)
 
+                asset_receipts = image_state.get("assets", {}) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else {}
+                sandbox_epoch = None
+                def confirmed_destroy(value):
+                    notices = [value] if isinstance(value, str) else [value.get(key) for key in ("result", "text")] if isinstance(value, dict) else []
+                    return not (isinstance(value, dict) and (value.get("error") or value.get("isError"))) and any(
+                        isinstance(notice, str) and notice.strip() in {"Sandbox destroyed.", "No sandbox is running."} for notice in notices)
+                def reset_lifecycle():
+                    _sandbox_lifecycle.update(known=True, active=False, receipts={})
+                    _image_mount_guards.clear()
+                    _sandbox_epochs.clear()
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key != "sandbox_destroy":
+                    if not _sandbox_lifecycle["known"]:
+                        if "sandbox_destroy" not in _available_actions:
+                            return {"error": "A verified fresh sandbox lifecycle is required before execution."}
+                        try:
+                            reset = await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            if not confirmed_destroy(reset):
+                                return {"error": "The previous sandbox could not be cleared. No action was executed."}
+                            reset_lifecycle()
+                        except (Exception, TimeoutError):
+                            return {"error": "The previous sandbox could not be cleared. No action was executed."}
+                    if not _sandbox_lifecycle["active"] and _action_key != "sandbox_create" and invocation_id not in _image_mount_guards:
+                        return {"error": "Create a fresh sandbox before executing interpreter actions."}
+                    asset_receipts = {**_sandbox_lifecycle["receipts"], **asset_receipts}
+                    if len(asset_receipts) > MAX_IMAGE_SANDBOX_INPUTS:
+                        return {"error": "Too many retained sandbox inputs. Destroy the sandbox and select at most 32 assets."}
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key == "sandbox_destroy":
+                    if not _sandbox_lifecycle["known"]:
+                        merged_params["failed"] = True
+                    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
+                    try:
+                        revocation = await get_asset_revocation(context, _session_id)
+                        if revocation["epoch"] is not None or revocation["cleanupPending"]:
+                            merged_params["failed"] = True
+                    except SandboxMountValidationError:
+                        # Cleanup remains possible during an outage, but must not archive drafts.
+                        merged_params["failed"] = True
+                    if _sandbox_lifecycle["receipts"]:
+                        from src.smart_rag.tools.utilities.conversation_assets import validate_prepared_assets
+                        try:
+                            await validate_prepared_assets(context, _session_id, _sandbox_lifecycle["receipts"])
+                        except SandboxMountValidationError:
+                            merged_params["failed"] = True
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key != "sandbox_destroy":
+                    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
+                    try:
+                        revocation = await get_asset_revocation(context, _session_id)
+                        sandbox_epoch = revocation["epoch"]
+                        if revocation["cleanupPending"] or (sandbox_epoch is not None and _sandbox_epochs.get(invocation_id) != sandbox_epoch):
+                            _image_mount_guards.pop(invocation_id, None)
+                            _sandbox_epochs.pop(invocation_id, None)
+                            if "sandbox_destroy" not in _available_actions:
+                                raise SandboxMountValidationError("Sandbox reset is unavailable")
+                            destroyed = await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            notices = [destroyed] if isinstance(destroyed, str) else [destroyed.get(key) for key in ("result", "text")] if isinstance(destroyed, dict) else []
+                            if (isinstance(destroyed, dict) and (destroyed.get("error") or destroyed.get("isError"))) or not any(
+                                    isinstance(notice, str) and notice.strip() in {"Sandbox destroyed.", "No sandbox is running."} for notice in notices):
+                                raise SandboxMountValidationError("Sandbox reset failed")
+                            reset_lifecycle()
+                            asset_receipts = image_state.get("assets", {}) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else {}
+                            if revocation["cleanupPending"] or _action_key != "sandbox_create":
+                                return {"error": "Conversation files changed. Finish pending deletion cleanup and create a fresh sandbox before continuing."}
+                    except (SandboxMountValidationError, TimeoutError):
+                        return {"error": "Conversation asset availability or sandbox reset could not be verified. No action was executed."}
+                if asset_receipts and _action_key != "sandbox_destroy":
+                    from src.smart_rag.tools.utilities.conversation_assets import validate_prepared_assets
+                    try:
+                        await validate_prepared_assets(context, _session_id, asset_receipts)
+                    except SandboxMountValidationError:
+                        if invocation_id in _image_mount_guards and "sandbox_destroy" in _available_actions:
+                            try:
+                                await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            except Exception:
+                                logger.warning("asset_revocation_sandbox_cleanup_failed")
+                        _image_mount_guards.pop(invocation_id, None)
+                        return {"error": "A selected asset is unavailable. Execution stopped and no output was published. Select current assets before retrying."}
+
                 if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and image_paths and _action_key != "sandbox_destroy":
                     guard = _image_mount_guards.get(invocation_id)
                     try:
@@ -1420,6 +1502,13 @@ def create_connector_tools(
                         return {"error": "Required image inputs were not mounted after bounded sandbox validation. No substitute paths were used."}
                 else:
                     response = await call_action(_action_key, merged_params)
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga"}:
+                    if _action_key == "sandbox_destroy":
+                        if confirmed_destroy(response):
+                            reset_lifecycle()
+                    elif _action_key == "sandbox_create":
+                        _sandbox_epochs[invocation_id] = sandbox_epoch
+                        _sandbox_lifecycle.update(active=True, receipts=asset_receipts)
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations import normalize_web_connector_response
 
@@ -1476,6 +1565,8 @@ def create_connector_tools(
                                 headers={"X-Internal-Token": context.platform_api_token},
                                 json={"userId": owner, "conversationId": _session_id, "invocationId": invocation_id,
                                     "sourcePath": source, "fileName": file_name,
+                                    "inputReceipts": [{"ref": receipt["ref"], "sha256": receipt["sha256"]} for receipt in asset_receipts.values()],
+                                    "sandboxEpoch": sandbox_epoch,
                                     "mimeType": publication.get("mime_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"})
                             response.raise_for_status()
                             body = response.json()

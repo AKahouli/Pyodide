@@ -6,14 +6,14 @@ import type { ConversationAsset, ConversationAssetPage } from '../api';
 import { initialConversationUiState, useConversationUiStore } from '../uiStore';
 
 const mocks = vi.hoisted(() => ({
-  actor: 'alice', list: vi.fn(), url: vi.fn(), message: vi.fn(), download: vi.fn(), viewer: vi.fn(),
+  actor: 'alice', remove: vi.fn(), list: vi.fn(), url: vi.fn(), message: vi.fn(), download: vi.fn(), viewer: vi.fn(),
 }));
 vi.mock('@openuidev/react-ui', () => ({ AgentInterface: { Workspace: ({ children }: { children: ReactNode }) => <>{children}</> } }));
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: mocks.actor } }) }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrlLoader: mocks.viewer }));
 vi.mock('../store', () => ({ useConversationStore: (selector: (state: unknown) => unknown) => selector({ messages: [], isStreaming: false }) }));
-vi.mock('../api', () => ({ fetchConversationAssets: mocks.list, getConversationAssetUrl: mocks.url, fetchMessage: mocks.message, downloadArtifactFile: mocks.download }));
+vi.mock('../api', () => ({ fetchConversationAssets: mocks.list, getConversationAssetUrl: mocks.url, fetchMessage: mocks.message, downloadArtifactFile: mocks.download, deleteConversationAsset: mocks.remove }));
 vi.mock('./openui/OpenUiAnswer', () => ({ OpenUiAnswer: ({ content, partId }: { content: string; partId: string }) => <div data-part={partId}>{content}</div> }));
 
 const file = (overrides: Partial<ConversationAsset> = {}): ConversationAsset => ({
@@ -27,9 +27,64 @@ beforeEach(() => {
   mocks.list.mockResolvedValue({ assets: [file()], nextCursor: null });
   mocks.url.mockResolvedValue({ viewUrl: 'https://files.example/preview', downloadUrl: 'https://files.example/download' });
   mocks.download.mockResolvedValue(undefined);
+  mocks.remove.mockResolvedValue({ deleted: true, alreadyDeleted: false, cleanup: { blob: 'done', index: 'done' } });
 });
 
 describe('Files & artifacts', () => {
+  it('restores pending cleanup after remount separately from available assets', async () => {
+    const deleted = file({ status: 'deleted', actions: { view: false, download: false, read: false, delete: true } });
+    mocks.list.mockResolvedValueOnce({ assets: [], nextCursor: null, pendingCleanup: [deleted] })
+      .mockResolvedValueOnce({ assets: [], nextCursor: null, pendingCleanup: [deleted] })
+      .mockResolvedValue({ assets: [], nextCursor: null });
+    const view = render(<ConversationFilesPanel conversationId='c1' />);
+    await screen.findByRole('button', { name: 'assets.retryCleanup example.pdf' });
+    view.unmount();
+    render(<ConversationFilesPanel conversationId='c1' />);
+    fireEvent.click(await screen.findByRole('button', { name: 'assets.retryCleanup example.pdf' }));
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('c1', file().ref));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'assets.retryCleanup example.pdf' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'assets.view example.pdf' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'assets.download example.pdf' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'assets.useInPrompt' })).toBeNull();
+  });
+
+  it('confirms an exact item before deleting and refreshes the list', async () => {
+    mocks.list.mockResolvedValueOnce({ assets: [file({ actions: { view: true, download: true, read: true, delete: true } })], nextCursor: null }).mockResolvedValue({ assets: [], nextCursor: null });
+    render(<ConversationFilesPanel conversationId='c1' />);
+    fireEvent.click(await screen.findByRole('button', { name: 'assets.delete example.pdf' }));
+    expect(mocks.remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'assets.confirmDelete' }));
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('c1', file().ref));
+    await waitFor(() => expect(screen.queryByText('example.pdf')).toBeNull());
+  });
+  it('opens linked workspace ownership without offering conversation deletion', async () => {
+    mocks.list.mockResolvedValue({ assets: [file({ origin: 'workspace', workspaceId: 'w1', actions: { view: true, download: true, read: true, delete: false } })], nextCursor: null });
+    render(<ConversationFilesPanel conversationId='c1' />);
+    expect(await screen.findByRole('link', { name: 'assets.openWorkspace' })).toHaveAttribute('href', '#/workspace/w1');
+    expect(screen.queryByRole('button', { name: 'assets.delete example.pdf' })).toBeNull();
+  });
+  it('keeps pending cleanup visible and allows an idempotent retry', async () => {
+    mocks.list.mockResolvedValueOnce({ assets: [file({ actions: { view: true, download: true, read: true, delete: true } })], nextCursor: null }).mockResolvedValue({ assets: [], nextCursor: null });
+    mocks.remove.mockResolvedValueOnce({ deleted: true, cleanup: { blob: 'pending', index: 'done' } }).mockResolvedValue({ deleted: true, alreadyDeleted: true, cleanup: { blob: 'done', index: 'done' } });
+    render(<ConversationFilesPanel conversationId='c1' />);
+    fireEvent.click(await screen.findByRole('button', { name: 'assets.delete example.pdf' }));
+    fireEvent.click(screen.getByRole('button', { name: 'assets.confirmDelete' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'assets.retryCleanup example.pdf' }));
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('assets.cleanupPending')).toBeNull());
+  });
+
+  it('shows readable Office file types instead of raw MIME subtypes', async () => {
+    mocks.list.mockResolvedValue({ assets: [file({ name: 'report.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      file({ ref: 'ppt-ref', name: 'slides.pptx', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
+      file({ ref: 'custom-ref', name: 'notes.custom', mimeType: 'application/vnd.long-internal-custom-type' })], nextCursor: null });
+    render(<ConversationFilesPanel conversationId='c1' />);
+    expect(await screen.findByText(/DOCX.*assets.ready/)).toBeInTheDocument();
+    expect(screen.getByText(/PPTX.*assets.ready/)).toBeInTheDocument();
+    expect(screen.getByText(/CUSTOM.*assets.ready/)).toBeInTheDocument();
+    expect(screen.queryByText(/VND\.OPENXMLFORMATS/)).toBeNull();
+  });
+
   it('groups persisted uploads, outputs and workspace sources without merging equal names', async () => {
     mocks.list.mockResolvedValue({ assets: [file(), file({ ref: 'artifact:m:a', origin: 'generated' }),
       file({ ref: 'document:222222222222222222222222', origin: 'workspace', name: 'knowledge.pdf' })], nextCursor: null });

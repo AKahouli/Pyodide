@@ -18,31 +18,44 @@ export interface ConversationAsset {
   messageId?: string;
   componentId?: string;
   version?: string;
-  actions: { view: boolean; download: boolean; read: boolean };
+  actions: { view: boolean; download: boolean; read: boolean; delete?: boolean };
 }
 export interface ConversationAssetPage {
   assets: ConversationAsset[];
   nextCursor: string | null;
   sourceErrors?: ConversationAsset['origin'][];
+  pendingCleanup?: ConversationAsset[];
 }
 export async function fetchConversationAssets(conversationId: string, params: {
   cursor?: string; limit?: number; search?: string; kind?: ConversationAsset['kind'];
 } = {}, signal?: AbortSignal): Promise<ConversationAssetPage> {
   let cursor = params.cursor;
   const errors = new Set<ConversationAsset['origin']>();
+  const pendingCleanup = new Map<string, ConversationAsset>();
   // Skip empty upload/workspace pages so a generated-only conversation opens usefully.
   // Bounded traversal retains an explicit Next button for long filtered histories.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await apiClient.get<ApiResponse<ConversationAssetPage>>(API_ENDPOINTS.conversations.assets(conversationId), { params: { ...params, cursor }, signal });
     const page = response.data.data;
     page.sourceErrors?.forEach(origin => errors.add(origin));
-    if (page.assets.length || !page.nextCursor || page.nextCursor === cursor || attempt === 2) return { ...page, sourceErrors: [...errors] };
+    page.pendingCleanup?.slice(0, 50).forEach(asset => { if (pendingCleanup.size < 50) pendingCleanup.set(asset.ref, asset); });
+    if (page.assets.length || !page.nextCursor || page.nextCursor === cursor || attempt === 2) return { ...page, sourceErrors: [...errors], ...(pendingCleanup.size ? { pendingCleanup: [...pendingCleanup.values()] } : {}) };
     cursor = page.nextCursor;
   }
   throw new Error('Unreachable asset page');
 }
 export async function getConversationAssetUrl(conversationId: string, ref: string, signal?: AbortSignal): Promise<{ viewUrl: string; downloadUrl: string }> {
   const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(`${API_ENDPOINTS.conversations.asset(conversationId, ref)}/url`, undefined, { signal });
+  return response.data.data;
+}
+
+export interface ConversationAssetDeletion {
+  deleted: true;
+  alreadyDeleted: boolean;
+  cleanup: { blob: 'done' | 'pending' | 'notApplicable'; index: 'done' | 'pending' | 'notApplicable' };
+}
+export async function deleteConversationAsset(conversationId: string, ref: string): Promise<ConversationAssetDeletion> {
+  const response = await apiClient.delete<ApiResponse<ConversationAssetDeletion>>(API_ENDPOINTS.conversations.asset(conversationId, ref));
   return response.data.data;
 }
 

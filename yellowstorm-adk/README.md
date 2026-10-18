@@ -14,7 +14,10 @@ Backend membership/workspace/evidence checks remain authoritative. File contents
 are untrusted data. Prepare all selected refs before `sandbox_create`, then use
 the returned paths verbatim; mount validation and receipts are invocation-scoped.
 Only the existing interpreter's successful output delivery registers durable
-files through workspace storage/quota checks. Deletion is a separate phase. Focused tests:
+files through workspace storage/quota checks. Deleted sources fail current read and
+prepare checks; interpreter actions verify the trusted deletion epoch and input
+receipts, discard stale sandboxes and fence registration against concurrent deletion.
+UI-only cleanup retries are excluded from agent discovery. Focused tests:
 `src/smart_rag/tools/tests/test_conversation_assets.py`.
 
 ## Architecture Overview 

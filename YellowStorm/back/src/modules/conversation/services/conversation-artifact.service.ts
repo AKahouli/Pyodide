@@ -29,6 +29,8 @@ type ImageReceipt = { imageSource: string; fileName: string; mimeType: string; g
 type PreparedPdfSource = { sourcePdf: string; mimeType: 'application/pdf'; page: number };
 type StoredImage = { id: string; path?: string; originalName: string; mimeType: string };
 type ImageVersion = { source: string; fileName: string; createdAt: string; generated: boolean; parentSource?: string };
+type PreparedAssetReceipt = { asset: ConversationAsset; invocationId: string; sandboxPath: string; fileName: string;
+  mimeType: string; size: number; sha256: string; contentBase64?: string };
 
 @Injectable()
 export class ConversationArtifactService {
@@ -66,7 +68,7 @@ export class ConversationArtifactService {
     return this.conversationService.requireCurrentParticipant(conversationId, userId);
   }
 
-  private documentAsset(document: DocumentResponse, systemWorkspaceId?: string): ConversationAsset {
+  private documentAsset(document: DocumentResponse, systemWorkspaceId?: string, actorId?: string, ownerId?: string): ConversationAsset {
     const generated = document.metadata?.assetOrigin === 'generated' || !!document.metadata?.imageParentId
       || (!document.metadata?.assetOrigin && /^generated-/.test(document.originalName)); // Legacy generated images predate explicit provenance.
     const ready = document.status === DocumentStatus.COMPLETED;
@@ -75,26 +77,28 @@ export class ConversationArtifactService {
       kind: document.mimeType.startsWith('image/') ? 'image' : 'file', name: document.metadata?.assetDisplayName ?? document.originalName,
       mimeType: document.mimeType, size: document.size, status: ready ? 'ready' : document.status,
       documentId: document.id, workspaceId: document.workspaceId,
-      actions: { view: ready, download: ready, read: ready } };
+      actions: { view: ready, download: ready, read: ready,
+        delete: document.workspaceId === systemWorkspaceId && !!actorId && (actorId === ownerId || actorId === document.createdBy) } };
   }
 
-  private componentAsset(messageId: string, component: { id: string; type: string; data: Record<string, unknown> }): ConversationAsset | undefined {
+  private componentAsset(messageId: string, component: { id: string; type: string; data: Record<string, unknown> }, canDelete = false, includeDeleted = false): ConversationAsset | undefined {
     const data = component.data;
+    if (data.assetDeletedAt && !includeDeleted) return undefined;
     if (component.type === 'artifact' && typeof data.artifactId === 'string' && (data.storagePath || data.evidenceId)) {
       return { ref: this.assetRef(['artifact', messageId, data.artifactId]), origin: 'generated', kind: 'file',
         name: typeof data.filename === 'string' ? data.filename : 'Generated file',
         mimeType: typeof data.mimeType === 'string' ? data.mimeType : undefined,
-        status: 'ready', messageId, componentId: component.id, actions: { view: true, download: true, read: true } };
+        status: 'ready', messageId, componentId: component.id, actions: { view: true, download: true, read: true, delete: canDelete && !data.evidenceId && !data.executionId } };
     }
-    if (component.type === 'text' && typeof data.content === 'string' && /^\s*root\s*=\s*[A-Z]\w*\(/m.test(data.content)) {
+    if (component.type === 'text' && typeof data.content === 'string' && (data.assetDeletedAt || /^\s*root\s*=\s*[A-Z]\w*\(/m.test(data.content))) {
       return { ref: this.assetRef(['app', messageId, component.id]), origin: 'generated', kind: 'app',
         name: 'Interactive artifact', status: 'ready', messageId, componentId: component.id,
-        version: createHash('sha256').update(data.content).digest('hex'), actions: { view: true, download: false, read: true } };
+        version: createHash('sha256').update(data.content).digest('hex'), actions: { view: true, download: false, read: true, delete: canDelete } };
     }
     return undefined;
   }
 
-  async listAssets(conversationId: string, userId: string, query: ConversationAssetQueryDto = {}): Promise<{ assets: ConversationAsset[]; nextCursor: string | null; sourceErrors?: ('upload' | 'generated' | 'workspace')[] }> {
+  async listAssets(conversationId: string, userId: string, query: ConversationAssetQueryDto = {}): Promise<{ assets: ConversationAsset[]; nextCursor: string | null; sourceErrors?: ('upload' | 'generated' | 'workspace')[]; pendingCleanup?: ConversationAsset[] }> {
     const conversation = await this.assetScope(conversationId, userId);
     const limit = Math.min(Math.max(query.limit ?? 30, 1), 50);
     let group = 'upload', page = 1, offset = 0, messageCursor: string | undefined;
@@ -114,13 +118,14 @@ export class ConversationArtifactService {
       const result = enabled ? await (group === 'upload'
         ? this.conversationService.getUploadedDocuments(conversationId, { page, limit, search: query.search, includeAllStatuses: true }, userId)
         : this.conversationService.getWorkspaceDocuments(conversationId, { page, limit, search: query.search, includeAllStatuses: true }, userId)) : undefined;
-      assets = (result?.documents ?? []).filter(d => !d.isFolder).map(d => this.documentAsset(d, conversation.systemWorkspaceId));
+      assets = (result?.documents ?? []).filter(d => !d.isFolder && !d.metadata?.assetDeletedAt)
+        .map(d => this.documentAsset(d, conversation.systemWorkspaceId, userId, conversation.createdBy));
       next = result && page < result.pagination.totalPages ? { group, page: page + 1 }
         : { group: group === 'upload' ? 'workspace' : 'message', page: 1 };
     } else {
       const result = await this.messageService.listAssetMessages(conversationId, messageCursor, 50);
       const candidates = result.records.filter(m => m.isComplete && !m.isStreaming).flatMap(m => (m.components ?? [])
-        .map(c => this.componentAsset(m.id, c)).filter((a): a is ConversationAsset => !!a));
+        .map(c => this.componentAsset(m.id, c, userId === conversation.createdBy)).filter((a): a is ConversationAsset => !!a));
       // Registered outputs already appear as canonical workspace documents, not a second message entry.
       const canonicalIds = conversation.systemWorkspaceId && this.assetDocuments
         ? new Set((await this.assetDocuments.findByIdsInWorkspace(conversation.systemWorkspaceId,
@@ -142,36 +147,140 @@ export class ConversationArtifactService {
     }
     assets = assets.filter(a => (!query.kind || a.kind === query.kind)
       && (!query.search || a.name.toLowerCase().includes(query.search.toLowerCase())));
-    return { assets, nextCursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : null };
+    let pendingCleanup: ConversationAsset[] | undefined;
+    if (!query.cursor && conversation.systemWorkspaceId && this.assetDocuments) {
+      const documents = await this.assetDocuments.listPendingAssetCleanup(conversation.systemWorkspaceId, userId === conversation.createdBy ? undefined : userId);
+      pendingCleanup = documents.map(document => ({ ref: this.assetRef(['document', document.workspaceId, document.id]),
+        origin: document.metadata?.assetOrigin === 'generated' ? 'generated' as const : 'upload' as const,
+        kind: document.mimeType.startsWith('image/') ? 'image' as const : 'file' as const,
+        name: document.metadata?.assetDisplayName ?? document.originalName, mimeType: document.mimeType, size: document.size,
+        status: 'deleted', documentId: document.id, workspaceId: document.workspaceId,
+        actions: { view: false, download: false, read: false, delete: true } }));
+      if (userId === conversation.createdBy && pendingCleanup.length < 50) {
+        const messages = await this.messageService.listPendingAssetCleanup(conversationId);
+        for (const message of messages) for (const component of message.components ?? []) {
+          if (!component.data.assetDeletedAt || component.data.assetBlobCleanup !== 'pending') continue;
+          const asset = this.componentAsset(message.id, component, true, true);
+          if (asset && pendingCleanup.length < 50) pendingCleanup.push({ ...asset, status: 'deleted', actions: { view: false, read: false, download: false, delete: true } });
+        }
+      }
+    }
+    return { assets, nextCursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : null, ...(pendingCleanup?.length ? { pendingCleanup } : {}) };
   }
 
-  private async resolveAsset(conversationId: string, userId: string, ref: string) {
+  private async resolveAsset(conversationId: string, userId: string, ref: string, includeDeleted = false) {
     const conversation = await this.assetScope(conversationId, userId);
     const [type, parentId, id] = this.parseAssetRef(ref);
     if (type === 'document') {
       if (!await this.assetSettings?.isAttachmentIntelligenceEnabled()) throw new BadRequestException(ErrorCode.CHAT_ATTACHMENTS_DISABLED, 'Conversation file attachments are disabled');
       const allowed = await this.conversationService.filterAccessibleWorkspaceIds(userId, conversation.workspaces ?? []);
       if (parentId !== conversation.systemWorkspaceId && !allowed.includes(parentId)) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
-      const document = await this.workspaceDocumentService.findById(parentId, id);
+      const document = await this.workspaceDocumentService.findById(parentId, id, includeDeleted);
       if (!document || document.isFolder) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
-      return { asset: this.documentAsset(document, conversation.systemWorkspaceId), document };
+      if (document.metadata?.assetDeletedAt && !includeDeleted) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+      return { asset: this.documentAsset(document, conversation.systemWorkspaceId, userId, conversation.createdBy), document, component: undefined };
     }
     const message = await this.messageService.getMessageDocument(parentId);
     if (message.conversationId.toString() !== conversationId || !message.isComplete || message.isStreaming) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
     const component = message.components?.find(c => type === 'artifact' ? c.type === 'artifact' && c.data.artifactId === id : c.id === id);
-    const asset = component && this.componentAsset(parentId, component);
+    let canonical: DocumentResponse | undefined;
+    if (type === 'artifact' && conversation.systemWorkspaceId && /^[a-f0-9]{24}$/.test(id) && this.assetDocuments) {
+      const record = await this.assetDocuments.findByIdAndWorkspace(id, conversation.systemWorkspaceId);
+      if (record) canonical = await this.workspaceDocumentService.findById(conversation.systemWorkspaceId, id, includeDeleted);
+    }
+    const asset = component && this.componentAsset(parentId, component, userId === conversation.createdBy, includeDeleted);
     if (!asset || asset.ref !== ref) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
-    return { asset, component };
+    return { asset, component, ...(canonical ? { document: canonical } : {}) };
+  }
+
+  async deleteAsset(conversationId: string, userId: string, ref: string): Promise<{
+    deleted: true; alreadyDeleted: boolean; cleanup: { blob: 'done' | 'pending' | 'notApplicable'; index: 'done' | 'pending' | 'notApplicable' };
+  }> {
+    const conversation = await this.assetScope(conversationId, userId);
+    const resolved = await this.resolveAsset(conversationId, userId, ref, true);
+    if (resolved.document) {
+      const document = resolved.document;
+      if (document.workspaceId !== conversation.systemWorkspaceId || (userId !== conversation.createdBy && userId !== document.createdBy)) {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+      }
+      const result = await this.workspaceDocumentService.deleteConversationAsset(document.workspaceId, document.id, conversationId);
+      await this.messageService.markDocumentArtifactsUnavailable(conversationId, document.id);
+      return result;
+    }
+    if (userId !== conversation.createdBy || !resolved.component || !resolved.asset.messageId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+    }
+    const component = resolved.component;
+    if (component.data.evidenceId || component.data.executionId) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Evidence deletion requires its owning workspace');
+    }
+    const legacyPath = component.type === 'artifact' ? component.data.storagePath : undefined;
+    if (typeof legacyPath === 'string' && (!legacyPath.startsWith(`${conversation.createdBy}/system_${conversationId}/`)
+      || /[\\\x00-\x1f\x7f]/.test(legacyPath) || legacyPath.split('/').some(p => !p || p === '.' || p === '..'))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Artifact storage is outside the conversation');
+    }
+    const alreadyDeleted = !!component.data.assetDeletedAt;
+    if (!alreadyDeleted) {
+      const mark = () => this.messageService.markAssetUnavailable(conversationId, resolved.asset.messageId!, component);
+      const marked = this.assetDocuments && conversation.systemWorkspaceId
+        ? await this.assetDocuments.withWorkspaceTreeLock(conversation.systemWorkspaceId, mark) : await mark();
+      if (!marked) throw new BadRequestException(ErrorCode.CONFLICT, 'Asset source changed; reload before deleting');
+    }
+    let blob: 'done' | 'pending' | 'notApplicable' = 'notApplicable';
+    if (component.type === 'artifact') {
+      // Evidence remains in its governed owner; do not delete arbitrary evidence locations.
+      const path = component.data.storagePath;
+      if (typeof path === 'string' && path) {
+        try {
+          const paths = new Set<string>();
+          const shared = await this.messageService.hasOtherLiveAssetPath(conversationId, resolved.asset.messageId, component.id, path);
+          if (!shared) {
+            const sha = component.data.assetStagedSha256;
+            if (typeof sha === 'string') {
+              if (!/^[a-f0-9]{64}$/.test(sha)) throw new Error('Invalid staging provenance');
+              if (await this.documentService.exists(path)
+                && createHash('sha256').update(await this.readAssetBytes(path)).digest('hex') === sha) paths.add(path);
+            } else paths.add(path);
+          }
+          if (typeof component.data.assetStagedSha256 === 'string') {
+            const sha = component.data.assetStagedSha256;
+            const actors: string[] = JSON.parse(String(component.data.assetStagedActors ?? '[]'));
+            if (!/^[a-f0-9]{64}$/.test(sha) || !Array.isArray(actors) || actors.length > 32
+              || actors.some(actor => !/^[a-zA-Z0-9_-]{1,64}$/.test(actor))) throw new Error('Invalid staging provenance');
+            const identity = createHash('sha256').update(`${ref}\n${sha}`).digest('hex');
+            const extension = resolved.asset.name.match(/\.([a-zA-Z0-9]{1,10})$/)?.[1].toLowerCase() ?? 'bin';
+            for (const actor of actors) paths.add(`${actor}/system_${conversationId}/conversation-assets/${identity}.${extension}`);
+          }
+          for (const storagePath of paths) await this.documentService.delete(storagePath);
+          blob = 'done';
+        } catch { blob = 'pending'; }
+      }
+    }
+    if (component.type === 'artifact') await this.messageService.setAssetCleanup(conversationId, resolved.asset.messageId, component.id, blob === 'pending' ? 'pending' : 'done');
+    return { deleted: true, alreadyDeleted, cleanup: { blob, index: 'notApplicable' } };
   }
 
   async inspectAsset(conversationId: string, userId: string, ref: string): Promise<ConversationAsset> {
     return (await this.resolveAsset(conversationId, userId, ref)).asset;
   }
 
-  async prepareAsset(conversationId: string, userId: string, ref: string, invocationId: string, includeBytes = false): Promise<{
-    asset: ConversationAsset; invocationId: string; sandboxPath: string; fileName: string;
-    mimeType: string; size: number; sha256: string; contentBase64?: string;
-  }> {
+  async assetRevocationState(conversationId: string, userId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    const conversation = await this.assetScope(conversationId, userId);
+    const documents = conversation.systemWorkspaceId && this.assetDocuments
+      ? await this.assetDocuments.getAssetRevocationState(conversation.systemWorkspaceId) : { epoch: null, cleanupPending: false };
+    const messages = await this.messageService.getAssetRevocationState(conversationId);
+    return { epoch: documents.epoch || messages.epoch ? createHash('sha256').update(JSON.stringify([documents.epoch, messages.epoch])).digest('hex') : null,
+      cleanupPending: documents.cleanupPending || messages.cleanupPending };
+  }
+
+  async prepareAsset(conversationId: string, userId: string, ref: string, invocationId: string, includeBytes = false): Promise<PreparedAssetReceipt> {
+    const conversation = await this.assetScope(conversationId, userId);
+    const prepare = () => this.prepareAssetBytes(conversationId, userId, ref, invocationId, includeBytes);
+    return this.assetDocuments && conversation.systemWorkspaceId
+      ? this.assetDocuments.withWorkspaceTreeLock(conversation.systemWorkspaceId, prepare) : prepare();
+  }
+
+  private async prepareAssetBytes(conversationId: string, userId: string, ref: string, invocationId: string, includeBytes: boolean): Promise<PreparedAssetReceipt> {
     const { asset, document, component } = await this.resolveAsset(conversationId, userId, ref);
     if (!/^[a-zA-Z0-9_-]{1,200}$/.test(invocationId)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid asset invocation');
@@ -195,6 +304,27 @@ export class ConversationArtifactService {
     }
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const identity = createHash('sha256').update(`${ref}\n${sha256}`).digest('hex');
+    if (document && asset.origin !== 'workspace' && this.assetDocuments) {
+      if (document.metadata?.assetStagedSha256 && document.metadata.assetStagedSha256 !== sha256) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset source changed after preparation');
+      }
+      let actors: string[] = [];
+      try { actors = JSON.parse(document.metadata?.assetStagedActors ?? '[]'); } catch { throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid asset staging history'); }
+      actors = [...new Set([...actors, userId])];
+      if (actors.length > 32) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset staging actor limit reached');
+      await this.assetDocuments.mergeMetadata(document.workspaceId, document.id, { assetStagedSha256: sha256,
+        assetStagedActors: JSON.stringify(actors), assetStagingConversationId: conversationId });
+    } else if (component && asset.messageId) {
+      if (component.data.assetStagedSha256 && component.data.assetStagedSha256 !== sha256) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset source changed after preparation');
+      }
+      const actors: string[] = JSON.parse(String(component.data.assetStagedActors ?? '[]'));
+      const stagedActors = [...new Set([...actors, userId])];
+      if (stagedActors.length > 32 || !await this.messageService.recordAssetStaging(conversationId, asset.messageId, component,
+        { assetStagedSha256: sha256, assetStagedActors: JSON.stringify(stagedActors) })) {
+        throw new BadRequestException(ErrorCode.CONFLICT, 'Asset source changed; retry preparation');
+      }
+    }
     const extension = asset.name.match(/\.([a-zA-Z0-9]{1,10})$/)?.[1].toLowerCase() ?? 'bin';
     const relativePath = `conversation-assets/${identity}.${extension}`;
     const mimeType = asset.mimeType ?? 'application/octet-stream';
@@ -234,6 +364,26 @@ export class ConversationArtifactService {
     // Existing per-workspace PostgreSQL transaction lock serializes retries across replicas.
     // The existing direct-upload owner enforces limits/quota before a ready document exists.
     return this.assetDocuments.withWorkspaceTreeLock(workspaceId, async () => {
+      const revocation = await this.assetRevocationState(conversationId, userId);
+      if (revocation.cleanupPending || (request.sandboxEpoch ?? null) !== revocation.epoch) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Sandbox asset access changed; start a clean sandbox');
+      }
+      const inputs = request.inputReceipts ?? [];
+      if (!Array.isArray(inputs) || inputs.length > 32) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid input receipts');
+      for (const input of inputs) {
+        if (!input || typeof input.ref !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256)) {
+          throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid input receipts');
+        }
+        const resolved = await this.resolveAsset(conversationId, userId, input.ref);
+        if (resolved.asset.status !== 'ready' || resolved.asset.kind === 'app'
+          || resolved.component?.data.evidenceId || resolved.component?.data.executionId) {
+          throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Input asset is unavailable');
+        }
+        const path = resolved.document?.path ?? resolved.component?.data.storagePath;
+        if (typeof path !== 'string' || createHash('sha256').update(await this.readAssetBytes(path)).digest('hex') !== input.sha256) {
+          throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Input asset version changed');
+        }
+      }
       const previous = await this.assetDocuments!.findFileByName(workspaceId, storedName);
       let document: DocumentResponse;
       if (previous) {
@@ -245,7 +395,7 @@ export class ConversationArtifactService {
         document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, userId, bytes, storedName, mimeType, undefined, false, false);
         try {
           await this.workspaceDocumentService.mergeMetadata(workspaceId, document.id, {
-            assetOrigin: 'generated', assetDisplayName: fileName, assetReceipt: receipt, assetContentSha256: sha256,
+            assetOrigin: 'generated', assetDisplayName: fileName, assetReceipt: receipt, assetContentSha256: sha256, assetSourcePath: sourcePath,
           });
         } catch (error) {
           // The ambient transaction rolls back the row/quota/events. Remove only this new blob.
@@ -514,6 +664,25 @@ export class ConversationArtifactService {
 
   private async stageGeneratedImage(request: GenerateConversationImageDto,
     image: StoredImage, signal?: AbortSignal): Promise<ImageReceipt> {
+    if (this.assetDocuments) {
+      const conversation = await this.assetScope(request.conversationId, request.userId);
+      if (!conversation.systemWorkspaceId) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+      return this.assetDocuments.withWorkspaceTreeLock(conversation.systemWorkspaceId, async () => {
+        const current = await this.workspaceDocumentService.findById(conversation.systemWorkspaceId!, image.id);
+        if (current.status !== DocumentStatus.COMPLETED) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+        const actors: string[] = JSON.parse(current.metadata?.assetLegacyStagedActors ?? '[]');
+        const staged = [...new Set([...actors, request.userId])];
+        if (staged.length > 32) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image staging actor limit reached');
+        await this.assetDocuments!.mergeMetadata(current.workspaceId, current.id, {
+          assetLegacyStagedActors: JSON.stringify(staged), assetStagingConversationId: request.conversationId,
+        });
+        return this.copyGeneratedImage(request, current, signal);
+      });
+    }
+    return this.copyGeneratedImage(request, image, signal);
+  }
+
+  private async copyGeneratedImage(request: GenerateConversationImageDto, image: StoredImage, signal?: AbortSignal): Promise<ImageReceipt> {
     signal?.throwIfAborted();
     if (!image.path) throw new ServiceUnavailableException(undefined, 'Image file unavailable');
     const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[image.mimeType];
@@ -687,6 +856,12 @@ export class ConversationArtifactService {
     const component = message.components?.find((candidate) =>
       candidate.type === 'artifact' && candidate.data?.artifactId === artifactId,
     );
+    if (component?.data?.assetDeletedAt) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Artifact not found');
+    if (this.assetDocuments && /^[a-f0-9]{24}$/.test(artifactId)) {
+      const conversation = await this.conversationService.getConversationDocument(conversationId);
+      const document = conversation.systemWorkspaceId ? await this.assetDocuments.findByIdAndWorkspace(artifactId, conversation.systemWorkspaceId) : null;
+      if (document?.metadata?.assetDeletedAt) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Artifact not found');
+    }
     if (component?.data?.evidenceId || component?.data?.executionId) {
       if (!this.rootEvidence || !userId || typeof component.data.evidenceId !== 'string'
         || typeof component.data.executionId !== 'string') {

@@ -1,5 +1,6 @@
 """Conversation asset access and staging; authority comes from trusted invocation context."""
 import base64
+import asyncio
 import json
 import hashlib
 import shlex
@@ -57,6 +58,7 @@ def create_conversation_asset_tools(runtime_context: dict[str, Any] | None = Non
                 or not isinstance(kind, str) or kind not in {"", "image", "file", "app"}):
             return {"status": "error", "detail": "Use limit 1–50 and bounded text filters."}
         result = await request("list", cursor=cursor or None, limit=limit, search=search or None, kind=kind or None)
+        result.pop("pendingCleanup", None)  # User-only retry controls are not reusable agent inputs.
         if "status" not in result:
             if not isinstance(result.get("assets"), list) or len(result["assets"]) > limit:
                 return {"status": "error", "detail": "Invalid asset listing."}
@@ -124,6 +126,68 @@ def create_conversation_asset_tools(runtime_context: dict[str, Any] | None = Non
     from src.root_runtime.leaf_tools import register_tool_execution_kind
     return [register_tool_execution_kind(tool, "leaf") for tool in
             (list_conversation_assets, inspect_conversation_asset, read_conversation_asset, prepare_conversation_asset)]
+
+
+async def get_asset_revocation(context, conversation_id):
+    """Trusted conversation watermark; no asset names, paths or bytes are returned."""
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    api_url = str(context.platform_api_url or "").rstrip("/")
+    if api_url.endswith("/api"):
+        api_url += "/v1"
+    elif not api_url.endswith("/api/v1"):
+        api_url += "/api/v1"
+    try:
+        if not all((context.user_id, context.platform_api_token, context.platform_api_url, conversation_id)):
+            raise ValueError("Missing trusted context")
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            response = await client.post(f"{api_url}/internal/root-work/assets/revocation",
+                headers={"X-Internal-Token": context.platform_api_token},
+                json={"userId": context.user_id, "conversationId": conversation_id})
+            response.raise_for_status()
+            if len(response.content) > 4096:
+                raise ValueError("Oversized revocation response")
+            body = response.json()
+            data = body.get("data", body) if isinstance(body, dict) else None
+        if (not isinstance(data, dict) or "epoch" not in data
+                or (data["epoch"] is not None and (not isinstance(data["epoch"], str) or not 1 <= len(data["epoch"]) <= 128))
+                or not isinstance(data.get("cleanupPending"), bool)):
+            raise ValueError("Invalid revocation state")
+        return data
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        raise SandboxMountValidationError("Conversation asset availability could not be verified.") from None
+
+
+async def validate_prepared_assets(context, conversation_id, receipts):
+    """Recheck current access before using bytes already delivered to a sandbox."""
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    api_url = str(context.platform_api_url or "").rstrip("/")
+    if api_url.endswith("/api"):
+        api_url += "/v1"
+    elif not api_url.endswith("/api/v1"):
+        api_url += "/api/v1"
+    try:
+        if not all((context.user_id, context.platform_api_token, context.platform_api_url, conversation_id)):
+            raise ValueError("Missing trusted context")
+        if not isinstance(receipts, dict) or len(receipts) > 32:
+            raise ValueError("Invalid receipt count")
+        async with asyncio.timeout(35.0), httpx.AsyncClient(timeout=35.0) as client:
+            for receipt in receipts.values():
+                if (not isinstance(receipt, dict)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{1,2048}", str(receipt.get("ref") or ""))
+                        or not re.fullmatch(r"[a-f0-9]{64}", str(receipt.get("sha256") or ""))):
+                    raise ValueError("Invalid receipt")
+                response = await client.post(f"{api_url}/internal/root-work/assets/inspect",
+                    headers={"X-Internal-Token": context.platform_api_token},
+                    json={"userId": context.user_id, "conversationId": conversation_id, "ref": receipt["ref"]})
+                response.raise_for_status()
+                if len(response.content) > 128 * 1024:
+                    raise ValueError("Oversized asset metadata")
+                body = response.json()
+                asset = body.get("data", body) if isinstance(body, dict) else None
+                if not isinstance(asset, dict) or asset.get("status") != "ready":
+                    raise ValueError("Asset no longer ready")
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, TimeoutError):
+        raise SandboxMountValidationError("A selected asset was deleted, changed or is no longer accessible.") from None
 
 
 async def hydrate_prepared_assets(context, conversation_id, invocation_id, receipts, missing, call_action):

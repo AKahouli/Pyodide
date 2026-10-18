@@ -602,7 +602,8 @@ export interface ArtifactActivityData extends Record<string, unknown> {
   mimeType?: string;
   sizeBytes?: number;
   producerToolId?: string;
-  availability: 'pending' | 'ready' | 'failed';
+  availability: 'pending' | 'ready' | 'failed' | 'deleted';
+  assetDeletedAt?: string;
 }
 
 export interface RecentConversationArtifact {

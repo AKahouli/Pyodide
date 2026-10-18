@@ -510,6 +510,10 @@ export class WorkspaceDocumentWrite {
     workspaceId: string,
     dto: IngestUrlDto,
   ): Promise<DocumentResponse> {
+    // Provenance, tombstones and staging receipts are written only by their platform owners.
+    if (dto.sourceMeta && Object.keys(dto.sourceMeta).some(key => key.startsWith('asset') || ['__proto__', 'constructor', 'prototype'].includes(key))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Source metadata contains reserved keys');
+    }
     this.logger.log('Ingesting file from URL', {
       workspaceId,
       userId: dto.userId,
@@ -572,7 +576,7 @@ export class WorkspaceDocumentWrite {
     );
 
     if (dto.sourceMeta) {
-      await this.documentStore.updateById(doc.id, { metadata: dto.sourceMeta });
+      await this.documentStore.mergeMetadata(workspaceId, doc.id, dto.sourceMeta);
     }
 
     this.logger.debug('File ingested from URL', {

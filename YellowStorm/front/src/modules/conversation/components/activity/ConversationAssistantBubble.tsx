@@ -310,11 +310,12 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
       setLoadingAction(null);
     }
   };
-  const disabled = !enabled || Boolean(loadingAction) || data.availability !== 'ready';
+  const deleted = Boolean(data.assetDeletedAt) || data.availability === 'deleted';
+  const disabled = !enabled || Boolean(loadingAction) || data.availability !== 'ready' || deleted;
   return (
     <div className='flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm'>
       <FileText className='size-4 text-primary' aria-hidden='true' />
-      <span className='min-w-0 flex-1 truncate'>{filename}</span>
+      <span className='min-w-0 flex-1'><span className='block truncate'>{filename}</span>{deleted && <span className='block text-xs text-muted-foreground'>{t('assets.unavailable')}</span>}</span>
       <button type='button' disabled={disabled} onClick={view} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
         {loadingAction === 'view' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
         {t('stream.activity.viewArtifact')}
@@ -581,6 +582,11 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     answerBatch = [];
   };
   source.forEach((component) => {
+    if (component.type === 'text' && component.data.assetDeletedAt) {
+      flush();
+      answerNodes.push(<p key={`deleted-${component.id}`} className='text-sm text-muted-foreground'>{t('assets.unavailable')}</p>);
+      return;
+    }
     if (['agentActivity', 'toolActivity', 'artifact'].includes(component.type)) return;
     const projected = stripReasoningReplayPrefix(component, reasoningTexts);
     if (projected) answerBatch.push(projected);

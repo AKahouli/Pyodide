@@ -645,12 +645,14 @@ export function isVisibleConversationComponent(comp: MessageComponent): boolean 
 
 /** True for components exported as rendered visuals (images) rather than markdown. */
 export function isVisualConversationComponent(comp: MessageComponent): boolean {
+  if (comp.data?.assetDeletedAt) return false;
   const type = getComponentType(comp);
   return type === 'chart' || type === 'webPreview';
 }
 
 /** Converts a single visible component to markdown (chart/webPreview have none). */
 export function componentToMarkdown(comp: MessageComponent): string {
+  if (comp.data?.assetDeletedAt) return '';
   const data = comp.data || {};
   switch (comp.type) {
     case 'text':
@@ -710,7 +712,7 @@ export function componentsToMarkdown(components: MessageComponent[], projectText
     return '';
   }
   return components
-    .filter((comp) => isVisibleConversationComponent(comp))
+    .filter((comp) => !comp.data?.assetDeletedAt && isVisibleConversationComponent(comp))
     .map((comp) => (comp.type === 'text' ? projectText?.(comp) : undefined) ?? componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');

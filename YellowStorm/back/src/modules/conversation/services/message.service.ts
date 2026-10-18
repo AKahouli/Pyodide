@@ -38,12 +38,40 @@ export class MessageService {
     const component = source?.components?.find(item => item.id === componentId && item.type === 'text');
     const content = component?.data?.content;
     if (!source || source.conversationId !== conversationId || source.conversationType !== 'ai'
-      || source.isStreaming || !source.isComplete || typeof content !== 'string'
+      || source.isStreaming || !source.isComplete || component?.data.assetDeletedAt || typeof content !== 'string'
       || !/^\s*root\s*=\s*[A-Z]\w*\(/m.test(content)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
     }
     return { actorId, conversationId, sourceMessageId: messageId, componentId,
       programDigest: createHash('sha256').update(content, 'utf8').digest('hex') };
+  }
+
+  markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean> {
+    return this.messageStore.markAssetUnavailable(conversationId, messageId, component);
+  }
+
+  hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean> {
+    return this.messageStore.hasOtherLiveAssetPath(conversationId, messageId, componentId, path);
+  }
+
+  listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]> {
+    return this.messageStore.listPendingAssetCleanup(conversationId);
+  }
+
+  recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean> {
+    return this.messageStore.recordAssetStaging(conversationId, messageId, component, metadata);
+  }
+
+  getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    return this.messageStore.getAssetRevocationState(conversationId);
+  }
+
+  setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void> {
+    return this.messageStore.setAssetCleanup(conversationId, messageId, componentId, blobCleanup);
+  }
+
+  markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void> {
+    return this.messageStore.markDocumentArtifactsUnavailable(conversationId, documentId);
   }
 
   async getOpenUiAppState(actorId: string, conversationId: string, messageId: string, componentId: string): Promise<OpenUiAppStateResponse> {
@@ -1027,6 +1055,10 @@ export class MessageService {
     // size; clients fetch it on demand via findToolActivityResult.
     return components.map((component) => {
       if (!component?.data) return component;
+      if (component.data.assetDeletedAt) {
+        return { id: component.id, type: component.type, data: { assetDeletedAt: component.data.assetDeletedAt,
+          availability: 'deleted', filename: component.data.filename, artifactId: component.data.artifactId } };
+      }
       if (component.type === 'artifact') {
         return sanitizePublicComponent(component, { redactSensitiveText: false });
       }

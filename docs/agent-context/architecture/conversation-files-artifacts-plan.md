@@ -1,6 +1,6 @@
 # Conversation Files & artifacts implementation plan
 
-Status: **phases 1–2 implemented and qualified; phases 3–4 proposed**. Assessed
+Status: **phases 1–3 implemented and qualified; phase 4 proposed**. Assessed
 2026-10-18 for the classic conversation route. User requested a scoped plan with
 agent access, deletion, reload, two-user tests and separate implementation commits.
 
@@ -16,6 +16,71 @@ agent access, deletion, reload, two-user tests and separate implementation commi
    tied to the requesting actor's saved view. Unsupported exports remain explicit.
 5. Two users and simultaneous operations cannot mix listings, bytes, drafts,
    sandbox inputs, outputs, caches or privileges.
+
+## Phase 3 implementation checkpoint (2026-10-18)
+
+User authorized deletion implementation/testing and separately confirmed permanent
+deletion of the two synthetic `same.pdf` files, `Phase2-Orchid.docx`,
+`Phase2-Juniper.docx` and the disposable `Phase3 deletion QA` program. Other files
+and independent PPTX copies are retained. ADR-0017/0018 govern trusted current
+access; ADR-0025 preserves private drafts. Existing owners are extended without
+a new table/module/service/runtime.
+
+Authenticated DELETE `conversations/:id/assets/:ref` returns logical deletion and
+separate blob/index cleanup outcomes. Current creator/uploader authorization and
+source-match component updates prevent cross-user writes and concurrent answer
+overwrite. Document tombstones immediately deny reads, RAG hydration, staging and
+new URL resolution; quota refunds once under the workspace tree lock. Late indexing
+writes must not replace a tombstone. Reserved `asset*` metadata is server-owned.
+Program deletion removes the saved executable source but retains private draft
+rows and unrelated components. Historical cards become unavailable; copy/export
+does not resurrect deleted content.
+
+Failed cleanup remains persisted in existing metadata. The first listing page
+returns at most 50 owner-authorized retry references separately from active assets;
+the frontend preserves them across empty source pages and reload. Agent discovery
+strips this UI-only field. Retry cannot refund quota again. Cleanup tracks canonical
+blobs, bounded deterministic prepared/image aliases and registered MCP source
+provenance; mutable source aliases are digest checked to preserve newer outputs.
+Index failure is truthful and retryable; stale index hits are authoritatively denied.
+
+Interpreter calls verify trusted revocation state and prepared-input receipts;
+registration rechecks epoch/receipts under the deletion lock, rejecting publication
+if deletion happened during output read. Cleanup pending on bytes blocks reuse.
+These checks do not recall delivered bytes, independently saved outputs or bearer
+URLs already issued (up to ten minutes). Mutable external storage aliases still
+have a hash-check/delete race without a storage version API; immediate physical
+erasure is not promised. Legacy implicit connector workspace manifests retain
+their existing authorization lifecycle, separate from explicit asset receipts.
+
+Qualification PASS: backend 164 focused tests (including nine real PostgreSQL
+integration cases), backend build, frontend typecheck and focused panel/API,
+history and export tests; ADK 44 connector and 21 asset-helper tests. Independent
+boundary review ACCEPT. Coverage includes concurrent/idempotent deletion, cleanup
+recovery, quota admission, source CAS, RAG/read denial, stale staging, in-flight
+registration, cumulative receipt validation and frontend export behavior.
+
+Both signed-in browser profiles deleted their approved PDF and DOCX; the two DOCX
+deletions ran concurrently. The disposable mini-app was identified by its exact
+reference and deleted. Reload showed unavailable history with disabled document
+view/download cards and no executable mini-app. Its draft had visibly restored
+before deletion; opening the independent sales/operations artifact retained North,
+75, `Saved North`, false and Night, zero, empty, false without inference.
+After reload, 30 real internal inspect/read/prepare attempts for deleted refs were
+denied across current and foreign actors. Creator/uploader/participant/foreign
+DELETE authorization is covered at the service boundary, not claimed as a live
+cross-user public DELETE test. An actual agent listed assets and its exact deleted
+DOCX read returned `Asset unavailable or access denied`.
+
+Quota changed from 109975 to 72379 bytes and 111181 to 73499 bytes respectively;
+both document counts changed from four to two, matching the exact file refunds.
+Both retained reused PPTX files downloaded after reload with hashes identical to
+their earlier copies. Revocation epochs existed and byte cleanup was complete.
+The stale OpenUI DOCX download link did not produce a new file. Logical deletion
+does not rewrite prose in unrelated answer components. No saved agent task reran
+on reload. Backend and ADK were restarted on the verified source and left running.
+Repository-wide observability policy still reports the same eight unrelated MCP
+print violations; the gate is FAIL, not waived or represented as passed.
 
 ## Phase 1 implementation checkpoint (2026-10-18)
 

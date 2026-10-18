@@ -308,3 +308,9 @@ describe('formatChoiceSubmissionContent', () => {
     expect(formatChoiceSubmissionContent('{not json')).toBe('{not json');
   });
 });
+
+it('excludes deleted source before invoking the copy projector', () => {
+  const project = vi.fn(() => 'private rendered text');
+  expect(componentsToMarkdown([{ id: 'deleted', type: 'text', data: { content: 'private source', assetDeletedAt: '2026-10-18' } }], project)).toBe('');
+  expect(project).not.toHaveBeenCalled();
+});

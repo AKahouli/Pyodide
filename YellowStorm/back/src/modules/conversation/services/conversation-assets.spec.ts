@@ -4,14 +4,14 @@ import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 
 describe('conversation assets', () => {
-  const doc = { id: 'd', workspaceId: 'private', originalName: 'same.pdf', mimeType: 'application/pdf', size: 42, status: 'completed', path: 'secret/blob', isFolder: false };
+  const doc = { id: 'd', workspaceId: 'private', createdBy: 'a', originalName: 'same.pdf', mimeType: 'application/pdf', size: 42, status: 'completed', path: 'secret/blob', isFolder: false };
   const conversations = { requireCurrentParticipant: jest.fn(), getUploadedDocuments: jest.fn(), getWorkspaceDocuments: jest.fn(), getConversationDocument: jest.fn(), filterAccessibleWorkspaceIds: jest.fn() };
-  const messages = { listAssetMessages: jest.fn(), getMessageDocument: jest.fn() };
-  const documents = { findById: jest.fn(), getDownloadUrl: jest.fn(), uploadSmallFile: jest.fn(), mergeMetadata: jest.fn() };
+  const messages = { listAssetMessages: jest.fn(), getMessageDocument: jest.fn(), getAssetRevocationState: jest.fn(), listPendingAssetCleanup: jest.fn(), markAssetUnavailable: jest.fn(), markDocumentArtifactsUnavailable: jest.fn(), setAssetCleanup: jest.fn(), recordAssetStaging: jest.fn(), hasOtherLiveAssetPath: jest.fn() };
+  const documents = { findById: jest.fn(), getDownloadUrl: jest.fn(), uploadSmallFile: jest.fn(), mergeMetadata: jest.fn(), deleteConversationAsset: jest.fn() };
   const settings = { isAttachmentIntelligenceEnabled: jest.fn(), getSettings: jest.fn() };
   const attachments = { readAuthorizedText: jest.fn() };
-  const storage = { openReadStream: jest.fn(), upload: jest.fn(), delete: jest.fn() };
-  const assetDocuments = { withWorkspaceTreeLock: jest.fn(), findFileByName: jest.fn(), findByIdsInWorkspace: jest.fn() };
+  const storage = { openReadStream: jest.fn(), upload: jest.fn(), delete: jest.fn(), exists: jest.fn() };
+  const assetDocuments = { withWorkspaceTreeLock: jest.fn(), findFileByName: jest.fn(), findByIdsInWorkspace: jest.fn(), findByIdAndWorkspace: jest.fn(), mergeMetadata: jest.fn(), getAssetRevocationState: jest.fn(), listPendingAssetCleanup: jest.fn() };
   const service = new ConversationArtifactService(messages as never, storage as never, conversations as never, documents as never,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, settings as never, attachments as never, assetDocuments as never);
   beforeEach(() => {
@@ -37,6 +37,12 @@ describe('conversation assets', () => {
     assetDocuments.withWorkspaceTreeLock.mockImplementation(async (_workspace, action) => action());
     assetDocuments.findByIdsInWorkspace.mockResolvedValue([]);
     documents.uploadSmallFile.mockResolvedValue({ ...doc, id: 'registered', path: 'a/system-c/saved.docx' });
+    messages.getAssetRevocationState.mockResolvedValue({ epoch: null, cleanupPending: false });
+    messages.listPendingAssetCleanup.mockResolvedValue([]);
+    messages.markAssetUnavailable.mockResolvedValue(true);
+    messages.recordAssetStaging.mockResolvedValue(true);
+    assetDocuments.getAssetRevocationState.mockResolvedValue({ epoch: null, cleanupPending: false });
+    assetDocuments.listPendingAssetCleanup.mockResolvedValue([]);
   });
   it('persists canonical refs across reload without exposing storage paths and bounds PDF text', async () => {
     const first = await service.listAssets('c', 'a');
@@ -237,6 +243,89 @@ describe('conversation assets', () => {
     ] }], hasMore: false });
     const cursor = Buffer.from(JSON.stringify({ group: 'message', page: 1 })).toString('base64url');
     expect((await service.listAssets('c', 'a', { cursor })).assets).toEqual([]);
+  });
+
+  it('authorizes owned file deletion and preserves retries while denying linked workspaces and the other actor', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    documents.deleteConversationAsset.mockResolvedValue({ deleted: true, alreadyDeleted: false, cleanup: { blob: 'pending', index: 'done' } });
+    expect(await service.deleteAsset('c', 'a', ref)).toMatchObject({ deleted: true, cleanup: { blob: 'pending' } });
+    expect(documents.deleteConversationAsset).toHaveBeenCalledWith('private', 'd', 'c');
+    expect(messages.markDocumentArtifactsUnavailable).toHaveBeenCalledWith('c', 'd');
+    await expect(service.deleteAsset('c', 'b', ref)).rejects.toThrow('current membership');
+    documents.findById.mockResolvedValueOnce({ ...doc, workspaceId: 'shared' });
+    const shared = Buffer.from(JSON.stringify(['document', 'shared', 'd'])).toString('base64url');
+    await expect(service.deleteAsset('c', 'a', shared)).rejects.toThrow('Asset not found');
+    expect(documents.deleteConversationAsset).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides tombstones from active lists and denies inspect/read/stage/url while retaining owner cleanup recovery', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    const deleted = { ...doc, status: 'failed', metadata: { assetDeletedAt: 'now', assetBlobCleanup: 'pending', assetIndexCleanup: 'done' } };
+    documents.findById.mockResolvedValue(deleted);
+    conversations.getUploadedDocuments.mockResolvedValue({ documents: [deleted], pagination: { totalPages: 1 } });
+    assetDocuments.listPendingAssetCleanup.mockResolvedValue([deleted]);
+    const list = await service.listAssets('c', 'a');
+    expect(list.assets).toEqual([]);
+    expect(list.pendingCleanup?.[0]).toMatchObject({ ref, status: 'deleted', actions: { view: false, read: false, download: false, delete: true } });
+    expect(JSON.stringify(list)).not.toContain('secret/blob');
+    for (const operation of [() => service.inspectAsset('c', 'a', ref), () => service.readAsset('c', 'a', ref),
+      () => service.prepareAsset('c', 'a', ref, 'turn'), () => service.assetUrl('c', 'a', ref)]) await expect(operation()).rejects.toThrow('Asset not found');
+    expect(storage.openReadStream).not.toHaveBeenCalled();
+  });
+
+  it('deletes a logical app with source-match CAS and rejects changed source without touching private drafts', async () => {
+    const component = { id: 'ui', type: 'text', data: { content: 'root = Card("Saved")' } };
+    messages.getMessageDocument.mockResolvedValue({ conversationId: 'c', isComplete: true, components: [component] });
+    const ref = Buffer.from(JSON.stringify(['app', 'm', 'ui'])).toString('base64url');
+    expect(await service.deleteAsset('c', 'a', ref)).toMatchObject({ deleted: true, alreadyDeleted: false, cleanup: { blob: 'notApplicable' } });
+    expect(messages.markAssetUnavailable).toHaveBeenCalledWith('c', 'm', component);
+    messages.markAssetUnavailable.mockResolvedValueOnce(false);
+    await expect(service.deleteAsset('c', 'a', ref)).rejects.toThrow('source changed');
+    expect(storage.delete).not.toHaveBeenCalled();
+  });
+
+  it('fences publication on current revocation epoch and exact selected bytes', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    await expect(service.registerAsset({ ...output, inputReceipts: [{ ref, sha256: '0'.repeat(64) }] })).rejects.toThrow('version changed');
+    expect(documents.uploadSmallFile).not.toHaveBeenCalled();
+    assetDocuments.getAssetRevocationState.mockResolvedValue({ epoch: '1:fixed-time', cleanupPending: false });
+    const first = await service.assetRevocationState('c', 'a');
+    await expect(service.registerAsset(output)).rejects.toThrow('Sandbox asset access changed');
+    expect((await service.registerAsset({ ...output, sandboxEpoch: first.epoch })).documentId).toBe('registered');
+    assetDocuments.getAssetRevocationState.mockResolvedValue({ epoch: '2:fixed-time', cleanupPending: false });
+    expect((await service.assetRevocationState('c', 'a')).epoch).not.toBe(first.epoch);
+    await expect(service.registerAsset({ ...output, sandboxEpoch: first.epoch })).rejects.toThrow('Sandbox asset access changed');
+    assetDocuments.getAssetRevocationState.mockResolvedValue({ epoch: '2:fixed-time', cleanupPending: true });
+    const pending = await service.assetRevocationState('c', 'a');
+    await expect(service.registerAsset({ ...output, sandboxEpoch: pending.epoch })).rejects.toThrow('Sandbox asset access changed');
+  });
+
+  it('preserves a legacy raw alias still owned by another live artifact component', async () => {
+    const component = { id: 'legacy', type: 'artifact', data: { artifactId: 'out', storagePath: 'a/system_c/report.docx', filename: 'report.docx' } };
+    messages.getMessageDocument.mockResolvedValue({ conversationId: 'c', isComplete: true, components: [component] });
+    messages.hasOtherLiveAssetPath.mockResolvedValue(true);
+    const ref = Buffer.from(JSON.stringify(['artifact', 'm', 'out'])).toString('base64url');
+    expect((await service.deleteAsset('c', 'a', ref)).cleanup.blob).toBe('done');
+    expect(messages.hasOtherLiveAssetPath).toHaveBeenCalledWith('c', 'm', 'legacy', component.data.storagePath);
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(messages.setAssetCleanup).toHaveBeenCalledWith('c', 'm', 'legacy', 'done');
+  });
+
+  it('allows a current uploader or conversation creator, but rejects another participant and a foreign message reference', async () => {
+    conversations.requireCurrentParticipant.mockResolvedValue({ createdBy: 'owner', systemWorkspaceId: 'private', workspaces: ['shared'] });
+    documents.findById.mockResolvedValue({ ...doc, createdBy: 'uploader' });
+    documents.deleteConversationAsset.mockResolvedValue({ deleted: true, alreadyDeleted: false, cleanup: { blob: 'done', index: 'done' } });
+    const ref = Buffer.from(JSON.stringify(['document', 'private', 'd'])).toString('base64url');
+    await expect(service.deleteAsset('c', 'participant', ref)).rejects.toThrow('Asset not found');
+    expect((await service.deleteAsset('c', 'uploader', ref)).deleted).toBe(true);
+    expect((await service.deleteAsset('c', 'owner', ref)).deleted).toBe(true);
+    expect(documents.deleteConversationAsset).toHaveBeenCalledTimes(2);
+    messages.getMessageDocument.mockResolvedValue({ conversationId: 'other-conversation', isComplete: true, components: [
+      { id: 'app', type: 'text', data: { content: 'root = Card("foreign")' } },
+    ] });
+    const app = Buffer.from(JSON.stringify(['app', 'foreign-message', 'app'])).toString('base64url');
+    await expect(service.deleteAsset('c', 'owner', app)).rejects.toThrow('Asset not found');
+    expect(messages.markAssetUnavailable).not.toHaveBeenCalled();
   });
 
 });

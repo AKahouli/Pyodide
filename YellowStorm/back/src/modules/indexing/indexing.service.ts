@@ -14,6 +14,7 @@ import { LoggerService } from '../logger';
 import {
   NotFoundException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
@@ -394,8 +395,10 @@ export class IndexingService {
   async deleteDocumentIndex(
     documentId: string,
     workspaceId: string,
+    requireSuccess = false,
   ): Promise<void> {
     if (!this.enabled) {
+      if (requireSuccess) throw new ServiceUnavailableException(undefined, 'Index cleanup is unavailable');
       this.logger.debug('Indexing disabled, skipping delete', { documentId });
       return;
     }
@@ -407,8 +410,9 @@ export class IndexingService {
 
     try {
       // Read stored file identifiers before the document row is removed.
-      const document = await this.documentReadPort.findOne({ id: documentId, workspaceId });
+      const document = await this.documentReadPort.findOne({ id: documentId, workspaceId, includeDeleted: true });
       if (!document) {
+        if (requireSuccess) throw new ServiceUnavailableException(undefined, 'Index cleanup source is unavailable');
         this.logger.warn('Document not found for index delete, skipping', {
           documentId,
           workspaceId,
@@ -433,6 +437,7 @@ export class IndexingService {
           workspaceId,
           error: result.error,
         });
+        if (requireSuccess) throw new ServiceUnavailableException(undefined, 'Index cleanup failed');
       }
     } catch (error) {
       // Log but don't throw - deletion should not block document deletion
@@ -441,6 +446,7 @@ export class IndexingService {
         workspaceId,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+      if (requireSuccess) throw error;
     }
   }
 

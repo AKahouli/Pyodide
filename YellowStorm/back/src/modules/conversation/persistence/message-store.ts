@@ -102,6 +102,13 @@ export interface OpenUiAppStateRecord {
 }
 
 export interface MessageStore {
+  hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean>;
+  listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]>;
+  recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean>;
+  getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }>;
+  setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void>;
+  markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean>;
+  markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void>;
   canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean>;
   getOpenUiAppState(key: OpenUiAppStateKey): Promise<OpenUiAppStateRecord | null>;
   putOpenUiAppState(key: OpenUiAppStateKey, expectedRevision: number, state: Record<string, unknown>): Promise<OpenUiAppStateRecord | null>;

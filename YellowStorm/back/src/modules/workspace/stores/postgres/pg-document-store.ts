@@ -24,6 +24,22 @@ function documentOrderClause(col: string | undefined, direction: 'asc' | 'desc')
 export class PgDocumentStore implements DocumentStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
+  async listPendingAssetCleanup(workspaceId: string, actorId?: string): Promise<WorkspaceDocumentRecord[]> {
+    const rows = await this.q.select().from(DOCUMENTS).where(and(eq(DOCUMENTS.workspaceId, workspaceId),
+      actorId ? eq(DOCUMENTS.createdBy, actorId) : undefined, sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NOT NULL`,
+      sql`(${DOCUMENTS.metadata}->>'assetBlobCleanup' IS DISTINCT FROM 'done' OR ${DOCUMENTS.metadata}->>'assetIndexCleanup' IS DISTINCT FROM 'done')`))
+      .orderBy(desc(DOCUMENTS.updatedAt), desc(DOCUMENTS.id)).limit(50);
+    return rows.map(documentRowToRecord);
+  }
+
+  async getAssetRevocationState(workspaceId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    const [row] = await this.q.select({
+      count: sql<number>`count(*)`.mapWith(Number), latest: sql<string | null>`max(${DOCUMENTS.metadata}->>'assetDeletedAt')`,
+      pending: sql<boolean>`coalesce(bool_or(${DOCUMENTS.metadata}->>'assetBlobCleanup' IS DISTINCT FROM 'done'), false)`,
+    }).from(DOCUMENTS).where(and(eq(DOCUMENTS.workspaceId, workspaceId), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NOT NULL`));
+    return { epoch: row?.count ? `${row.count}:${row.latest}` : null, cleanupPending: row?.pending ?? false };
+  }
+
   private get q() {
     return resolveQueryable(this.db);
   }
@@ -68,7 +84,8 @@ export class PgDocumentStore implements DocumentStore {
     const [usage] = await this.q.select({
       pending: sql<number>`coalesce(sum(case when ${DOCUMENTS.status} in ('pending', 'uploading') then ${DOCUMENTS.size} else 0 end), 0)`.mapWith(Number),
       completed: sql<number>`coalesce(sum(case when ${DOCUMENTS.status} not in ('pending', 'uploading') then ${DOCUMENTS.size} else 0 end), 0)`.mapWith(Number),
-    }).from(DOCUMENTS).where(and(eq(DOCUMENTS.workspaceId, workspaceId), eq(DOCUMENTS.isFolder, false)));
+    }).from(DOCUMENTS).where(and(eq(DOCUMENTS.workspaceId, workspaceId), eq(DOCUMENTS.isFolder, false),
+      sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`));
     // Completion updates the row before the legacy counter. The maximum covers
     // that interval without counting completed bytes twice.
     const available = workspace.allocatedStorage - Math.max(workspace.usedStorage, usage.completed) - usage.pending;
@@ -168,7 +185,7 @@ export class PgDocumentStore implements DocumentStore {
 
   async listByWorkspace(workspaceId: string, params: WorkspaceDocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }> {
     const { status, search, parentId, sortBy, sortOrder, skip, limit } = params;
-    const conditions = [eq(DOCUMENTS.workspaceId, workspaceId)];
+    const conditions = [eq(DOCUMENTS.workspaceId, workspaceId), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`];
     if (status) conditions.push(eq(DOCUMENTS.status, status));
     // undefined = all levels; null = root level (parity with the Mongo query).
     if (parentId === null) conditions.push(isNull(DOCUMENTS.parentId));
@@ -195,7 +212,7 @@ export class PgDocumentStore implements DocumentStore {
   async listByWorkspaces(workspaceIds: string[], params: DocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }> {
     if (workspaceIds.length === 0) return { items: [], total: 0 };
     const { status, search, searchFilename, sortBy, sortOrder, skip, limit } = params;
-    const conditions = [inArray(DOCUMENTS.workspaceId, workspaceIds)];
+    const conditions = [inArray(DOCUMENTS.workspaceId, workspaceIds), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`];
     if (status) conditions.push(eq(DOCUMENTS.status, status));
     if (search) {
       const pattern = `%${escapeLike(search)}%`;
@@ -226,6 +243,7 @@ export class PgDocumentStore implements DocumentStore {
     const conditions = [
       eq(DOCUMENTS.workspaceId, workspaceId),
       eq(DOCUMENTS.parentId, folderId),
+      sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`,
       eq(DOCUMENTS.status, 'completed'),
     ];
     if (search) {

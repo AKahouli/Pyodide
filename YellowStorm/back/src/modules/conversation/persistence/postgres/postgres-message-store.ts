@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { resolveQueryable } from '@common/postgres/transaction';
 import type { OpenUiAppStateKey, OpenUiAppStateRecord } from '../message-store';
 import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -19,6 +20,77 @@ import type { ConversationUsageMetrics } from '../../utils/usage-metrics';
 @Injectable()
 export class PostgresMessageStore implements MessageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+
+  async hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean> {
+    const rows = await resolveQueryable(this.db).select({ id: schema.messages.id }).from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) item
+        WHERE item->>'type' = 'artifact' AND item->'data'->>'storagePath' = ${path} AND item->'data'->>'assetDeletedAt' IS NULL
+        AND (${schema.messages.id} <> ${messageId} OR item->>'id' <> ${componentId}))`)).limit(1);
+    return rows.length > 0;
+  }
+
+  async listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]> {
+    const rows = await resolveQueryable(this.db).select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) item
+        WHERE item->'data'->>'assetDeletedAt' IS NOT NULL AND item->'data'->>'assetBlobCleanup' = 'pending')`))
+      .orderBy(desc(schema.messages.updatedAt), desc(schema.messages.id)).limit(50);
+    return rows.map(mapPostgresMessage);
+  }
+
+  async getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    const rows = await resolveQueryable(this.db).execute(sql`SELECT count(*)::int AS count, max(item->'data'->>'assetDeletedAt') AS latest,
+      coalesce(bool_or(item->'data'->>'assetBlobCleanup' = 'pending'), false) AS pending
+      FROM ${schema.messages}, jsonb_array_elements(${schema.messages.components}) AS item
+      WHERE ${schema.messages.conversationId} = ${conversationId} AND item->'data'->>'assetDeletedAt' IS NOT NULL`);
+    const row = rows.rows[0] as { count: number; latest: string | null; pending: boolean } | undefined;
+    return { epoch: row?.count ? `${row.count}:${row.latest}` : null, cleanupPending: row?.pending ?? false };
+  }
+
+  async setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void> {
+    await resolveQueryable(this.db).update(schema.messages).set({ components: sql`(SELECT jsonb_agg(CASE
+      WHEN item->>'id' = ${componentId} AND item->'data'->>'assetDeletedAt' IS NOT NULL
+      THEN jsonb_set(item, '{data,assetBlobCleanup}', ${JSON.stringify(blobCleanup)}::jsonb) ELSE item END ORDER BY ordinal)
+      FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))` })
+      .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.id, messageId)));
+  }
+
+  async markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean> {
+    const deletedAt = new Date().toISOString();
+    const deletedData = { assetDeletedAt: deletedAt, availability: 'deleted', assetBlobCleanup: component.type === 'artifact' ? 'pending' : 'done', ...(component.type === 'text'
+      ? { content: '', assetDeletedProgramHash: createHash('sha256').update(String(component.data.content)).digest('hex') } : {}) };
+    const rows = await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'id' = ${component.id}
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify(deletedData)}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+      content: component.type === 'text' && typeof component.data.content === 'string'
+        ? sql`replace(coalesce(${schema.messages.content}, ''), ${component.data.content}, '')` : schema.messages.content,
+      updatedAt: new Date(),
+    }).where(and(eq(schema.messages.id, messageId), eq(schema.messages.conversationId, conversationId),
+      eq(schema.messages.isComplete, true), eq(schema.messages.isStreaming, false),
+      sql`${schema.messages.components} @> ${JSON.stringify([component])}::jsonb`)).returning({ id: schema.messages.id });
+    return rows.length > 0;
+  }
+
+  async recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean> {
+    const rows = await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'id' = ${component.id}
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify(metadata)}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+    }).where(and(eq(schema.messages.id, messageId), eq(schema.messages.conversationId, conversationId),
+      eq(schema.messages.isComplete, true), eq(schema.messages.isStreaming, false),
+      sql`${schema.messages.components} @> ${JSON.stringify([component])}::jsonb`)).returning({ id: schema.messages.id });
+    return rows.length > 0;
+  }
+
+  async markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void> {
+    await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'type' = 'artifact' AND item->'data'->>'artifactId' = ${documentId} AND item->'data'->>'assetDeletedAt' IS NULL
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify({ assetDeletedAt: new Date().toISOString(), availability: 'deleted' })}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+      updatedAt: new Date(),
+    }).where(and(eq(schema.messages.conversationId, conversationId),
+      sql`${schema.messages.components} @> ${JSON.stringify([{ type: 'artifact', data: { artifactId: documentId } }])}::jsonb`));
+  }
 
   async canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean> {
     const [row] = await this.db.select({ id: schema.conversations.id }).from(schema.conversations)
@@ -52,7 +124,7 @@ export class PostgresMessageStore implements MessageStore {
         eq(schema.messages.conversationId, key.conversationId))).limit(1).for('update');
       const components = message?.components as MessageComponent[] | undefined;
       const content = components?.find(component => component.id === key.componentId && component.type === 'text')?.data?.content;
-      if (!message || message.conversationType !== 'ai' || message.isStreaming || !message.isComplete
+      if (!message || message.conversationType !== 'ai' || message.isStreaming || !message.isComplete || components?.find(component => component.id === key.componentId)?.data.assetDeletedAt
         || typeof content !== 'string' || createHash('sha256').update(content, 'utf8').digest('hex') !== key.programDigest) return null;
       const table = schema.openUiAppStates;
       if (expectedRevision === 0) {

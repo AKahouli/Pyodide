@@ -15,7 +15,11 @@ confirmation and message/stream updates refresh the list. Errors remain visible
 without removing unrelated rows. Agents can prepare exact refs for the existing
 code interpreter; registered generated outputs return through this same listing
 and renewable download path. Downloads themselves do not register another copy.
-Deletion remains a later phase.
+Server-provided delete permission enables a permanent-deletion confirmation.
+Deleted history renders an unavailable placeholder and exports omit its content.
+Pending physical cleanup is a separate retry-only list that survives reload;
+retries never refund quota twice. Linked sources remain managed in their workspace.
+File types use the workspace's readable type-label helper and filename fallback.
 Tests: `ConversationFilesPanel.test.tsx`, `AssetPromptBridge.test.tsx`,
 `assets-api.test.ts`, context-pane/UI-state tests and backend
 `conversation-assets.spec.ts`. The architecture plan records live qualification.

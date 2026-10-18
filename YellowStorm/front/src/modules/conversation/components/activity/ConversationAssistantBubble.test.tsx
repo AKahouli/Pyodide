@@ -79,6 +79,18 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  it('keeps deleted artifacts and mini-apps unavailable without rendering their saved program', () => {
+    render(<ConversationAssistantBubble conversationId='c1' messageId='m1' isStreaming={false} components={[
+      { id: 'deleted-app', type: 'text', data: { content: 'root = MiniApp("PRIVATE DELETED APP")', assetDeletedAt: '2026-10-18T12:00:00Z' } },
+      { id: 'deleted-file', type: 'artifact', data: { artifactId: 'file', filename: 'deleted.docx', availability: 'ready', assetDeletedAt: '2026-10-18T12:00:00Z' } },
+    ]} />);
+    expect(screen.getAllByText('assets.unavailable')).toHaveLength(2);
+    expect(screen.queryByText(/PRIVATE DELETED APP/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'View' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
+    expect(mocks.getArtifactDownloadUrl).not.toHaveBeenCalled();
+  });
+
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it('keeps the background lifecycle visible after the dispatch tool completes', () => {
     const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,

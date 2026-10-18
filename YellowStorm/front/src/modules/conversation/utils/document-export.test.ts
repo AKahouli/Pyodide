@@ -28,6 +28,20 @@ const messages = (content = program): Message[] => [{
 } as unknown as Message];
 
 describe('saved OpenUI export projection', () => {
+  it('does not parse or export tombstoned app source', async () => {
+    const selected = messages('root = UnknownPrivateDeletedProgram("secret")');
+    selected[0].components![0].data.assetDeletedAt = '2026-10-18T12:00:00Z';
+    const resolve = vi.fn();
+    expect(await buildMcpExportManifest(selected[0])).toEqual({ parts: [] });
+    expect(await buildStructuredExportBlocks(selected, { user: 'U', assistant: 'A' }, undefined, resolve)).toEqual([]);
+    expect(resolve).not.toHaveBeenCalled();
+    selected[0].questionMessageId = 'question';
+    const question = { id: 'question', conversationType: 'user', content: 'Make an app', createdAt: '2026-10-15T09:00:00Z' } as Message;
+    const old = { ...selected[0], id: 'old-answer', createdAt: '2026-10-15T09:30:00Z', components: [{ id: 'old-part', type: 'text', data: { content: 'private older answer' } }] } as Message;
+    const blocks = await buildStructuredExportBlocks([question, old, ...selected], { user: 'U', assistant: 'A' });
+    expect(blocks.map(block => block.markdown).join(' ')).not.toContain('private older answer');
+  });
+
   it('embeds validated static SVG captures without a remote asset resolver', async () => {
     const source = 'root = Card([drawing])\n drawing = Svg([Rect(0,0,20,10,"primary")], "0 0 20 10", null, null, "Saved SVG")';
     const resolver = vi.fn();

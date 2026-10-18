@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '@modules/postgres/testing/pg-integration';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
@@ -8,11 +8,17 @@ import { PgWorkspaceStore } from '../../workspace/stores/postgres/pg-workspace-s
 import { WorkspaceDocumentWrite } from '../../workspace/document/document-write';
 import { WorkspaceDocumentSupport } from '../../workspace/document/document-support';
 import { ConversationArtifactService } from './conversation-artifact.service';
+import { WorkspaceDocumentTree } from '../../workspace/document/document-tree';
+import { WorkspaceDocumentRead } from '../../workspace/document/document-read';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgWorkspaceDocumentWriteAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-write.adapter';
 
 describeIntegration('conversation output registration transactions', () => {
   const { db, close } = makeTestDb();
   const documents = new PgDocumentStore(db);
   const workspaces = new PgWorkspaceStore(db);
+  const messages = new PostgresMessageStore(db);
   const fixtures: string[] = [];
   const actor = 'a1'.repeat(12);
   const conversationId = 'b2'.repeat(12);
@@ -26,16 +32,23 @@ describeIntegration('conversation output registration transactions', () => {
     const logger = { setContext: jest.fn(), debug: jest.fn(), log: jest.fn(), warn: jest.fn() };
     const config = { get: (_key: string, fallback: unknown) => fallback };
     const storage = {
-      openReadStream: async () => ({ body: Readable.from([Buffer.from('office bytes')]) }),
+      openReadStream: async (path: string) => ({ body: Readable.from([blobs.get(path) ?? Buffer.from('office bytes')]) }),
+      exists: async (path: string) => blobs.has(path),
       upload: jest.fn(async (bytes: Buffer, _name: string, _mime: string, options: { folder: string; customFileName: string }) => {
         const path = `${options.folder}/${options.customFileName}`;
         blobs.set(path, bytes);
         return { storedName: options.customFileName, blobPath: path, url: path, contentHash: 'qa' };
       }),
       delete: jest.fn(async (path: string) => { blobs.delete(path); }),
+      copy: jest.fn(async (source: string, destination: string) => {
+        const bytes = blobs.get(source);
+        if (!bytes) throw new Error('missing source');
+        blobs.set(destination, Buffer.from(bytes));
+        return destination;
+      }),
     };
     const support = new WorkspaceDocumentSupport(documents, {
-      getAllowedExtensions: async () => ['.docx'], getAllowedMimeTypesForExtension: () => [output.mimeType],
+      getAllowedExtensions: async () => ['.docx', '.png'], getAllowedMimeTypesForExtension: (extension: string) => extension === '.png' ? ['image/png'] : [output.mimeType],
       getSettings: async () => ({ maxFileSizeMb: 50 }),
     } as never, config as never, { sendToUser: async () => undefined } as never, logger as never);
     const workspaceService = {
@@ -49,12 +62,24 @@ describeIntegration('conversation output registration transactions', () => {
     const write = new WorkspaceDocumentWrite(documents, workspaceService as never, storage as never,
       { queueDocument: jest.fn() } as never, config as never, {} as never, support, logger as never);
     const metadata = jest.fn((workspaceId: string, id: string, patch: Record<string, string>) => documents.mergeMetadata(workspaceId, id, patch));
+    const indexing = { deleteDocumentIndex: jest.fn(async () => undefined) };
+    const tree = new WorkspaceDocumentTree(documents, {} as never, workspaceService as never, storage as never, indexing as never,
+      { countBySource: async () => 0 } as never, support, logger as never);
+    const read = new WorkspaceDocumentRead(documents, storage as never, config as never, support, logger as never);
     const workspaceDocuments = { uploadSmallFile: write.uploadSmallFile.bind(write), mergeMetadata: metadata,
-      findById: async (workspaceId: string, id: string) => documents.findByIdAndWorkspace(id, workspaceId) };
-    const conversations = { requireCurrentParticipant: async () => ({ createdBy: actor, systemWorkspaceId: workspace.id }) };
-    const service = new ConversationArtifactService({} as never, storage as never, conversations as never, workspaceDocuments as never,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, documents);
-    return { service, workspace, blobs, storage, metadata };
+      findById: read.findById.bind(read), deleteConversationAsset: tree.deleteConversationAsset.bind(tree), getDownloadUrl: read.getDownloadUrl.bind(read) };
+    const conversations = { requireCurrentParticipant: async (_id: string, userId: string) => {
+      if (userId !== actor) throw new Error('current membership');
+      return { createdBy: actor, systemWorkspaceId: workspace.id };
+    }, filterAccessibleWorkspaceIds: async () => [], getUploadedDocuments: async (_id: string, query: object) => read.findByMultipleWorkspaces([workspace.id], query),
+      getWorkspaceDocuments: async () => ({ documents: [], pagination: { totalPages: 0 } }) };
+    const messageService = { getAssetRevocationState: messages.getAssetRevocationState.bind(messages), markDocumentArtifactsUnavailable: messages.markDocumentArtifactsUnavailable.bind(messages),
+      listPendingAssetCleanup: messages.listPendingAssetCleanup.bind(messages), markAssetUnavailable: messages.markAssetUnavailable.bind(messages),
+      getMessageDocument: messages.findById.bind(messages), setAssetCleanup: messages.setAssetCleanup.bind(messages) };
+    const settings = { isAttachmentIntelligenceEnabled: async () => true };
+    const service = new ConversationArtifactService(messageService as never, storage as never, conversations as never, workspaceDocuments as never,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, settings as never, undefined, documents);
+    return { service, workspace, blobs, storage, metadata, indexing, tree, read, write };
   }
 
   afterEach(async () => {
@@ -101,5 +126,116 @@ describeIntegration('conversation output registration transactions', () => {
     expect((await documents.listByWorkspaces([t.workspace.id], { ...query, searchFilename: false })).total).toBe(1);
     expect((await documents.listByWorkspace(other.workspace.id, query)).items).toEqual([]);
     expect((await documents.listByWorkspace(t.workspace.id, { ...query, search: 'report_100X' })).items).toEqual([]);
+  });
+
+  it('deletes concurrently once, frees admission quota, removes staged aliases and denies every new read', async () => {
+    const t = await setup(12);
+    const outputReceipt = await t.service.registerAsset(output);
+    const staged = await t.service.prepareAsset(conversationId, actor, outputReceipt.asset.ref, 'turn-2');
+    const stagedPath = `${actor}/system_${conversationId}/${staged.sandboxPath.replace('/mnt/workspace/', '')}`;
+    expect(t.blobs.has(stagedPath)).toBe(true);
+    const before = await t.service.assetRevocationState(conversationId, actor);
+    const deleted = await Promise.all([t.service.deleteAsset(conversationId, actor, outputReceipt.asset.ref), t.service.deleteAsset(conversationId, actor, outputReceipt.asset.ref)]);
+    expect(deleted.filter(result => !result.alreadyDeleted)).toHaveLength(1);
+    expect(t.blobs.has(stagedPath)).toBe(false);
+    expect(t.blobs.has(outputReceipt.storagePath)).toBe(false);
+    expect(await workspaces.findById(t.workspace.id)).toMatchObject({ usedStorage: 0, documentCount: 0 });
+    const after = await t.service.assetRevocationState(conversationId, actor);
+    expect(after.epoch).not.toBe(before.epoch);
+    expect(after.cleanupPending).toBe(false);
+    const readPort = new PgWorkspaceDocumentReadAdapter(db);
+    expect(await readPort.findById(outputReceipt.documentId)).toBeNull();
+    expect(await readPort.findOne({ id: outputReceipt.documentId })).toBeNull();
+    expect(await readPort.countDocuments({ workspaceId: t.workspace.id })).toBe(0);
+    expect(await readPort.findOne({ id: outputReceipt.documentId, includeDeleted: true })).toMatchObject({ id: outputReceipt.documentId });
+    await new PgWorkspaceDocumentWriteAdapter(db).updateIndexingState(outputReceipt.documentId, {
+      status: 'completed', indexingStatus: 'ready', metadata: { staleWorker: 'must not erase tombstone' },
+    });
+    expect((await documents.findById(outputReceipt.documentId))?.metadata?.assetDeletedAt).toBeTruthy();
+    expect(await readPort.findById(outputReceipt.documentId)).toBeNull();
+    expect((await t.service.deleteAsset(conversationId, actor, outputReceipt.asset.ref)).alreadyDeleted).toBe(true);
+    expect((await t.service.assetRevocationState(conversationId, actor)).epoch).toBe(after.epoch);
+    for (const operation of [() => t.service.inspectAsset(conversationId, actor, outputReceipt.asset.ref), () => t.service.readAsset(conversationId, actor, outputReceipt.asset.ref),
+      () => t.service.prepareAsset(conversationId, actor, outputReceipt.asset.ref, 'turn-3'), () => t.read.getDownloadUrl(t.workspace.id, outputReceipt.documentId)]) await expect(operation()).rejects.toThrow();
+    await expect(t.service.deleteAsset(conversationId, 'b1'.repeat(12), outputReceipt.asset.ref)).rejects.toThrow('current membership');
+    await expect(t.service.registerAsset({ ...output, invocationId: 'turn-3' })).rejects.toThrow('Sandbox asset access changed');
+    const replacement = await t.service.registerAsset({ ...output, invocationId: 'turn-3', sandboxEpoch: after.epoch });
+    expect(replacement.documentId).not.toBe(outputReceipt.documentId);
+    expect(await workspaces.findById(t.workspace.id)).toMatchObject({ usedStorage: 12, documentCount: 1 });
+  });
+
+  it('restores pending cleanup separately after reload, retries without another refund, and preserves a newer raw source', async () => {
+    const t = await setup();
+    const receipt = await t.service.registerAsset(output);
+    t.blobs.set(output.sourcePath, Buffer.from('a newer run replaced this mutable filename'));
+    t.storage.delete.mockRejectedValueOnce(new Error('storage offline'));
+    const deleted = await t.service.deleteAsset(conversationId, actor, receipt.asset.ref);
+    expect(deleted.cleanup.blob).toBe('pending');
+    expect((await t.service.assetRevocationState(conversationId, actor)).cleanupPending).toBe(true);
+    const list = await t.service.listAssets(conversationId, actor);
+    expect(list.assets).toEqual([]);
+    expect(list.pendingCleanup?.[0]).toMatchObject({ ref: receipt.asset.ref, status: 'deleted', actions: { delete: true, read: false } });
+    expect(JSON.stringify(list)).not.toContain(receipt.storagePath);
+    expect((await t.service.deleteAsset(conversationId, actor, receipt.asset.ref)).cleanup.blob).toBe('done');
+    expect(t.blobs.get(output.sourcePath)?.toString()).toBe('a newer run replaced this mutable filename');
+    expect((await t.service.assetRevocationState(conversationId, actor)).cleanupPending).toBe(false);
+    expect((await t.service.listAssets(conversationId, actor)).pendingCleanup).toBeUndefined();
+    expect(await workspaces.findById(t.workspace.id)).toMatchObject({ usedStorage: 0, documentCount: 0 });
+  });
+
+  it('uses source-match component updates without overwriting unrelated content and removes app source from saved history', async () => {
+    const t = await setup();
+    const messageId = newObjectId();
+    const component = { id: 'app', type: 'text' as const, data: { content: 'root = Card("Private app")' } };
+    const other = { id: 'other', type: 'text' as const, data: { content: 'Keep this text' } };
+    await db.insert(schema.conversations).values({ id: conversationId, createdBy: actor });
+    try {
+      await db.insert(schema.messages).values({ id: messageId, conversationId, conversationType: 'ai', isComplete: true, isStreaming: false,
+        content: `${component.data.content}\nKeep this text`, components: [component, other] });
+      expect(await messages.markAssetUnavailable(conversationId, messageId, { ...component, data: { content: 'wrong version' } })).toBe(false);
+      expect(await messages.markAssetUnavailable(conversationId, messageId, component)).toBe(true);
+      const row = await messages.findById(messageId);
+      expect(row?.components?.[1]).toEqual(other);
+      expect(row?.components?.[0].data).toMatchObject({ content: '', availability: 'deleted' });
+      expect(row?.content).not.toContain('root =');
+      expect(row?.content).toContain('Keep this text');
+      const ref = Buffer.from(JSON.stringify(['app', messageId, 'app'])).toString('base64url');
+      await expect(t.service.readAsset(conversationId, actor, ref)).rejects.toThrow('Asset not found');
+      expect((await t.service.deleteAsset(conversationId, actor, ref)).alreadyDeleted).toBe(true);
+    } finally { await db.delete(schema.conversations).where(eq(schema.conversations.id, conversationId)); }
+  });
+
+  it('removes the existing image-preparation cache and rejects staging from a stale image snapshot after deletion', async () => {
+    const t = await setup();
+    const image = await t.write.uploadSmallFile(t.workspace.id, actor, Buffer.from('image bytes'), 'generated-image.png', 'image/png', undefined, false, false);
+    const imageStage = t.service as unknown as { stageGeneratedImage(request: { userId: string; conversationId: string }, sourceImage: typeof image): Promise<{ sandboxPath: string }> };
+    const staged = await imageStage.stageGeneratedImage({ userId: actor, conversationId }, image);
+    const path = `${actor}/system_${conversationId}/${staged.sandboxPath.replace('/mnt/workspace/', '')}`;
+    expect(t.blobs.has(path)).toBe(true);
+    const ref = Buffer.from(JSON.stringify(['document', t.workspace.id, image.id])).toString('base64url');
+    expect((await t.service.deleteAsset(conversationId, actor, ref)).cleanup.blob).toBe('done');
+    expect(t.blobs.has(path)).toBe(false);
+    await expect(imageStage.stageGeneratedImage({ userId: actor, conversationId }, image)).rejects.toThrow('Document not found');
+  });
+
+  it('rejects output publication when deletion was acknowledged while the MCP output was being read', async () => {
+    const t = await setup();
+    const input = await t.write.uploadSmallFile(t.workspace.id, actor, Buffer.from('input bytes'), 'input.docx', output.mimeType, undefined, false, false);
+    const ref = Buffer.from(JSON.stringify(['document', t.workspace.id, input.id])).toString('base64url');
+    const staged = await t.service.prepareAsset(conversationId, actor, ref, 'turn');
+    const originalRead = t.storage.openReadStream;
+    let release!: () => void; let started!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const reading = new Promise<void>(resolve => { started = resolve; });
+    t.storage.openReadStream = async path => {
+      if (path === output.sourcePath) { started(); await barrier; }
+      return originalRead(path);
+    };
+    const publication = t.service.registerAsset({ ...output, inputReceipts: [{ ref, sha256: staged.sha256 }] });
+    await reading;
+    await t.service.deleteAsset(conversationId, actor, ref);
+    release();
+    await expect(publication).rejects.toThrow('Sandbox asset access changed');
+    expect((await documents.findAllByWorkspaceId(t.workspace.id)).filter(document => !document.metadata?.assetDeletedAt)).toEqual([]);
   });
 });

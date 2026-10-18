@@ -161,3 +161,40 @@ async def test_private_hydration_reauthorizes_and_hash_checks(monkeypatch,invali
 def test_private_base64_logs_are_redacted():
     from src.mcp import _redact_log_payload
     assert "private" not in str(_redact_log_payload({"content_base64":"private","nested":{"contentBase64":"private"}}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["ready", "deleted", "denied"])
+async def test_prepared_asset_access_is_rechecked_without_reading_bytes(monkeypatch, state):
+    from src.smart_rag.tools.utilities.conversation_assets import validate_prepared_assets
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    async def post(self, url, **kwargs):
+        assert url.endswith("/assets/inspect")
+        assert kwargs["json"] == {"userId": "actor-a", "conversationId": "conversation-a", "ref": "ref"}
+        return httpx.Response(404 if state == "denied" else 200, json={"status": state}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    ctx = SimpleNamespace(platform_api_url="http://backend/api", platform_api_token="test", user_id="actor-a")
+    check = validate_prepared_assets(ctx, "conversation-a", {"path": {"ref": "ref", "sha256": "a" * 64}})
+    if state == "ready":
+        await check
+    else:
+        with pytest.raises(SandboxMountValidationError):
+            await check
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"epoch":None,"cleanupPending":False}, {"epoch":"deleted-at","cleanupPending":True}, {"epoch":None}, {"epoch":123,"cleanupPending":False}])
+async def test_revocation_state_requires_trusted_scope_and_valid_contract(monkeypatch, body):
+    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    async def post(self,url,**kwargs):
+        assert url.endswith("/assets/revocation")
+        assert kwargs["json"] == {"userId":"actor-a","conversationId":"conversation-a"}
+        return httpx.Response(200,json={"data":body},request=httpx.Request("POST",url))
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    ctx=SimpleNamespace(user_id="actor-a",platform_api_url="http://backend/api",platform_api_token="test")
+    if "cleanupPending" in body and (body["epoch"] is None or isinstance(body["epoch"],str)):
+        assert await get_asset_revocation(ctx,"conversation-a") == body
+    else:
+        with pytest.raises(SandboxMountValidationError):
+            await get_asset_revocation(ctx,"conversation-a")
