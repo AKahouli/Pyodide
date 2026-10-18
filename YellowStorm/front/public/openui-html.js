@@ -13,8 +13,28 @@ function emit(){render();for(const fn of listeners)try{fn(clone(state))}catch{} 
 Object.defineProperty(window,'yellowmind',{value:Object.freeze({ready,get state(){return clone(state)},
 setState(patch){if(!writable||!port)throw Error('View is read only');const next={...state,...patch};port.postMessage({type:'state',state:next});state=next;emit()},
 subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn)}}),writable:false});
+function capture(message){
+const previous=writable;writable=false;
+try {
+ if(JSON.stringify(message.state)!==JSON.stringify(state))throw Error('State changed');
+ const before=JSON.stringify(state),root=document.body.cloneNode(true),sources=[document.body,...document.body.querySelectorAll('*')],targets=[root,...root.querySelectorAll('*')];
+ if(sources.length>3000)throw Error('Capture complexity');
+ for(let i=0;i<sources.length;i++){
+  const source=sources[i],target=targets[i],computed=getComputedStyle(source);
+  if(computed.display==='none'||computed.visibility==='hidden'){target.remove();continue}
+  for(const property of computed)target.style.setProperty(property,computed.getPropertyValue(property));
+  if(source.tagName==='CANVAS'){const img=document.createElement('img');img.src=source.toDataURL('image/png');img.width=source.width;img.height=source.height;target.replaceWith(img)}
+  if(['INPUT','TEXTAREA','SELECT'].includes(source.tagName)){const text=document.createElement('span');text.textContent=source.type==='checkbox'?String(source.checked):source.tagName==='SELECT'?(source.selectedOptions[0]?.textContent??source.value):source.value;target.replaceWith(text)}
+ }
+ root.querySelectorAll('script,style,link,meta').forEach(node=>node.remove());
+ const wrapper=document.createElement('div');wrapper.style.cssText=root.style.cssText;wrapper.append(...root.childNodes);
+ const html=wrapper.outerHTML,width=Math.ceil(document.documentElement.clientWidth),height=Math.ceil(document.documentElement.scrollHeight);
+ if(html.length>1500000||width>1600||height>10000||before!==JSON.stringify(state))throw Error('Capture limit');
+ port.postMessage({type:'capture',id:message.id,state:clone(state),capture:{html,width,height}});
+}catch{port.postMessage({type:'capture',id:message.id,state:null})}finally{writable=previous}
+}
 function init(e){if(e.source!==parent||e.data?.type!=='ys-html-init'||!e.ports[0]||port)return;
-port=e.ports[0];port.onmessage=e=>{if(e.data?.type==='state'){state=clone(e.data.state);writable=e.data.writable===true;emit();resolve()} };
+port=e.ports[0];port.onmessage=e=>{if(e.data?.type==='capture'){capture(e.data);return}if(e.data?.type==='state'){state=clone(e.data.state);writable=e.data.writable===true;emit();resolve()} };
 port.start();port.postMessage({type:'ready'});
 function measure(){port.postMessage({type:'height',height:Math.ceil(document.documentElement.getBoundingClientRect().height)})}
 new ResizeObserver(measure).observe(document.documentElement);measure();

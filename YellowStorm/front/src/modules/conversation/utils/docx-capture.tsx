@@ -16,6 +16,30 @@ export interface CapturedImage {
   height: number;
 }
 
+/** Host-validated captured markup never enters the application DOM. No scripts,
+ * network or generated-code replay are permitted in this temporary document. */
+export async function captureSavedHtmlPng(capture: { html: string; width: number; height: number }): Promise<CapturedImage | null> {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('sandbox', 'allow-same-origin');
+  frame.style.cssText = `position:fixed;left:-9999px;top:0;width:${capture.width}px;height:${capture.height}px;border:0;`;
+  try {
+    const loaded = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('HTML snapshot load timed out')), 8000);
+      frame.onload = () => { if (frame.contentDocument?.getElementById('ys-export-capture')) { clearTimeout(timer); resolve(); } };
+    });
+    document.body.appendChild(frame);
+    frame.srcdoc = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"></head><body style="margin:0"><div id="ys-export-capture">${capture.html}</div></body></html>`;
+    await loaded;
+    const body = frame.contentDocument?.body;
+    if (!body) return null;
+    const xhtml = new XMLSerializer().serializeToString(body);
+    const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="${capture.width}" height="${capture.height}"><foreignObject width="100%" height="100%">${xhtml}</foreignObject></svg>`;
+    const dataUrl = await svgMarkupToPng(markup, capture.width, capture.height);
+    if (!dataUrl) throw new Error('HTML snapshot rendering failed');
+    return { dataUrl, width: capture.width, height: capture.height };
+  } finally { frame.remove(); }
+}
+
 const CHART_WIDTH = 640;
 const PREVIEW_WIDTH = 720;
 // Recharts default animation runs ~1.5s; capture before it the series is fully drawn.

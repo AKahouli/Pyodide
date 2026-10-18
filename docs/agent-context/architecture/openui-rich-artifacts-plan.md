@@ -5,6 +5,59 @@ Assessed 2026-10-18. Complements the [mini-app plan](openui-mini-apps-plan.md)
 and [library reuse map](openui-mini-app-library-map.md); completed phases remain
 unchanged. Each implementation phase below has a separate commit and test gate.
 
+## Current delivery: exports, refinement and conversation navigation
+
+### Saved HtmlView export qualification (18 October 2026)
+
+Implemented the bounded live capture channel using the existing private identity.
+The saved preview must be mounted and ready. Export freezes its acknowledged
+revision, captures the current DOM without rerunning generated scripts, sanitizes
+it, and rasterizes a passive iframe with scripts and network resources disabled.
+Editable text/tables accompany labelled visual snapshots. Local HTML is passive.
+The renderer's exact MiniApp/name scoped HtmlView fields override variable defaults;
+equivalent identity objects do not cancel capture, while real scope/state changes do.
+
+Live conversation `c66d50ba8780ea080b2c52d5` restored North, numeric 25, boolean true,
+Late and the unsubmitted operations note after reload. HTML and DOCX downloaded;
+both contain two dashboard visuals and the two filtered native tables. The user-saved
+three-page PDF was inspected page by page and includes both visuals, captions and
+the same saved note/table rows. The second user's saved map also exported to HTML
+and DOCX. Captured visuals may use fallback fonts in the image renderer.
+
+MCP manifests upload exact captured bytes through the existing authorized workspace
+flow and resolve the returned document ID, never a same-name substitute. This avoids
+the message-size limit hit by inline base64. The real PPTX run prepared the saved
+131,990-byte image and received upload acknowledgement, but remote SHA verification
+returned a Python traceback and the mount guard stopped execution. Available logs
+truncate the traceback, so the precise remote cause is unproven. No PPTX success
+is claimed; the verification guard remains enforced.
+Focused capture/state, upload and integration tests passed; independent review
+accepted the capture boundary and scoped state projection.
+
+User selected priorities 1, 2 and 5 on 2026-10-18. Deliver separate commits:
+
+1. Saved HtmlView static exports: reuse the existing instance-bound channel and
+   acknowledged private state. No generated-script replay on export. Require an
+   active matching view; stop/timeout/changed state fails visibly. Editable text
+   and tables accompany a labelled visual snapshot in HTML/PDF/DOCX/MCP PPTX.
+2. Artifact refinement: explicit Refine fills the current composer and selects the
+   exact authorized reference without sending. Preserve original instructions and
+   outputs. Reuse immutable answer versions/source links and existing branch APIs;
+   old sources keep their own private state and saved results.
+3. Long conversations: bounded authorized plain-text search and around-message
+   loading inside existing conversation owners, target branch selection and reload
+   navigation. Preserve live answers, pagination state and draft owners; do not
+   introduce virtualization or change stream ownership without concrete evidence.
+
+Observable gates: saved exports match restored controls and visuals; refinement
+never overwrites the source; chosen historical answers survive reload without
+inference; historical search/jump succeeds outside the initial page; foreign or
+deleted sources remain unavailable and background runs continue. Browser checks
+reuse one existing localhost app tab per account profile, as requested. ADR-0025
+private state identity and ADR-0017/0018 authorization remain authoritative;
+ADR-0028's approved sandbox implementation constraints are retained. No new
+table, module, service class or runtime is introduced by this scope.
+
 ## Outcome and acceptance criteria
 
 1. Simple requests generate several different dashboards through reusable OpenUI

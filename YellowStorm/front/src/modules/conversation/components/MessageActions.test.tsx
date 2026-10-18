@@ -21,6 +21,7 @@ const downloadBlobMock = vi.hoisted(() => vi.fn());
 const notificationSuccessMock = vi.hoisted(() => vi.fn());
 const notificationErrorMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const authActor = vi.hoisted(() => ({ id: 'user-owner' }));
 const conversationState = vi.hoisted(() => ({ currentConversationId: 'conv-1', runtimeMode: 'standard', isStreaming: false, isAwaitingFirstChunk: false }));
 const modelMock = vi.hoisted(() => ({
   value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined,
@@ -72,7 +73,7 @@ vi.mock('@/modules/localization', async () => ({
 }));
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({
-    user: { id: 'user-owner', permissions: ['playbook.create'] },
+    user: { id: authActor.id, permissions: ['playbook.create'] },
   }),
 }));
 vi.mock('../api', () => ({
@@ -162,6 +163,7 @@ vi.mock('sonner', () => ({
 describe('MessageActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authActor.id = 'user-owner';
     modelMock.value = { id: 'model-1', name: 'Model One' };
     Object.assign(conversationState, { currentConversationId: 'conv-1', runtimeMode: 'standard', isStreaming: false, isAwaitingFirstChunk: false });
   });
@@ -578,6 +580,35 @@ describe('MessageActions', () => {
     });
   });
 
+  it.each(['actor change', 'unmount'])('does not download a private DOCX after %s during document construction', async transition => {
+    let finish!: (blob: Blob) => void;
+    exportBlocksToDocxMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const message = { id: 'ai-private', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' };
+    const mounted = render(<MessageActions message={message as never} isLastAiMessage={false} conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportDocx' }));
+    await waitFor(() => expect(exportBlocksToDocxMock).toHaveBeenCalled());
+    if (transition === 'unmount') mounted.unmount();
+    else {
+      authActor.id = 'other';
+      mounted.rerender(<MessageActions message={{ ...message } as never} isLastAiMessage={false} conversationId='conv-1' />);
+    }
+    await act(async () => finish(new Blob(['private docx'])));
+    expect(downloadBlobMock).not.toHaveBeenCalled();
+    expect(notificationSuccessMock).not.toHaveBeenCalled();
+    expect(notificationErrorMock).toHaveBeenCalledWith('toasts.export.failed');
+  });
+  it('unmounts a pending PDF portal when the actor changes', async () => {
+    const message = { id: 'ai-private', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' };
+    const mounted = render(<MessageActions message={message as never} isLastAiMessage={false} conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportPdf' }));
+    expect(await screen.findByTestId('message-pdf-export')).toBeInTheDocument();
+    authActor.id = 'other';
+    mounted.rerender(<MessageActions message={{ ...message } as never} isLastAiMessage={false} conversationId='conv-1' />);
+    expect(screen.queryByTestId('message-pdf-export')).toBeNull();
+    authActor.id = 'user-owner';
+    mounted.rerender(<MessageActions message={{ ...message } as never} isLastAiMessage={false} conversationId='conv-1' />);
+    expect(screen.queryByTestId('message-pdf-export')).toBeNull();
+  });
   it('exports the answer to HTML', async () => {
     render(
       <MessageActions

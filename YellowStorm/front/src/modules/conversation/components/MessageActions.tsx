@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -13,6 +13,7 @@ import { createOpenUiTextProjector, isOpenUiProgram } from './openui/plain-text'
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
 import { buildExportFilename, buildMcpExportManifest, buildStructuredExportBlocks, fetchAllMessagesForExport } from '../utils/document-export';
 import { resolveOpenUiExportImage } from '../utils/openui-export-assets';
+import { persistMcpExportImages } from '../utils/mcp-export-images';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
 import { exportBlocksToHtml, exportUrlTransform } from '../utils/html-export';
 import { openCitationSource, type CitationData } from '@/components/ai-elements/ai-message-content';
@@ -74,6 +75,12 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const [isExportingViaAgent, setIsExportingViaAgent] = useState(false);
   const agentExportLock = useRef(false);
   const [exportMarkdown, setExportMarkdown] = useState('');
+  const [pdfActor, setPdfActor] = useState<string>();
+  useEffect(() => {
+    exportActor.current = user?.id;
+    setIsExportingPdf(false); setExportMarkdown(''); setPdfActor(undefined);
+    return () => { exportActor.current = undefined; };
+  }, [user?.id]);
   const { t, language } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
@@ -150,6 +157,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const handleExportPdf = async () => {
     if (isExportingPdf) return;
     setIsExportingPdf(true);
+    setPdfActor(user?.id);
     try {
       const blocks = await buildAnswerExportBlocks();
       const markdown = blocks.map((block) => block.markdown).join('\n\n');
@@ -176,9 +184,10 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     ? fetchAllMessagesForExport(conversationId, fetchMessages) : Promise.resolve(messages);
   const buildAnswerExportBlocks = async () => {
     const actorId = user?.id;
+    const savedMessages = await savedExportMessages();
     const blocks = await buildStructuredExportBlocks([message],
       { user: t('export.userLabel'), assistant: t('export.assistantLabel') },
-      () => formattedCreatedAt, resolveOpenUiExportImage, await savedExportMessages(), actorId);
+      () => formattedCreatedAt, resolveOpenUiExportImage, savedMessages, actorId);
     if (exportActor.current !== actorId) throw new Error('Export actor changed');
     return blocks;
   };
@@ -201,7 +210,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     if (isExportingDocx) return;
     setIsExportingDocx(true);
     try {
+      const actorId = user?.id;
       const blob = await exportBlocksToDocx(await buildAnswerExportBlocks(), exportTitle);
+      if (exportActor.current !== actorId) throw new Error('Export actor changed');
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {
@@ -216,8 +227,13 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       const blob = exportBlocksToHtml(await buildAnswerExportBlocks(), exportTitle);
       downloadBlob(blob, buildExportFilename(exportTitle, 'html'));
       showSuccess(t('toasts.export.htmlSuccess'));
-    } catch {
-      showError(t('toasts.export.failed'));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '';
+      const key = /open.*saved.*view|mounted|identity/i.test(reason) ? 'openui.html.exportOpen'
+        : /state|revision|changed/i.test(reason) ? 'openui.html.exportChanged'
+        : /capture|snapshot rendering/i.test(reason) ? 'openui.html.exportCapture'
+        : /program|expression|evaluate|node|nesting|interactive/i.test(reason) ? 'openui.html.exportProgram' : 'toasts.export.failed';
+      showError(t(key));
     }
   };
 
@@ -234,7 +250,10 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     setIsExportingViaAgent(true);
     try {
       const actorId = user?.id;
-      const manifest = await buildMcpExportManifest(message, await savedExportMessages(), actorId);
+      const captured = await buildMcpExportManifest(message, await savedExportMessages(), actorId);
+      const manifest = await persistMcpExportImages(conversationId, captured, () => {
+        if (exportActor.current !== actorId || !stillAvailable()) throw new Error('Export scope changed');
+      });
       if (exportActor.current !== actorId) throw new Error('Export actor changed');
       if (!manifest.parts.length) throw new Error('Empty export');
       const citationMappings = mapConversationComponentsToContentParts(message.components ?? []).flatMap((part) => {
@@ -472,7 +491,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      {isExportingPdf && exportMarkdown && (
+      {isExportingPdf && exportMarkdown && pdfActor === user?.id && (
         <PdfExportPortal title={exportTitle} subtitle={`${formattedCreatedAt} · ${modelName}`} contentKey={exportMarkdown} onFinish={handlePdfExportFinish}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={exportUrlTransform}>{exportMarkdown}</ReactMarkdown>
         </PdfExportPortal>

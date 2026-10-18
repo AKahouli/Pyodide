@@ -19,6 +19,7 @@ import { svgComponents } from './svg';
 import { HtmlViewContent } from './HtmlView';
 import { HtmlView } from './html-view-definition';
 import { useConversationSettings } from '../../hooks/useConversationSettings';
+import { MiniAppTaskContext } from './mini-app-task-context';
 
 const htmlViewComponent = { ...HtmlView, component: function HtmlViewComponent({ props }: Parameters<typeof HtmlView.component>[0]) {
   const field = useStateField(props.name, props.value);
@@ -28,7 +29,9 @@ const htmlViewComponent = { ...HtmlView, component: function HtmlViewComponent({
   const { mode } = useTheme();
   const streaming = useIsStreaming();
   const settings = useConversationSettings();
-  return <HtmlViewContent {...props} value={field.value} onChange={next => field.isReactive ? field.setValue(next) : setFieldValue(formName, 'HtmlView', props.name, next)} writable={writable && props.value !== undefined} streaming={streaming} scheme={mode === 'dark' ? 'dark' : 'light'} mode={settings?.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict'} />;
+  const scope = useContext(MiniAppTaskContext);
+  const identity = scope ? { userId: scope.actorId, conversationId: scope.conversationId, messageId: scope.messageId, componentId: scope.componentId, programDigest: scope.programDigest } : undefined;
+  return <HtmlViewContent {...props} identity={identity} value={field.value} onChange={next => field.isReactive ? field.setValue(next) : setFieldValue(formName, 'HtmlView', props.name, next)} writable={writable && props.value !== undefined} streaming={streaming} scheme={mode === 'dark' ? 'dark' : 'light'} mode={settings?.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict'} />;
 } };
 
 /**

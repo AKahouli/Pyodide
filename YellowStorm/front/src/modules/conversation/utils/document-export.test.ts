@@ -28,6 +28,16 @@ const messages = (content = program): Message[] => [{
 } as unknown as Message];
 
 describe('saved OpenUI export projection', () => {
+  it('exports the explicitly displayed historical branch before resolving any replaced source', async () => {
+    const question = { id: 'q', conversationType: 'user', content: 'Make an artifact', createdAt: '2026-10-18T09:00:00Z' } as Message;
+    const old = { ...messages('root = Card([TextContent("Saved original")])')[0], id: 'old', questionMessageId: 'q' };
+    const latest = { ...messages('root = Unknown("Unavailable newer source")')[0], id: 'latest', questionMessageId: 'q', createdAt: '2026-10-18T12:00:00Z' };
+    const resolver = vi.fn();
+    const blocks = await buildStructuredExportBlocks([question, old, latest], { user: 'U', assistant: 'A' }, undefined, resolver, [], undefined, new Map([['q', 'old']]));
+    expect(blocks.map(block => block.markdown).join(' ')).toContain('Saved original');
+    expect(resolver).not.toHaveBeenCalled();
+    await expect(buildStructuredExportBlocks([question, old, latest], { user: 'U', assistant: 'A' }, undefined, resolver, [], undefined, new Map([['q', 'foreign']]))).rejects.toThrow('Selected saved answer is unavailable');
+  });
   it('does not parse or export tombstoned app source', async () => {
     const selected = messages('root = UnknownPrivateDeletedProgram("secret")');
     selected[0].components![0].data.assetDeletedAt = '2026-10-18T12:00:00Z';

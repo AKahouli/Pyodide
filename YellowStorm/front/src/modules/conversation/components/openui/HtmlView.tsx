@@ -2,17 +2,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
+import { registerHtmlCapture, sameHtmlState, type HtmlCapture } from './html-capture';
+import type { MiniAppStateIdentity } from './mini-app-state';
+import { sanitizeHtmlCapture } from './html-sandbox';
 import { htmlDocument, htmlState, type HtmlMode } from './html-sandbox';
 
-export function HtmlViewContent({ html, height, title, value, onChange, writable = false, streaming = false, scheme = 'light', mode = 'strict' }: {
-  html: string; height?: number; title?: string; value?: unknown; onChange: (state: Record<string, unknown>) => void;
+export function HtmlViewContent({ html, height, title, value, onChange, writable = false, streaming = false, scheme = 'light', mode = 'strict', identity, name }: {
+  identity?: MiniAppStateIdentity; name?: string; html: string; height?: number; title?: string; value?: unknown; onChange: (state: Record<string, unknown>) => void;
   writable?: boolean; streaming?: boolean; scheme?: 'light' | 'dark'; mode?: HtmlMode;
 }) {
   const { t } = useModuleTranslation('conversation');
+  // Autosave status renders may recreate this object without changing its private scope.
+  const captureIdentity = useMemo(() => identity ? { ...identity } : undefined, [identity?.userId, identity?.conversationId, identity?.messageId, identity?.componentId, identity?.programDigest]);
   const frame = useRef<HTMLIFrameElement>(null);
   const port = useRef<MessagePort>();
   const current = useRef({ value, onChange, writable });
   current.current = { value, onChange, writable };
+  const pending = useRef<{ id: string; state: Record<string, unknown>; resolve: (capture: HtmlCapture) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  const cancelCapture = () => { const request = pending.current; pending.current = undefined; if (request) { clearTimeout(request.timer); request.reject(new Error('HTML view changed during export')); } };
   const [restart, setRestart] = useState(0);
   const [stopped, setStopped] = useState(false);
   const [error, setError] = useState(false);
@@ -31,12 +38,24 @@ export function HtmlViewContent({ html, height, title, value, onChange, writable
     try { port.current?.postMessage({ type: 'state', state: htmlState(current.current.value ?? {}), writable: current.current.writable }); }
     catch { setError(true); }
   };
-  useEffect(sync, [value, writable]);
+  useEffect(() => { if (pending.current && !sameHtmlState(value, pending.current.state)) cancelCapture(); sync(); }, [value, writable]);
+  useEffect(() => {
+    if (!captureIdentity || connectedDocument !== doc || stopped || streaming || error || !doc) return;
+    const unregister = registerHtmlCapture(captureIdentity, { html, name }, state => new Promise((resolve, reject) => {
+      if (!port.current || !sameHtmlState(state, current.current.value)) { reject(new Error('HTML view does not match the saved state')); return; }
+      if (pending.current) { reject(new Error('HTML capture already pending')); return; }
+      const id = crypto.randomUUID();
+      const timer = setTimeout(() => { pending.current = undefined; reject(new Error('HTML capture timed out')); }, 5000);
+      pending.current = { id, state, resolve, reject, timer };
+      port.current.postMessage({ type: 'capture', id, state });
+    }));
+    return () => { unregister(); cancelCapture(); };
+  }, [captureIdentity, html, name, connectedDocument, doc, stopped, streaming, error]);
   useEffect(() => {
     if (doc && !stopped && !streaming) lifecycle.timer = setTimeout(() => {
       if (!lifecycle.ready) { setError(true); lifecycle.port?.close(); if (port.current === lifecycle.port) port.current = undefined; }
     }, 30000);
-    return () => { clearTimeout(lifecycle.timer); lifecycle.port?.close(); if (port.current === lifecycle.port) port.current = undefined; };
+    return () => { cancelCapture(); clearTimeout(lifecycle.timer); lifecycle.port?.close(); if (port.current === lifecycle.port) port.current = undefined; };
   }, [doc, stopped, streaming, lifecycle]);
   function connect() {
     if (!frame.current || stopped || streaming || lifecycle.port) return;
@@ -52,9 +71,18 @@ export function HtmlViewContent({ html, height, title, value, onChange, writable
       try {
         const message: unknown = event.data;
         if (!message || typeof message !== 'object' || !('type' in message)) throw new Error('Invalid HTML message');
-        if (message.type === 'ready') { lifecycle.ready = true; setConnectedDocument(doc); clearTimeout(lifecycle.timer); sync(); }
+        if (message.type === 'capture' && 'id' in message) {
+          const request = pending.current;
+          if (!request || message.id !== request.id) return;
+          pending.current = undefined; clearTimeout(request.timer);
+          try {
+            if (!('state' in message) || !sameHtmlState(message.state, request.state) || !sameHtmlState(current.current.value, request.state) || !('capture' in message)) throw new Error('HTML capture state changed');
+            request.resolve(sanitizeHtmlCapture(message.capture));
+          } catch { request.reject(new Error('Invalid HTML capture response')); }
+        } else if (message.type === 'ready') { lifecycle.ready = true; setConnectedDocument(doc); clearTimeout(lifecycle.timer); sync(); }
         else if (message.type === 'height' && 'height' in message && typeof message.height === 'number' && Number.isFinite(message.height)) setMeasured(Math.max(80, Math.min(2400, message.height)));
         else if (message.type === 'state' && 'state' in message) {
+          cancelCapture();
           if (!current.current.writable) return;
           const next = htmlState(message.state, htmlState(current.current.value ?? {}));
           current.current.onChange(next);

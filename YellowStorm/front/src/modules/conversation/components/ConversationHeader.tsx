@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -43,6 +43,12 @@ export function ConversationHeader() {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingHtml, setIsExportingHtml] = useState(false);
   const [pdfBlocks, setPdfBlocks] = useState<ExportBlock[] | null>(null);
+  const [pdfActor, setPdfActor] = useState<string>();
+  useEffect(() => {
+    exportActor.current = user?.id;
+    setPdfBlocks(null); setPdfActor(undefined);
+    return () => { exportActor.current = undefined; };
+  }, [user?.id]);
   const { t, language } = useModuleTranslation('conversation');
 
   // Typewriter effect for newly generated names
@@ -61,13 +67,14 @@ export function ConversationHeader() {
   const exportTitle = conversation?.title?.trim() || t('exportPdf.untitledConversation');
 
   const buildExportBlocksForConversation = async (): Promise<ExportBlock[]> => {
+    const selectedBranches = new Map(useConversationStore.getState().activeBranches);
     const messages = await fetchAllMessagesForExport(conversation.id, (id, params) => fetchMessages(id, params));
     const formatTimestamp = (iso: string) => {
       const date = new Date(iso);
       return Number.isNaN(date.getTime()) ? iso : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
     };
     const actorId = user?.id;
-    const blocks = await buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage, messages, actorId);
+    const blocks = await buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage, messages, actorId, selectedBranches);
     if (exportActor.current !== actorId) throw new Error('Export actor changed');
     return blocks;
   };
@@ -75,6 +82,7 @@ export function ConversationHeader() {
   const handleExportDocx = async () => {
     if (isExportingDocx) return;
     setIsExportingDocx(true);
+    const actorId = user?.id;
     try {
       const blocks = await buildExportBlocksForConversation();
       if (!blocks.length) {
@@ -82,6 +90,7 @@ export function ConversationHeader() {
         return;
       }
       const blob = await exportBlocksToDocx(blocks, exportTitle);
+      if (exportActor.current !== actorId) throw new Error('Export actor changed');
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {
@@ -94,6 +103,7 @@ export function ConversationHeader() {
   const handleExportPdf = async () => {
     if (isExportingPdf || pdfBlocks) return;
     setIsExportingPdf(true);
+    setPdfActor(user?.id);
     try {
       const blocks = await buildExportBlocksForConversation();
       if (!blocks.length) {
@@ -267,7 +277,7 @@ export function ConversationHeader() {
 
       {conversation.createdBy === user?.id && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} governed={isGoverned} />}
 
-      {pdfBlocks && (
+      {pdfBlocks && pdfActor === user?.id && (
         <PdfExportPortal
           title={exportTitle}
           contentKey={JSON.stringify(pdfBlocks)}

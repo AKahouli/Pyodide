@@ -110,12 +110,20 @@ The conversation module is a self-contained feature module that handles:
 ### OpenUI slides
 
 Answer and conversation DOCX, HTML and print/PDF exports project the saved OpenUI
-program with the installed parser, independently of mounted or collapsed views.
+program with the installed parser, independently of mounted or collapsed views,
+except for HtmlView: its saved preview must be open and ready for a validated
+capture of the current DOM. HTML exports are passive snapshots, not executable apps.
 The shared projection preserves image/caption order, text, native tables and chart
 data as editable tables. Images are embedded through existing answer-scoped
 generated-image, citation and guarded web-image resolvers. Missing assets and
 unsupported dynamic programs fail explicitly instead of producing partial files.
 Regenerated answers are selected before resolving their assets.
+HtmlView exports preserve visible text and tables as editable content and label
+custom visuals as image snapshots. Capture checks actor, source, saved revision
+and typed state; a changed or unavailable preview stops export. Scripts are never
+rerun during capture. For MCP exports, exact captured image bytes are uploaded
+through the existing private workspace upload flow (and count toward its quota),
+then referenced by the returned asset ID rather than a filename or inline base64.
 HTML/PDF image labels are visible captions beneath each image as well as alt text;
 print pagination keeps the image paragraph with its following caption where possible.
 

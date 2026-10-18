@@ -2,8 +2,9 @@ import type { Message, MessageComponent } from '../types';
 import { componentToMarkdown, componentsToMarkdown, isVisualConversationComponent } from '../utils';
 import { createOpenUiTextProjector, exportPartsToMarkdown, isOpenUiProgram, projectOpenUiProgram, type OpenUiExportPart } from '../components/openui/plain-text';
 import { fetchConversationFiles, fetchMessage, fetchOpenUiAppState } from '../api';
-import { assertMiniAppExportReady, validateMiniAppSnapshot } from '../components/openui/mini-app-state';
+import { assertMiniAppExportReady, miniAppStateSignature, validateMiniAppSnapshot } from '../components/openui/mini-app-state';
 import type { OpenUiReactiveExportSnapshot } from '../components/openui/plain-text';
+import { translateConversation } from '../translation';
 
 /** Local downloads never modify the transcript. The explicit agent export action
  * sends only projected visible parts through the existing authorized MCP flow. */
@@ -20,7 +21,7 @@ async function reactiveExportState(message: Message, component: MessageComponent
   await assertMiniAppExportReady(identity, snapshot);
   const ownSubmissions = messages.filter(task => task.senderId === actorId && (task.interaction?.type !== 'openui'
     || !task.interaction.appTask || task.interaction.appTask.programDigest === programDigest));
-  const result: OpenUiReactiveExportSnapshot = { reactiveState: snapshot.stateRevision === 0 ? savedViewState(message, component.id, ownSubmissions) : snapshot.state };
+  const result: OpenUiReactiveExportSnapshot = { identity, stateRevision: snapshot.stateRevision, reactiveState: snapshot.stateRevision === 0 ? savedViewState(message, component.id, ownSubmissions) : snapshot.state };
   if (/\bMiniDocument\s*\(/.test(program)) {
     result.documents = {};
     for (let page = 1; page <= 100; page++) {
@@ -56,6 +57,34 @@ async function reactiveExportState(message: Message, component: MessageComponent
   return result;
 }
 
+async function captureSavedHtml(props: Record<string, unknown>, snapshot: OpenUiReactiveExportSnapshot): Promise<OpenUiExportPart[]> {
+  if (!snapshot.identity || typeof props.html !== 'string') throw new Error('Saved HTML identity required');
+  const { captureHtmlView } = await import('../components/openui/html-capture');
+  const { captureSavedHtmlPng } = await import('./docx-capture');
+  await assertMiniAppExportReady(snapshot.identity);
+  const captured = await captureHtmlView({ html: props.html, name: typeof props.name === 'string' ? props.name : 'html', value: props.value }, snapshot.identity);
+  const image = await captureSavedHtmlPng(captured);
+  if (!image) throw new Error('HTML snapshot rendering failed');
+  const acknowledged = validateMiniAppSnapshot(await fetchOpenUiAppState(snapshot.identity), snapshot.identity.programDigest);
+  await assertMiniAppExportReady(snapshot.identity, acknowledged);
+  if (acknowledged.stateRevision !== snapshot.stateRevision || (acknowledged.stateRevision !== 0 && miniAppStateSignature(acknowledged.state) !== miniAppStateSignature(snapshot.reactiveState))) throw new Error('Saved HTML changed during export');
+  const doc = new DOMParser().parseFromString(captured.html, 'text/html');
+  // Text and tables stay editable; the labelled picture preserves custom layout/SVG/canvas.
+  const { domToPlainText } = await import('../components/openui/plain-text');
+  const literal = (value: string) => value.replace(/[\\`*_[\]{}()#+.!><|~&-]/g, '\\$&').replace(/\s+/g, ' ').trim();
+  const tables = Array.from(doc.querySelectorAll('table')).map(table => {
+    const rows = Array.from(table.rows).map(row => Array.from(row.cells).map(cell => literal(cell.textContent ?? '')));
+    if (!rows.length) return '';
+    const columns = Math.max(...rows.map(row => row.length));
+    const line = (row: string[]) => `| ${Array.from({ length: columns }, (_, index) => row[index] ?? '').join(' | ')} |`;
+    return [line(rows[0]), line(Array(columns).fill('---')), ...rows.slice(1).map(line)].join('\n');
+  });
+  doc.querySelectorAll('table').forEach(table => table.remove());
+  const text = [literal(domToPlainText(doc.body)), ...tables].filter(Boolean).join('\n\n');
+  const title = typeof props.title === 'string' ? props.title : 'HTML';
+  return [{ kind: 'markdown', markdown: text }, { kind: 'image', source: image.dataUrl, caption: `${title} — ${translateConversation('openui.html.snapshot')}` }];
+}
+
 async function captureExportVisual(name: string, props: Record<string, unknown>): Promise<string> {
   const { captureOpenUiChartPng, captureOpenUiSvgPng } = await import('./docx-capture');
   const image = await (name === 'Svg' ? captureOpenUiSvgPng(props) : captureOpenUiChartPng(name, props));
@@ -88,7 +117,7 @@ export async function buildMcpExportManifest(message: Message, submissionMessage
     if (component.data?.assetDeletedAt) continue;
     if (!component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content)) {
       const reactive = await reactiveExportState(message, component, actorId, submissionMessages);
-      parts.push(...(await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), reactive ? captureExportVisual : undefined, reactive)).map((part) => ({ ...part, componentId: component.id })));
+      parts.push(...(await projectOpenUiProgram(String(component.data?.content), reactive ? {} : savedViewState(message, component.id, submissionMessages), reactive ? captureExportVisual : undefined, reactive, reactive ? props => captureSavedHtml(props, reactive) : undefined)).map((part) => ({ ...part, componentId: component.id })));
     } else {
       if (isVisualConversationComponent(component)) throw new Error('Legacy visual MCP export is unsupported');
       const markdown = componentToMarkdown(component);
@@ -118,13 +147,19 @@ export async function buildStructuredExportBlocks(
   resolveImage?: ExportImageResolver,
   submissionMessages: readonly Message[] = messages,
   actorId?: string,
+  selectedBranches?: ReadonlyMap<string, string>,
 ): Promise<ExportBlock[]> {
   // Choose the saved branch before parsing/resolving it. An obsolete answer's
   // deleted image must not prevent exporting the replacement answer.
   const questionIds = new Set(messages.filter((message) => message.conversationType === 'user' && message.content?.trim()).map((message) => message.id));
   const selected = new Map<string, { index: number; time: number }>();
+  for (const [questionId, answerId] of selectedBranches ?? []) {
+    if (questionIds.has(questionId) && !messages.some(message => message.id === answerId && message.questionMessageId === questionId && message.conversationType === 'ai')) throw new Error('Selected saved answer is unavailable');
+  }
   messages.forEach((message, index) => {
     if (message.conversationType !== 'ai' || !message.questionMessageId || !questionIds.has(message.questionMessageId)) return;
+    const preferred = selectedBranches?.get(message.questionMessageId);
+    if (preferred && preferred !== message.id) return;
     const components = message.components ?? [];
     if (!components.some((component) => component.data?.assetDeletedAt || isVisualConversationComponent(component)
       || (!component.data?.assetDeletedAt && component.type === 'text' && isOpenUiProgram(component.data?.content))
@@ -150,7 +185,11 @@ export async function buildStructuredExportBlocks(
           const source = await captureExportVisual(name, props);
           chartImages.add(source);
           return source;
-        }, reactive);
+        }, reactive, reactive ? async props => {
+          const captured = await captureSavedHtml(props, reactive);
+          for (const part of captured) if (part.kind === 'image') chartImages.add(part.source);
+          return captured;
+        } : undefined);
         for (const part of projectedParts) {
           if (part.kind !== 'image') { parts.push(part); continue; }
           if (!chartImages.has(part.source) && !resolveImage) throw new Error('OpenUI export image resolver required');

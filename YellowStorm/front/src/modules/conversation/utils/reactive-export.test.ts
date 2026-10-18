@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { buildMcpExportManifest, buildStructuredExportBlocks } from './document-export';
+import { htmlViewExamples } from '../components/openui/html-view-examples';
+import { registerHtmlCapture } from '../components/openui/html-capture';
 import { dashboardExamples } from '../components/openui/dashboard-examples';
 import { registerMiniAppExportGuard, type MiniAppStateIdentity } from '../components/openui/mini-app-state';
 import type { Message } from '../types';
@@ -11,6 +13,7 @@ const fetchFiles = vi.hoisted(() => vi.fn());
 const fetchResult = vi.hoisted(() => vi.fn());
 vi.mock('../api', () => ({ fetchOpenUiAppState: fetchState, fetchConversationFiles: fetchFiles, fetchMessage: fetchResult }));
 vi.mock('./docx-capture', () => ({
+  captureSavedHtmlPng: vi.fn(async () => ({ dataUrl: 'data:image/png;base64,aHRtbA==', width: 640, height: 360 })),
   captureOpenUiSvgPng: vi.fn(async () => ({ dataUrl: 'data:image/png;base64,c3Zn', width: 200, height: 100 })),
   captureOpenUiChartPng: vi.fn(async () => ({ dataUrl: 'data:image/png;base64,Y2hhcnQ=', width: 640, height: 320 })),
 }));
@@ -38,6 +41,60 @@ describe('authenticated reactive dashboard exports', () => {
     expect(manifest.parts.map(({ componentId: _id, ...part }) => part)).toEqual(blocks[0].parts);
     expect(exportBlocksToHtml(blocks, 'Dashboard').size).toBeGreaterThan(100);
     expect(message.components?.[0].data.content).toBe(program);
+  });
+  it.each(['strict', 'interactive'] as const)('exports an acknowledged %s HTML view to matching local and MCP parts', async mode => {
+    const base = mode === 'strict' ? htmlViewExamples.sales : htmlViewExamples.operations;
+    const program = mode === 'interactive' ? base.replace('Operations planner</h2>', 'Operations planner</h2><script>window.yellowmind.ready.then(()=>{})</script>') : base;
+    const state = mode === 'strict' ? { region: 'North', target: 0, notes: false } : { capacity: 0, label: '' };
+    const { identity } = await saved(program, { $view: state });
+    const match = program.match(/view = HtmlView\(("(?:[^"\\]|\\.)*")/)!;
+    const html = JSON.parse(match[1]) as string;
+    const capture = vi.fn(async () => ({ html: '<section><h2>Saved dashboard</h2><p>Capacity 0</p></section>', width: 640, height: 360, text: 'ignored' }));
+    const unregister = registerHtmlCapture(identity, { html, name: 'view' }, capture);
+    try {
+      const blocks = await buildStructuredExportBlocks([source(program)], labels, undefined, undefined, [], 'owner');
+      const manifest = await buildMcpExportManifest(source(program), [], 'owner');
+      expect(manifest.parts.map(({ componentId: _id, ...part }) => part)).toEqual(blocks[0].parts);
+      expect(blocks[0].parts).toContainEqual(expect.objectContaining({ kind: 'image', source: 'data:image/png;base64,aHRtbA==' }));
+      expect(blocks[0].markdown).toContain('Capacity 0');
+      expect(capture).toHaveBeenCalledWith(state);
+      expect(exportBlocksToHtml(blocks, 'Saved HTML').size).toBeGreaterThan(100);
+    } finally { unregister(); }
+  });
+  it('rejects HTML export without an exact live actor/source and rejects a revision changed during capture', async () => {
+    const program = htmlViewExamples.sales, state = { region: 'North', target: 0, notes: false };
+    const { identity, snapshot } = await saved(program, { $view: state });
+    await expect(buildMcpExportManifest(source(program), [], 'owner')).rejects.toThrow('Open the saved HTML view');
+    const html = JSON.parse(program.match(/view = HtmlView\(("(?:[^"\\]|\\.)*")/)![1]) as string;
+    const foreign = registerHtmlCapture({ ...identity, userId: 'other' }, { html, name: 'view' }, async () => ({ html: '<p>Other user</p>', width: 640, height: 360, text: '' }));
+    try { await expect(buildMcpExportManifest(source(program), [], 'owner')).rejects.toThrow('Open the saved HTML view'); } finally { foreign(); }
+    const cleanup = registerHtmlCapture(identity, { html, name: 'view' }, async () => {
+      fetchState.mockResolvedValue({ ...snapshot, stateRevision: snapshot.stateRevision + 1 });
+      return { html: '<p>Saved</p>', width: 640, height: 360, text: '' };
+    });
+    try { await expect(buildMcpExportManifest(source(program), [], 'owner')).rejects.toThrow('changed during export'); } finally { cleanup(); }
+  });
+  it('exports two saved HTML dashboards alongside completed agent activity', async () => {
+    const program = 'root = Card([sales, operations])\n$salesState = {region:"all",target:0,compare:false}\n$opsState = {status:"all",note:""}\nsales = MiniApp("sales","Sales","Sample",[salesView])\nsalesView = HtmlView("<p>Sales</p>",560,"Sales","sales-view",$salesState)\noperations = MiniApp("operations","Operations","Sample",[opsView])\nopsView = HtmlView("<p>Operations</p>",560,"Operations","ops-view",$opsState)';
+    const state = { $salesState: { region: 'all', target: 0, compare: false }, $opsState: { status: 'all', note: '' },
+      sales: { 'sales-view': { componentType: 'HtmlView', value: { region: 'North', target: 25, compare: true } } },
+      operations: { 'ops-view': { componentType: 'HtmlView', value: { status: 'late', note: 'Saved operations note' } } },
+      foreign: { 'sales-view': { componentType: 'HtmlView', value: { region: 'Foreign', target: 999, compare: false } } },
+    };
+    const { identity } = await saved(program, state);
+    const cleanup = [
+      registerHtmlCapture(identity, { html: '<p>Sales</p>', name: 'sales-view' }, async value => { expect(value).toEqual(state.sales['sales-view'].value); return { html: '<p>North 25 true</p>', width: 640, height: 360, text: '' }; }),
+      registerHtmlCapture(identity, { html: '<p>Operations</p>', name: 'ops-view' }, async value => { expect(value).toEqual(state.operations['ops-view'].value); return { html: '<p>late Saved operations note</p>', width: 640, height: 360, text: '' }; }),
+    ];
+    const message = source(program);
+    message.components!.unshift({ id: 'activity', type: 'agentActivity', data: { status: 'completed', actorName: 'Smart Agent' } });
+    try {
+      const blocks = await buildStructuredExportBlocks([message], labels, undefined, undefined, [], 'owner');
+      expect(blocks[0].parts?.filter(part => part.kind === 'image')).toHaveLength(2);
+      expect(blocks[0].markdown).toContain('North 25 true');
+      expect(blocks[0].markdown).toContain('late Saved operations note');
+      expect((await buildMcpExportManifest(message, [], 'owner')).parts.map(({ componentId: _id, ...part }) => part)).toEqual(blocks[0].parts);
+    } finally { cleanup.forEach(unregister => unregister()); }
   });
   it('requires explicit authenticated scope and propagates access rejection', async () => {
     const message = source(dashboardExamples.sales);

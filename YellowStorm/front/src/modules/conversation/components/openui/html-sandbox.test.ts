@@ -83,6 +83,6 @@ describe('HtmlView policy and state', () => {
     expect(port.postMessage).toHaveBeenCalledWith({ type: 'error' });
   });
   it.each(Object.entries(htmlViewExamples))('registers the %s fixture and explicitly rejects unsupported visual export', async (_name, program) => {
-    await expect(projectOpenUiProgram(program, undefined, undefined, { reactiveState: {} })).rejects.toThrow('HtmlView visual export is not yet supported');
+    await expect(projectOpenUiProgram(program, undefined, undefined, { reactiveState: {} })).rejects.toThrow('Saved mounted HtmlView required');
   });
 });

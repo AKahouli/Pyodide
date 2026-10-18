@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { captureHtmlView } from './html-capture';
 import { HtmlViewContent } from './HtmlView';
 
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
@@ -19,6 +20,36 @@ describe('HtmlView instance channel', () => {
   });
   const renderView = (extra: Record<string, unknown> = {}) => render(<HtmlViewContent html='<h2>View</h2>' title='View' value={{ count: 0, enabled: false }} onChange={vi.fn()} writable {...extra} />);
   function send(data: unknown, index = 0) { act(() => channels[index].port1.onmessage?.({ data } as MessageEvent)); }
+  it('captures only the saved state and ignores forged request IDs', async () => {
+    const identity = { userId: 'actor', conversationId: 'conversation', messageId: 'message', componentId: 'part', programDigest: 'digest' };
+    const props = { html: '<h2>View</h2>', name: 'view', value: { count: 0, enabled: false } };
+    const view = renderView({ identity, name: 'view' }); announce(screen.getByTitle('View')); send({ type: 'ready' });
+    const result = captureHtmlView(props, identity);
+    const request = channels[0].port1.postMessage.mock.calls.at(-1)![0];
+    expect(request).toMatchObject({ type: 'capture', state: props.value });
+    send({ type: 'capture', id: 'forged', state: props.value, capture: { html: '<p>bad</p>', width: 640, height: 360 } });
+    send({ type: 'capture', id: request.id, state: props.value, capture: { html: '<p>Saved 0</p>', width: 640, height: 360 } });
+    await expect(result).resolves.toMatchObject({ text: 'Saved 0' });
+    await expect(captureHtmlView({ ...props, value: { count: 1, enabled: false } }, identity)).rejects.toThrow('saved state');
+    const interrupted = captureHtmlView(props, identity); view.unmount();
+    await expect(interrupted).rejects.toThrow('changed');
+  });
+  it('keeps an in-flight capture across equivalent identity and value objects but cancels an actor change', async () => {
+    const identity = { userId: 'actor', conversationId: 'conversation', messageId: 'message', componentId: 'part', programDigest: 'digest' };
+    const props = { html: '<h2>View</h2>', title: 'View', name: 'view', value: { count: 0, enabled: false }, onChange: vi.fn(), writable: true };
+    const view = render(<HtmlViewContent {...props} identity={identity} />);
+    announce(screen.getByTitle('View')); send({ type: 'ready' });
+    const pending = captureHtmlView(props, identity);
+    const request = channels[0].port1.postMessage.mock.calls.at(-1)![0];
+    view.rerender(<HtmlViewContent {...props} value={{ ...props.value }} identity={{ ...identity }} />);
+    send({ type: 'capture', id: request.id, state: props.value, capture: { html: '<p>Saved 0</p>', width: 640, height: 360 } });
+    await expect(pending).resolves.toMatchObject({ text: 'Saved 0' });
+    const interrupted = captureHtmlView(props, identity);
+    const rejected = expect(interrupted).rejects.toThrow('changed during export');
+    view.rerender(<HtmlViewContent {...props} identity={{ ...identity, userId: 'other' }} />);
+    await rejected;
+    await expect(captureHtmlView(props, identity)).rejects.toThrow('Open the saved HTML view');
+  });
   it('rejects a forged shell source, origin or token before transferring a port', () => {
     renderView();
     const frame = screen.getByTitle('View') as HTMLIFrameElement;

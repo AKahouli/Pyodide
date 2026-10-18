@@ -7,6 +7,7 @@ import { askAgentAction, miniAppDefinitions } from './mini-app-definitions';
 import { miniAppFunctions } from './mini-app-functions';
 import { dashboardFunctions } from './dashboard-functions';
 import { miniAppStateSignature, validateMiniAppState } from './mini-app-state';
+import type { MiniAppStateIdentity } from './mini-app-state';
 
 /** An OpenUI Lang program always opens with its `root = Component(...)` statement. */
 const OPENUI_PROGRAM = /^\s*root\s*=\s*[A-Z]\w*\(/m;
@@ -95,6 +96,8 @@ export type OpenUiExportPart = { kind: 'markdown'; markdown: string } | { kind: 
 /** The host supplies only an acknowledged private state and separately authorized references. */
 export interface OpenUiReactiveExportSnapshot {
   reactiveState: Record<string, unknown>;
+  identity?: MiniAppStateIdentity;
+  stateRevision?: number;
   documents?: Record<string, string>;
   taskResults?: Record<string, { inputs: Record<string, unknown>; parts: OpenUiExportPart[] }>;
 }
@@ -105,7 +108,7 @@ const INTERACTIVE = /^(?:Action|Button|FollowUp|Form|Input|Select|Checkbox|Radio
 
 /** Parsing never executes queries/mutations. Partial/dynamic content fails explicitly
  * rather than producing a plausible but incomplete document. */
-export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>, snapshot?: OpenUiReactiveExportSnapshot): Promise<OpenUiExportPart[]> {
+export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>, snapshot?: OpenUiReactiveExportSnapshot, renderHtml?: (props: Record<string, unknown>) => Promise<OpenUiExportPart[]>): Promise<OpenUiExportPart[]> {
   if (snapshot) {
     const state = validateMiniAppState(snapshot.reactiveState);
     viewState = { ...viewState, ...(Object.hasOwn(state, '__ysExplore') ? { __ysExplore: state.__ysExplore } : {}) };
@@ -117,6 +120,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
   const charts: Array<{ part: Extract<OpenUiExportPart, { kind: 'image' }>; name: string; props: Record<string, unknown> }> = [];
+  const htmlViews: Array<{ placeholder: OpenUiExportPart; props: Record<string, unknown> }> = [];
   const chartImage = (name: string, props: Record<string, unknown>) => {
     if (!renderChart) return;
     const part = { kind: 'image' as const, source: '', caption: '' };
@@ -147,7 +151,21 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     const props = (node.type === 'element' ? node.props : node) as Record<string, unknown>;
     if (!props || typeof props !== 'object') throw new Error('Invalid OpenUI export props');
     if (name === 'MiniButton') return;
-    if (name === 'HtmlView') throw new Error('HtmlView visual export is not yet supported');
+    if (name === 'HtmlView') {
+      if (!snapshot?.identity || !renderHtml) throw new Error('Saved mounted HtmlView required for export');
+      const placeholder: OpenUiExportPart = { kind: 'markdown', markdown: '' };
+      // Plain object bindings use useStateField's scoped form value after edits;
+      // the original $variable remains a default in the SDK snapshot.
+      const form = snapshot.reactiveState[appName];
+      const field = form && typeof form === 'object' && !Array.isArray(form) && typeof props.name === 'string'
+        ? (form as Record<string, unknown>)[props.name] : undefined;
+      let capturedProps = props;
+      if (field !== undefined) {
+        if (!field || typeof field !== 'object' || Array.isArray(field) || !('componentType' in field) || field.componentType !== 'HtmlView' || !('value' in field)) throw new Error('Invalid saved HTML field');
+        capturedProps = { ...props, value: validateMiniAppState(field.value) };
+      }
+      parts.push(placeholder); htmlViews.push({ placeholder, props: capturedProps }); return;
+    }
     if (name === 'MiniApp') {
       add(`## ${props.title}`); add(String(props.description ?? ''));
       const previous = appName; appName = String(props.name);
@@ -294,6 +312,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   // Capture only after the complete saved program has passed validation. Keep
   // captures sequential so their offscreen theme/style scopes cannot race.
   for (const chart of charts) chart.part.source = await renderChart!(chart.name, chart.props);
+  for (const view of htmlViews) parts.splice(parts.indexOf(view.placeholder), 1, ...await renderHtml!(view.props));
   return parts;
 }
 
