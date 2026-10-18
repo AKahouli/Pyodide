@@ -62,4 +62,3 @@ async def test_validation_failure_is_safe_before_producer(monkeypatch, single):
     context.abort.assert_awaited_once_with(grpc.StatusCode.INVALID_ARGUMENT, 'VALIDATION_ERROR')
     assert 'SECRET' not in str(chunks)
     servicer.agent_team_service.process_team_request.assert_not_called()
-

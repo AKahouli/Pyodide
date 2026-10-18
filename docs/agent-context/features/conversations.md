@@ -10,6 +10,18 @@
 
 ## Purpose and workflows
 
+### Classic conversation security and streaming remediation (2026-10-18)
+
+Public message reads/writes now carry the authorized conversation scope, edits
+also require the sender, and regeneration revalidates source relationships and
+current capabilities. Remote cancellation is scoped; admission/recovery failures
+fail closed and fatal streams persist failed. Classic SSE uses fetch Authorization
+and recipient-scoped PostgreSQL replay through the existing gateway (migration
+0053); asynchronous gaps reconcile from canonical state. See the [implementation,
+route boundaries and qualification record](../architecture/conversation-v1-remediation.md)
+and proposed [ADR-0027](../decisions/ADR-0027-classic-conversation-durable-sse.md).
+P1-07 ADK queue backpressure and conversation v2 are explicitly excluded.
+
 ### Reusable OpenUI mini-apps (2026-10-17)
 
 With the agent's existing generative-UI option enabled, the shared library now

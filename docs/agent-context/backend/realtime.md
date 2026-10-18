@@ -8,7 +8,7 @@ Current SSE endpoints and pipes use these serving patterns:
 
 | Stream | Endpoint | Auth | Implementation |
 |--------|----------|------|----------------|
-| Conversation | `GET /api/v1/conversations/stream` | `StreamAuth` decorator | `@Sse()`, RxJS `Observable` |
+| Conversation | `GET /api/v1/conversations/stream` | `StreamAuth`, Authorization bearer header | `@Sse()`, RxJS `Observable`, PostgreSQL recipient replay |
 | Notifications | `GET /api/v1/notifications/stream` | `SseAuth` decorator | `@Sse()`, heartbeat via `interval()` |
 | Playbook flow | `GET /api/v1/playbooks/stream` | `PlaybookFlowStreamAuthGuard` (query token) | `@Sse()`, `@Public()`, per-user connection tracking |
 | Conversation v2 pipe | `GET /api/v1/conversation-v2/stream` | Query token | Manual SSE (no `@Sse()`), flush via warmup padding, Nagle disable, heartbeat stream |
@@ -16,7 +16,14 @@ Current SSE endpoints and pipes use these serving patterns:
 | Worky events | `GET /api/v1/worky/streams/:id/events` | `WorkyStreamAccessGuard` | `@Sse()` endpoint; frontend consumes via fetch + `ReadableStream` |
 
 **Rules:**
-- SSE auth via dedicated guard, not `JwtAuthGuard` (browsers can't set `Authorization` on `EventSource`).
+- Classic conversation requires migration 0053. The existing gateway publishes
+  recipient events in ordered PostgreSQL batches and polls current authorized
+  recipient rows for live delivery/replay. Existing count/TTL settings bound the
+  durable window; `sseReplayEnabled` only affects the legacy direct-construction
+  in-memory test path. Runtime durable delivery stays enabled. Canonical resync
+  runs around every 30 seconds during healthy polling, and on reconnect/gaps.
+- SSE auth uses its dedicated guard. Classic conversation fetch sets Authorization;
+  the shared guard retains query-token compatibility only for conversation v2.
 - Always clean up on `req.on('close')`.
 - Cap per-user connections (frontend issues `TOO_MANY_TABS` on eviction).
 - Emit typed events; keep schema in sync with frontend.

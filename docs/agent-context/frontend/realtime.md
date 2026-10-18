@@ -6,9 +6,15 @@ Read only the sections relevant to the task. Paths such as `src/` are relative t
 
 Seven streaming patterns coexist depending on module requirements:
 
-### Pattern 1: Singleton EventSource Service (conversation, notifications)
+### Pattern 1: Singleton SSE Service (conversation, notifications)
 
-Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `EventSource` per service. Token refresh integration via axios response interceptor calling `reconnectWithNewToken()`. Exponential backoff (base 1s, cap 60s), heartbeat timeout (~30s), eviction handling (`TOO_MANY_TABS`) where applicable.
+`ConversationStreamService` uses one fetch/ReadableStream pipe with an Authorization
+header, bounded frame parsing and AbortController; no access token enters its URL.
+`NotificationsService` retains EventSource. Token refresh uses the existing shared
+auth owner and `reconnectWithNewToken()`. Same-session refresh preserves the
+opaque cursor; account/session replacement clears it. Exponential backoff (base
+1s, cap 60s), heartbeat timeout (~30s), eviction and canonical resync remain.
+Classic PostgreSQL cursors use `pg:1:<sequence>`; legacy process cursors resync.
 
 ### Pattern 2: BroadcastChannel Leader-Election (playbook)
 

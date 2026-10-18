@@ -2,6 +2,13 @@
 
 The conversation module handles AI chat functionality including real-time streaming responses via gRPC/SSE, message management, conversation sharing, and content reporting.
 
+Classic conversation security/streaming remediation (2026-10-18): public message
+operations carry conversation scope; edits require the author; failed streams and
+expired admissions settle through fenced terminal/recovery paths. Classic SSE
+uses Authorization headers and recipient-scoped PostgreSQL replay in the existing
+gateway. Apply migration 0053 before starting the backend. See the
+[remediation and qualification record](../../../../../docs/agent-context/architecture/conversation-v1-remediation.md).
+
 ## Table of Contents
 
 - [Overview](#overview)
