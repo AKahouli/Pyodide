@@ -1,5 +1,5 @@
 import { ConnectorService, mcpToolSafety } from './connector.service';
-import { ConnectorActionSafety, ConnectorAuthSourceType, DynamicHeaderSource } from './connector.types';
+import { ConnectorActionSafety, ConnectorAuthSourceType, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import { BadRequestException, ErrorCode } from '../exceptions';
 import * as childProcess from 'node:child_process';
 import type {
@@ -12,6 +12,10 @@ import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-con
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
 import { McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { Permissions } from '../authorization/constants/permissions';
+import { ConfigService } from '@nestjs/config';
+import { CryptoService } from '@common/services/crypto.service';
+import { ConnectorAuthServiceImpl, ENCRYPTED_CONNECTOR_HEADERS } from './connector-auth.service';
+import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
 
 const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
 
@@ -43,6 +47,7 @@ jest.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
       ],
     }),
     close: jest.fn().mockResolvedValue(undefined),
+    callTool: jest.fn().mockResolvedValue({ content: [], structuredContent: { ok: true } }),
   })),
 }));
 
@@ -123,6 +128,145 @@ const categoryStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorCat
     findIdsByNameInsensitive: jest.fn().mockResolvedValue([]),
     ...over,
   }) as unknown as PgConnectorCategoryStore;
+
+describe('Explicit encrypted query-to-header migration', () => {
+  const canary = 'TEST_CANARY_R03_MIGRATION';
+  const permissions = [Permissions.CONNECTORS_UPDATE, Permissions.CONNECTORS_SECURITY_MANAGE];
+  const plan = { expectedSecurityRevision: 1,
+    mappings: [{ queryKey: 'token', headerName: 'X-Api-Key', prefix: '' }], removeQueryKeys: ['mode'] };
+  const fixture = (over: RowOver = {}) => {
+    let row = baseRow({ mcpServerUrl: `https://mcp.example.test/mcp?token=${canary}&mode=read`,
+      description: `Imported credential ${canary}`, ...over });
+    const update = jest.fn(async (_id: string, patch: Partial<ConnectorRow>, expected: number) => {
+      if (expected !== row.securityRevision) return null;
+      row = { ...row, ...patch, securityRevision: row.securityRevision + 1 };
+      return row;
+    });
+    const findById = jest.fn(async () => row);
+    const store = connectorStoreMock({ findById, update });
+    const config = new ConfigService({ app: { encryptionKey: 'c3'.repeat(32) } });
+    const crypto = new CryptoService(config);
+    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const auth = new ConnectorAuthServiceImpl({} as never, {} as never, {} as never, logger as never, config, crypto);
+    const service = new ConnectorService(store, categoryStoreMock(), logger as never, {} as never,
+      auth, createPlaybookBindingSyncServiceMock() as never, config, undefined, crypto);
+    return { service, auth, update, findById, row: () => row };
+  };
+
+  it('atomically removes queries, encrypts headers and preserves usable runtime authentication', async () => {
+    const f = fixture();
+    const response = await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    expect(f.update).toHaveBeenCalledTimes(1);
+    expect(f.update.mock.calls[0][2]).toBe(1);
+    expect(f.row().securityRevision).toBe(2);
+    expect(f.row().mcpServerUrl).toBe('https://mcp.example.test/mcp');
+    expect(f.row().runtimeAuthConfig.strategy).toBe(ENCRYPTED_CONNECTOR_HEADERS);
+    expect(JSON.stringify(f.row())).not.toContain(canary);
+    expect(JSON.stringify(response)).not.toContain(canary);
+    await expect(f.auth.resolveRuntimeAuth('actor', { connectorId: f.row().id,
+      authSourceType: f.row().authSourceType, connectedAppKey: f.row().connectedAppKey,
+      runtimeAuthConfig: f.row().runtimeAuthConfig })).resolves.toEqual({ headers: { 'X-Api-Key': canary }, env: {} });
+  });
+
+  it('makes an exact retry with the original revision a read-only acknowledgement', async () => {
+    const f = fixture();
+    await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    await expect(f.service.migrateQueryHeaders(f.row().id, plan, permissions)).resolves.toEqual(expect.any(Object));
+    expect(f.update).toHaveBeenCalledTimes(1);
+    await expect(f.service.migrateQueryHeaders(f.row().id,
+      { ...plan, mappings: [{ ...plan.mappings[0], headerName: 'X-Other-Key' }] }, permissions)).rejects.toThrow();
+    expect(f.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an original retry after another security revision has been committed', async () => {
+    const f = fixture();
+    await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    await f.update(f.row().id, { isActive: false }, 2);
+    await expect(f.service.migrateQueryHeaders(f.row().id, plan, permissions)).rejects.toThrow();
+    expect(f.update).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([[Permissions.CONNECTORS_UPDATE], [Permissions.CONNECTORS_SECURITY_MANAGE]])
+    ('requires both current update and security permissions: %j', async granted => {
+      const f = fixture();
+      await expect(f.service.migrateQueryHeaders(f.row().id, plan, [granted])).rejects.toThrow();
+      expect(f.findById).not.toHaveBeenCalled();
+      expect(f.update).not.toHaveBeenCalled();
+    });
+
+  it('rejects stale revisions before persistence and retains the original URL', async () => {
+    const f = fixture({ securityRevision: 3 });
+    await expect(f.service.migrateQueryHeaders(f.row().id, plan, permissions)).rejects.toThrow();
+    expect(f.update).not.toHaveBeenCalled();
+    expect(f.row().mcpServerUrl).toContain(canary);
+  });
+
+  it('does not acknowledge a failed optimistic write as a completed migration', async () => {
+    const f = fixture();
+    f.update.mockResolvedValueOnce(null);
+    await expect(f.service.migrateQueryHeaders(f.row().id, plan, permissions)).rejects.toThrow();
+    expect(f.row().securityRevision).toBe(1);
+    expect(f.row().runtimeAuthConfig).toEqual({});
+    expect(f.row().mcpServerUrl).toContain(canary);
+  });
+
+  it('requires complete parameter accounting and never replaces connected-app auth', async () => {
+    const f = fixture();
+    await expect(f.service.migrateQueryHeaders(f.row().id, { ...plan, removeQueryKeys: [] }, permissions)).rejects.toThrow();
+    expect(f.update).not.toHaveBeenCalled();
+    const connected = fixture({ authSourceType: 'connected_app', connectedAppKey: 'microsoft' });
+    await expect(connected.service.migrateQueryHeaders(connected.row().id, plan, permissions)).rejects.toThrow();
+    expect(connected.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['configured', 'internal_jwt'] as const)('executes a migrated mock MCP call with %s auth and no query secret', async profile => {
+    const f = fixture({ actions: [{ key: 'list_files', safety: ConnectorActionSafety.READ, isEnabled: true }],
+      ...(profile === 'internal_jwt' ? { mcpSecurityPolicy: { version: 1, profile, audience: 'mcp-sharepoint',
+        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] } } : {}) });
+    await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    assertMcpDestinationAllowed.mockResolvedValue(['93.184.216.34']);
+    const runtime = new ConnectorMcpRuntimeService(f.service, f.auth,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never,
+      { assertConnectorAccess: jest.fn().mockResolvedValue(undefined),
+        headers: jest.fn(async (_url: string, _actor: string, headers: Record<string, string>) =>
+          profile === 'internal_jwt' ? { ...headers, Authorization: 'Bearer signed-actor-proof' } : headers) } as never);
+    await expect(runtime.callTool({ connectorId: f.row().id, workspaceId: 'workspace', authorizationUserId: 'actor',
+      toolName: 'list_files', allowedTools: ['list_files'], arguments: {} })).resolves.toMatchObject({ value: { ok: true } });
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(new URL('https://mcp.example.test/mcp'),
+      expect.objectContaining({ requestInit: expect.objectContaining({ redirect: 'error',
+        headers: expect.objectContaining({ 'X-Api-Key': canary }) }) }));
+  });
+
+  it('rejects a changed actual endpoint before decrypting or constructing an evidence transport', async () => {
+    const f = fixture({ actions: [{ key: 'list_files', safety: ConnectorActionSafety.READ, isEnabled: true }] });
+    await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    await f.update(f.row().id, { mcpServerUrl: 'https://foreign.example.test/mcp' }, 2);
+    const resolve = jest.spyOn(f.auth, 'resolveRuntimeAuth');
+    const runtime = new ConnectorMcpRuntimeService(f.service, f.auth,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never);
+    const transport = jest.spyOn(runtime as unknown as { createTransport(): Promise<unknown> }, 'createTransport');
+    await expect(runtime.callTool({ connectorId: f.row().id, workspaceId: 'workspace', authorizationUserId: 'actor',
+      toolName: 'list_files', allowedTools: ['list_files'], arguments: {} })).rejects.toThrow('Encrypted connector destination mismatch');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('does not let caller headers override an encrypted provider credential with different casing', async () => {
+    const f = fixture({ actions: [{ key: 'list_files', safety: ConnectorActionSafety.READ, isEnabled: true }] });
+    await f.service.migrateQueryHeaders(f.row().id, plan, permissions);
+    const runtime = new ConnectorMcpRuntimeService(f.service, f.auth,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never);
+    const transport = jest.spyOn(runtime as unknown as { createTransport(): Promise<unknown> }, 'createTransport');
+    await expect(runtime.callTool({ connectorId: f.row().id, workspaceId: 'workspace', authorizationUserId: 'actor',
+      toolName: 'list_files', allowedTools: ['list_files'], arguments: {},
+      authoritativeHeaders: { 'x-api-key': 'caller-substitution' } })).rejects.toThrow('cannot be overridden');
+    expect(transport).not.toHaveBeenCalled();
+  });
+});
 
 describe('ConnectorService findAllActive', () => {
   it('lists active visible connectors only, with no slug exception', async () => {
@@ -471,7 +615,7 @@ describe('ConnectorService importFromMcp', () => {
       update: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github', name: 'GitHub' })),
     });
     const playbookBindingSyncService = {
-      syncConnectorActions: jest.fn().mockRejectedValue(new Error('sync failed')),
+      syncConnectorActions: jest.fn().mockRejectedValue(new Error('sync failed TEST_CANARY_R03')),
     };
     const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
     const service = new ConnectorService(
@@ -502,8 +646,9 @@ describe('ConnectorService importFromMcp', () => {
     expect(response.id).toBe(connectorId);
     expect(logger.warn).toHaveBeenCalledWith(
       'Failed to synchronize playbook connector action bindings after connector update',
-      expect.objectContaining({ connectorId, error: 'sync failed' }),
+      expect.objectContaining({ connectorId, errorKind: 'error' }),
     );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('TEST_CANARY_R03');
   });
 
   it('clears referenced skills when update payload provides an empty array', async () => {
@@ -1437,13 +1582,19 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
       envMap: { API_KEY: CANARY },
       unknownNested: { inner: CANARY },
     },
-    mcpServerUrl: `https://user:${CANARY}@mcp.example.test/mcp`,
+    mcpServerUrl: `https://user:${CANARY}@mcp.example.test/mcp?token=${CANARY}#${CANARY}`,
+    description: `Imported from https://mcp.example.test/mcp?sig=${CANARY}`,
+    authConfigSchema: { nested: { default: CANARY } },
     mcpServerConfig: {
       headers: { Authorization: `Bearer ${CANARY}`, 'X-API-Key': CANARY },
       env: { SHARED_SECRET: CANARY },
       nestedUnknown: CANARY,
     },
-    actions: [{ key: 'search', label: 'Search', isEnabled: true }] as ConnectorRow['actions'],
+    actions: [{ key: 'search', label: 'Search', isEnabled: true, description: CANARY,
+      parameterSchema: { properties: { query: { type: 'string', default: CANARY } } },
+      outputSchema: {}, safety: ConnectorActionSafety.READ, supportsBatch: false, supportsIteration: false,
+      resultKind: ConnectorActionResultKind.GENERIC, citationMode: ConnectorCitationMode.NONE,
+    }],
   });
 
   const buildServiceWithRow = (row: ConnectorRow) => {
@@ -1629,8 +1780,7 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
     ));
 
     expect(scrubbed).not.toContain(CANARY);
-    expect(scrubbed).toContain('https://***@mcp.example.test/mcp');
-    expect(scrubbed).toContain('Bearer ***');
+    expect(scrubbed).toBe('Failed to inspect MCP server');
 
     // Multiple userinfo segments: the password after a second '@' must not
     // survive the scrub (re-review finding).
@@ -1640,7 +1790,7 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
       `fetch failed for https://user:prefix@${CANARY}@mcp.example.test/mcp`,
     ));
     expect(multiAt).not.toContain(CANARY);
-    expect(multiAt).toContain('https://***@mcp.example.test/mcp');
+    expect(multiAt).toBe('Failed to inspect MCP server');
 
     const context = (service as unknown as {
       inspectLogContext(serverUrl: string): { host: string };

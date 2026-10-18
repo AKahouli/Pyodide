@@ -13,6 +13,21 @@ import { PgConnectorStore } from '../persistence/pg-connector.store';
 import type { ConnectorRow } from '../persistence/connector.store';
 import { canonicalMcpEndpoint, normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from '../utils/mcp-security-policy';
 import { assertMcpDestinationAllowed } from '../utils/mcp-destination-policy.util';
+import { assertNoUrlCredentials } from '../utils/remote-mcp-transport.util';
+
+export interface AdkExecutionAuthority {
+  purpose: 'root-work' | 'playbook-artifact' | 'native-conversation';
+  sub: string;
+  executionId: string;
+  generation: string;
+  conversationId?: string;
+  messageId?: string;
+  parentExecutionId?: string;
+  owner?: string;
+  fence?: number;
+  flowId?: string;
+  dispatchStartedAt?: string;
+}
 
 /** Bounded deployment compatibility only: remove after legacy signer keys migrate.
  * Shared keys take precedence; this adapter never grants connector trust or selects recipients.
@@ -51,6 +66,40 @@ export class McpJwtService {
 
   assertSignerConfigured(): void {
     if (!this.privateKey || !this.issuer) this.deny();
+  }
+
+  /** Separate protocol: MCP assertions can never substitute for execution authority. */
+  issueAdkExecutionAuthority(claims: AdkExecutionAuthority): string {
+    this.assertSignerConfigured();
+    return this.jwt.sign({ ...claims, jti: randomUUID() }, {
+      privateKey: this.privateKey, algorithm: 'RS256', issuer: this.issuer,
+      audience: `yellowstorm-adk:${claims.purpose}`, expiresIn: 300,
+      header: { alg: 'RS256', typ: 'adk-execution+jwt' },
+    });
+  }
+
+  verifyAdkExecutionAuthority(token: string | undefined, purpose: AdkExecutionAuthority['purpose']): AdkExecutionAuthority {
+    this.assertSignerConfigured();
+    try {
+      if (!token) this.deny();
+      const decoded = this.jwt.verify(token!, { publicKey: this.publicKey, algorithms: ['RS256'],
+        issuer: this.issuer, audience: `yellowstorm-adk:${purpose}`, maxAge: '300s', complete: true }) as {
+          header: { typ?: string }; payload: AdkExecutionAuthority & { iat: number; exp: number; jti: string };
+        };
+      const claims = decoded.payload;
+      if (decoded.header.typ !== 'adk-execution+jwt' || claims.purpose !== purpose
+        || !/^[0-9a-f]{24}$/.test(claims.sub) || !/^[0-9a-f]{24}$/.test(claims.executionId)
+        || typeof claims.generation !== 'string' || !claims.generation || typeof claims.jti !== 'string'
+        || !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp)
+        || claims.iat > Math.floor(Date.now() / 1000) || claims.exp <= claims.iat || claims.exp - claims.iat > 300) this.deny();
+      // Do not propagate exp/iat/jti into a renewed JWT.
+      return { purpose, sub: claims.sub, executionId: claims.executionId, generation: claims.generation,
+        ...(claims.conversationId ? { conversationId: claims.conversationId } : {}),
+        ...(claims.messageId ? { messageId: claims.messageId } : {}),
+        ...(claims.parentExecutionId ? { parentExecutionId: claims.parentExecutionId } : {}),
+        ...(claims.owner ? { owner: claims.owner, fence: claims.fence } : {}),
+        ...(claims.flowId ? { flowId: claims.flowId, dispatchStartedAt: claims.dispatchStartedAt } : {}) };
+    } catch { return this.deny(); }
   }
 
   private deny(): never { throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP authorization'); }
@@ -95,6 +144,9 @@ export class McpJwtService {
 
   async issue(connectorId: string, userId: string): Promise<{ token: string; expiresAt: number; serverUrl: string }> {
     const connector = await this.load(connectorId);
+    // A legacy operational query must not escape through JWT responses. Do not
+    // silently sign for a different (query-stripped) destination during migration.
+    assertNoUrlCredentials(connector.mcpServerUrl);
     const policy = await this.assertConnectorAccess(connector, userId);
     if (policy.profile !== 'internal_jwt') this.deny();
     const now = Math.floor(Date.now() / 1000);

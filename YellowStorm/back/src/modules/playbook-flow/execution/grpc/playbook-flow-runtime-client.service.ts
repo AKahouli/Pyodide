@@ -51,14 +51,18 @@ export class PlaybookFlowRuntimeClientService {
     return this.available;
   }
 
-  run(request: Record<string, unknown>): any {
-    return this.client.Run(request, createGrpcMetadata(this.configService));
+  run(request: Record<string, unknown>, authority: string): any {
+    const metadata = createGrpcMetadata(this.configService);
+    metadata.set('x-yellowstorm-artifact-authority', authority);
+    return this.client.Run(request, metadata);
   }
 
-  runFromCheckpoint(request: Record<string, unknown>): any {
+  runFromCheckpoint(request: Record<string, unknown>, authority: string): any {
+    const metadata = createGrpcMetadata(this.configService);
+    metadata.set('x-yellowstorm-artifact-authority', authority);
     return this.client.RunFromCheckpoint(
       request,
-      createGrpcMetadata(this.configService),
+      metadata,
     );
   }
 

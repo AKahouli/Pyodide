@@ -7,10 +7,11 @@ describe('Durable background driver', () => {
     const jobs = { claim: jest.fn(), markDispatched: jest.fn().mockResolvedValue(true),
       heartbeat: jest.fn().mockResolvedValue(true), controlInstance: jest.fn().mockResolvedValue('database') };
     const call = Object.assign(new EventEmitter(), { pause: jest.fn(), resume: jest.fn(), cancel: jest.fn() });
-    const client = { RunBackgroundInvocation: jest.fn(() => call) };
+    const client = { RunBackgroundInvocation: jest.fn((_request: unknown, _metadata: import('@grpc/grpc-js').Metadata) => call) };
     const stream = { rootBackgroundReady: jest.fn().mockResolvedValue(true), getChatbotClient: jest.fn(() => client) };
-    const driver = new RootBackgroundDriverService(jobs as any, stream as any, config as any);
-    return { driver, jobs, stream, call, client };
+    const authorityWork = { issueBackgroundAuthority: jest.fn().mockResolvedValue('private-background-authority') };
+    const driver = new RootBackgroundDriverService(jobs as any, stream as any, config as any, undefined, authorityWork as never);
+    return { driver, jobs, stream, call, client, authorityWork };
   }
 
   it('disabled startup does not poll, query capabilities or claim jobs', async () => {
@@ -29,6 +30,9 @@ describe('Durable background driver', () => {
     await new Promise(setImmediate);
     expect(h.client.RunBackgroundInvocation).toHaveBeenCalledWith(expect.objectContaining({ protocol_version: 1,
       execution_id: 'execution', fence: 2, conversation_epoch: 3, control_database_fingerprint: 'database' }), expect.anything());
+    expect(h.authorityWork.issueBackgroundAuthority).toHaveBeenCalledWith(job);
+    expect(h.client.RunBackgroundInvocation.mock.calls[0][1].get('x-yellowstorm-root-authority'))
+      .toEqual(['private-background-authority']);
     h.call.emit('data', { execution_id: 'execution', status: 'running' });
     h.call.emit('end');
     await dispatch;

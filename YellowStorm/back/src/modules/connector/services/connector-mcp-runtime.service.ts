@@ -6,6 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
+import { ENCRYPTED_CONNECTOR_HEADERS } from '../connector-auth.service';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { McpJwtService } from './mcp-jwt.service';
 import { hasMcpCredentialHeaders, normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from '../utils/mcp-security-policy';
@@ -87,7 +88,10 @@ export class ConnectorMcpRuntimeService {
     await this.workspaceShares.assertUserHasAccess(input.authorizationUserId, [input.workspaceId]);
     if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, input.authorizationUserId);
     const credentialOwnerUserId = connector.createdBy.toString();
-    const resolvedAuth = policy.profile === 'configured' ? await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
+    const encryptedAuth = connector.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS;
+    if (encryptedAuth && policy.profile === 'public')
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted authentication cannot use a public MCP profile');
+    const resolvedAuth = policy.profile === 'configured' || encryptedAuth ? await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
       authSourceType: connector.authSourceType,
       connectedAppKey: connector.connectedAppKey,
       runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
@@ -101,6 +105,12 @@ export class ConnectorMcpRuntimeService {
     }
 
     const dynamicHeaders = policy.profile === 'configured' ? await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []) : {};
+    if (encryptedAuth) {
+      const protectedNames = new Set(Object.keys(resolvedAuth.headers).map(name => name.toLowerCase()));
+      if (Object.keys({ ...this.safeConfiguredHeaders(connector.mcpServerConfig), ...dynamicHeaders,
+        ...(input.authoritativeHeaders ?? {}) }).some(name => protectedNames.has(name.toLowerCase())))
+        throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted credential headers cannot be overridden');
+    }
     let headers = {
       ...this.safeConfiguredHeaders(connector.mcpServerConfig),
       ...resolvedAuth.headers,
@@ -135,9 +145,9 @@ export class ConnectorMcpRuntimeService {
       this.logger.warn('MCP evidence tool call failed', {
         connectorId: connector.id,
         toolName: input.toolName,
-        error: error instanceof Error ? error.message : 'Unknown MCP error',
+        errorKind: error instanceof Error ? 'error' : 'non_error',
       });
-      throw error;
+      throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The MCP evidence-search call failed');
     } finally {
       await client.close().catch(() => undefined);
     }

@@ -21,7 +21,6 @@ _load_local_env()
 @dataclass(frozen=True)
 class Settings:
     backend_url: str
-    internal_token: str
     ingress_token: str
     timeout_seconds: float
     port: int
@@ -43,7 +42,6 @@ class Settings:
             auth_mode = "Bearer"
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
-            internal_token=os.getenv("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", ""),
             ingress_token=os.getenv("SEMANTIC_MODEL_MCP_INGRESS_TOKEN", ""),
             timeout_seconds=float(os.getenv("SEMANTIC_MODEL_MCP_TIMEOUT_SECONDS", "120")),
             port=int(os.getenv("MCP_PORT", "8027")),
@@ -57,11 +55,13 @@ class Settings:
         )
 
     def validate(self) -> None:
-        if not self.service_token:
+        if not self.service_token.strip() or self.service_token != self.service_token.strip():
             # WP07.2: every backend assistant call authenticates the
             # semantic-model-mcp service principal; without the scoped secret
             # the backend rejects the server, so fail at startup.
             raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
+        if self.environment == "production" and len(self.service_token) < 32:
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN must be at least 32 characters in production")
         if self.auth_mode not in ("JWT", "Bearer"):
             raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT or Bearer")
         if self.auth_mode == "JWT":

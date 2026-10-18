@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import asyncio
 import os
+import json
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -13,6 +15,79 @@ import httpx
 
 from .datasets import MAX_DATASET_BYTES
 from .discovery import max_source_bytes, resolve_asset_ref
+
+
+_execution: ContextVar[dict[str, Any] | None] = ContextVar("semantic_asset_execution", default=None)
+
+
+def bind_asset_execution(lease: Any) -> Token:
+    """Install only a repository-claimed execution; request selectors cannot bind it.
+
+    The admission is never interpreted as actor authority by this process: the
+    backend verifies its signature and scope against canonical DB state each time.
+    """
+    payload = lease.payload.get("payload") if isinstance(lease.payload, dict) else None
+    admission = payload.get("assetAdmission") if isinstance(payload, dict) else None
+    capability = getattr(lease, "asset_capability", "")
+    if not isinstance(admission, str) or not admission or not isinstance(capability, str) or len(capability) != 64:
+        raise RuntimeError("asset_execution_authority_missing")
+    return _execution.set({"jobId": lease.job_id, "taskId": lease.task_id,
+                           "leaseEpoch": lease.lease_epoch, "leaseOwner": lease.lease_owner,
+                           "capability": capability,
+                           "sourceScopes": ([{"source": payload.get("source"), "options": payload.get("options", {})}]
+                                            if "source" in payload else payload.get("sources", []))})
+
+
+def reset_asset_execution(token: Token) -> None:
+    _execution.reset(token)
+
+
+def _principal_headers() -> dict[str, str]:
+    token = os.environ.get("SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN", "")
+    if not token:
+        raise RuntimeError("semantic_runtime_backend_service_token_missing")
+    return {"X-Yellowstorm-Service-Principal": "semantic-runtime", "X-Yellowstorm-Service-Token": token}
+
+
+async def _asset_headers(http: httpx.AsyncClient, source: dict[str, Any], operation: str,
+                         target: dict[str, Any] | None = None) -> dict[str, str]:
+    proof = _execution.get()
+    if proof is None:
+        raise RuntimeError("asset_execution_authority_missing")
+    headers = _principal_headers()
+    resource = None
+    if operation in {"dataset-put", "dataset-get", "derived-put"}:
+        resource = dict(target or {})
+        scopes = [entry.get("options") or {} for entry in proof.get("sourceScopes", [])
+                  if isinstance(entry, dict) and isinstance(entry.get("source"), dict)
+                  and entry["source"].get("workspaceId") == source.get("workspaceId")
+                  and entry["source"].get("assetId") == source.get("assetId")]
+        if resource.get("options") is None:
+            # Archive derivation is whole-source work: select the first admitted
+            # scope. Dataset readers with several distinct scopes must name one.
+            distinct = {json.dumps(options, sort_keys=True): options for options in scopes}
+            if not distinct or (len(distinct) > 1 and operation != "derived-put"):
+                raise RuntimeError("asset_options_scope_required")
+            resource["options"] = next(iter(distinct.values()))
+    # No reusable long-lived asset bearer or tuple-only refresh. Every operation
+    # mints afresh and independently rechecks the live lease + capability digest.
+    response = await http.post(
+        f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-asset-grant",
+        headers=headers,
+        json={**{k: v for k, v in proof.items() if k != "sourceScopes"},
+              "workspaceId": source.get("workspaceId"), "assetId": source.get("assetId"),
+              "operation": operation, **({"target": resource} if resource is not None else {})},
+        follow_redirects=False,
+    )
+    if response.is_redirect:
+        raise AssetFetchError("asset_grant_redirected")
+    if response.status_code in {401, 403}:
+        raise AssetFetchError("asset_execution_forbidden")
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("token"), str) or not payload["token"]:
+        raise AssetFetchError("invalid_asset_grant_response")
+    return {**headers, "X-Semantic-Asset-Grant": payload["token"]}
 
 
 def asset_fetch_wall_seconds(source: dict[str, Any]) -> int:
@@ -149,9 +224,6 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
     e-mail archives are never held in memory. ``archive_mb`` is the admin's size limit for an
     e-mail archive (the run limits), asked of the back end too.
     """
-    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
-    if not token:
-        raise RuntimeError("internal_service_token_missing")
     own_client = client is None
     http = client or httpx.AsyncClient(
         timeout=httpx.Timeout(30, connect=5), follow_redirects=False,
@@ -164,7 +236,7 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
                     "documentId": source.get("assetId", ""),
                     **({"maxArchiveMb": archive_mb} if archive_mb else {})},
-            headers={"X-Internal-Token": token, "Accept-Encoding": "identity"},
+            headers={**await _asset_headers(http, source, "read"), "Accept-Encoding": "identity"},
         ) as response:
             if response.is_redirect:
                 raise AssetFetchError("asset_redirected")
@@ -220,9 +292,6 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
 async def fetch_workspace_asset_metadata(source: dict[str, Any], actor_user_id: str,
                                          *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
     """Reauthorize an asset and return current metadata without reading bytes."""
-    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
-    if not token:
-        raise RuntimeError("internal_service_token_missing")
     own_client = client is None
     http = client or httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5), follow_redirects=False)
     try:
@@ -230,7 +299,7 @@ async def fetch_workspace_asset_metadata(source: dict[str, Any], actor_user_id: 
             f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-asset-metadata",
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
                     "documentId": source.get("assetId", "")},
-            headers={"X-Internal-Token": token},
+            headers=await _asset_headers(http, source, "metadata"),
         )
         if response.is_redirect:
             raise AssetFetchError("asset_redirected")
@@ -270,10 +339,8 @@ async def fetch_workspace_asset_metadata(source: dict[str, Any], actor_user_id: 
 
 async def upload_prepared_dataset(source: dict[str, Any], actor_user_id: str,
                                   manifest: dict[str, Any], path: Path,
-                                  *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
-    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
-    if not token:
-        raise RuntimeError("internal_service_token_missing")
+                                  *, client: httpx.AsyncClient | None = None,
+                                  options: dict[str, Any] | None = None) -> dict[str, Any]:
     size = path.stat().st_size
     content_hash = manifest.get("contentHash")
     if not isinstance(content_hash, str) or not content_hash.startswith("sha256:"):
@@ -291,7 +358,7 @@ async def upload_prepared_dataset(source: dict[str, Any], actor_user_id: str,
             f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-dataset",
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
                     "documentId": source.get("assetId", ""), "datasetId": manifest.get("datasetId", "")},
-            headers={"X-Internal-Token": token, "Content-Type": "application/vnd.apache.parquet",
+            headers={**await _asset_headers(http, source, "dataset-put", {"datasetId": manifest.get("datasetId"), "options": options}), "Content-Type": "application/vnd.apache.parquet",
                      "Content-Length": str(size), "X-Content-SHA256": content_hash[7:]},
             content=chunks(),
         )
@@ -318,11 +385,9 @@ async def upload_prepared_dataset(source: dict[str, Any], actor_user_id: str,
 
 
 async def fetch_prepared_dataset(source: dict[str, Any], actor_user_id: str,
-                                 manifest: dict[str, Any], target: Path,
-                                 *, client: httpx.AsyncClient | None = None) -> Path:
-    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
-    if not token:
-        raise RuntimeError("internal_service_token_missing")
+                                  manifest: dict[str, Any], target: Path,
+                                  *, client: httpx.AsyncClient | None = None,
+                                  options: dict[str, Any] | None = None) -> Path:
     dataset_id = manifest.get("datasetId")
     expected_hash = manifest.get("contentHash")
     expected_size = manifest.get("sizeBytes")
@@ -338,7 +403,7 @@ async def fetch_prepared_dataset(source: dict[str, Any], actor_user_id: str,
             "GET", f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-dataset",
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
                     "documentId": source.get("assetId", ""), "datasetId": dataset_id},
-            headers={"X-Internal-Token": token, "Accept-Encoding": "identity"},
+            headers={**await _asset_headers(http, source, "dataset-get", {"datasetId": dataset_id, "options": options}), "Accept-Encoding": "identity"},
         ) as response:
             if response.is_redirect:
                 raise AssetFetchError("dataset_download_redirected")
@@ -383,9 +448,6 @@ async def fetch_prepared_dataset(source: dict[str, Any], actor_user_id: str,
 async def upload_derived_file(source: dict[str, Any], actor_user_id: str, entry: dict[str, Any],
                               path: Path, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
     """Store one derived file (e-mail text or attachment) in the archive's workspace folder."""
-    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
-    if not token:
-        raise RuntimeError("internal_service_token_missing")
     body = await asyncio.to_thread(path.read_bytes)
     if len(body) != entry.get("size") or hashlib.sha256(body).hexdigest() != entry.get("sha256"):
         raise AssetFetchError("derived_file_changed")
@@ -396,7 +458,7 @@ async def upload_derived_file(source: dict[str, Any], actor_user_id: str, entry:
             f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-derived-file",
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
                     "documentId": source.get("assetId", ""), "fileName": entry.get("fileName", "")},
-            headers={"X-Internal-Token": token, "Content-Type": entry.get("mimeType", ""),
+            headers={**await _asset_headers(http, source, "derived-put", {"fileName": entry.get("fileName")}), "Content-Type": entry.get("mimeType", ""),
                      "Content-Length": str(len(body)), "X-Content-SHA256": entry["sha256"]},
             content=body,
         )

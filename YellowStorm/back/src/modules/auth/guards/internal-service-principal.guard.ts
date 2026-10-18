@@ -17,9 +17,15 @@ import { timingSafeEqual } from 'crypto';
  * End-user authorization continues to flow through the WP-06 actor
  * assertion; the principal only proves WHICH service is calling.
  */
-export type InternalServicePrincipal = 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime';
+export type InternalServicePrincipal = 'mcp-agent' | 'mcp-playbook' | 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime'
+  | 'semantic-runtime' | 'adk-root-runtime' | 'adk-playbook-artifact';
 
 const PRINCIPAL_TOKEN_ENV: Record<InternalServicePrincipal, string> = {
+  'semantic-runtime': 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN',
+  'adk-root-runtime': 'ADK_ROOT_RUNTIME_SERVICE_TOKEN',
+  'adk-playbook-artifact': 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN',
+  'mcp-agent': 'AGENT_MCP_BACKEND_SERVICE_TOKEN',
+  'mcp-playbook': 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
   'adk-runtime': 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
   'semantic-model-mcp': 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN',
   'app-runtime': 'APP_RUNTIME_BIND_TOKEN',
@@ -35,14 +41,23 @@ abstract class PrincipalGuardBase implements CanActivate {
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const secret = (this.configService.get<string>(PRINCIPAL_TOKEN_ENV[this.principal]) ?? '').trim();
+    const secret = this.configService.get<string>(PRINCIPAL_TOKEN_ENV[this.principal]) ?? '';
     if (!secret) {
       // Fail closed on configuration errors (WP07.6) instead of allowing a
       // broad permissive fallback.
       throw new UnauthorizedException(`Internal service principal "${this.principal}" is not configured`);
     }
+    const configured = [...Object.values(PRINCIPAL_TOKEN_ENV), 'INTERNAL_SERVICE_SECRET']
+      .map((key) => this.configService.get<string>(key))
+      .filter((value): value is string => value !== undefined && value !== '');
+    if (configured.some((value) => !value.trim() || value !== value.trim()
+      || (this.configService.get<string>('NODE_ENV') === 'production' && value.length < 32))
+      || new Set(configured).size !== configured.length) {
+      throw new UnauthorizedException('Invalid internal service credential configuration');
+    }
 
     const request = context.switchToHttp().getRequest<Request>();
+    assertUnambiguousSecurityHeaders(request);
     const declaredPrincipal = request.headers[PRINCIPAL_HEADER] as string | undefined;
     const token = request.headers[TOKEN_HEADER] as string | undefined;
 
@@ -90,3 +105,23 @@ export const SemanticMcpServiceGuard = internalServicePrincipalGuardFor('semanti
 /** The app runtime's principal: bind and tool-invoke only (WP07.3). */
 export const AppRuntimeServiceGuard = internalServicePrincipalGuardFor('app-runtime');
 export const AdkRuntimeMcpRenewalGuard = internalServicePrincipalGuardFor('adk-runtime');
+export const AgentMcpServiceGuard = internalServicePrincipalGuardFor('mcp-agent');
+export const PlaybookMcpServiceGuard = internalServicePrincipalGuardFor('mcp-playbook');
+export const SemanticRuntimeServiceGuard = internalServicePrincipalGuardFor('semantic-runtime');
+export const AdkRootRuntimeServiceGuard = internalServicePrincipalGuardFor('adk-root-runtime');
+export const AdkPlaybookArtifactServiceGuard = internalServicePrincipalGuardFor('adk-playbook-artifact');
+
+/** Inspect raw headers too: Node may join or discard repeated security headers. */
+export function assertUnambiguousSecurityHeaders(request: {
+  headers: Record<string, string | string[] | undefined>; rawHeaders?: string[];
+}): void {
+  const names = ['x-yellowstorm-service-principal', 'x-yellowstorm-service-token',
+    'x-yellowstorm-mcp-assertion', 'x-yellowstorm-execution-authority', 'x-yellowstorm-user-id', 'authorization', 'x-internal-token'];
+  for (const name of names) {
+    const value = request.headers[name];
+    const count = (request.rawHeaders ?? []).filter((_, index, raw) => index % 2 === 0 && raw[index].toLowerCase() === name).length;
+    if (count > 1 || Array.isArray(value) || (typeof value === 'string' && value.includes(','))) {
+      throw new UnauthorizedException('Ambiguous security header');
+    }
+  }
+}

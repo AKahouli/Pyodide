@@ -80,7 +80,7 @@ describe('TelegramValidationService', () => {
       integration_id: 'integration-1',
       conversation_id: 'conv-1',
       question: 'Dispo demain 18h ?',
-    });
+    }, 'user-1');
 
     expect(telegramApiService.sendMessage).toHaveBeenCalledWith(
       'bot-token',
@@ -96,6 +96,21 @@ describe('TelegramValidationService', () => {
     await expect(
       service.create({ integration_id: 'integration-1', conversation_id: 'conv-1', question: 'q' }),
     ).rejects.toThrow();
+  });
+
+  it('rejects a foreign verified dispatch actor before decrypting or sending', async () => {
+    await expect(service.create({ integration_id: 'integration-1', conversation_id: 'conv-1', question: 'q' },
+      'foreign-owner')).rejects.toThrow('Foreign Telegram integration owner');
+    expect(integrationService.getDecryptedToken).not.toHaveBeenCalled();
+    expect(telegramApiService.sendMessage).not.toHaveBeenCalled();
+    expect(telegramApiService.sendMessageWithButtons).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-owner integration outside the dispatched conversation binding', async () => {
+    await expect(service.create({ integration_id: 'integration-1', conversation_id: 'foreign-conversation', question: 'q' },
+      'user-1')).rejects.toThrow('Foreign Telegram conversation binding');
+    expect(integrationService.getDecryptedToken).not.toHaveBeenCalled();
+    expect(telegramApiService.sendMessage).not.toHaveBeenCalled();
   });
 
   it('records an inline-button answer from the owner', async () => {

@@ -94,6 +94,7 @@ export class AdminCatalogTransferController {
       user._id.toString(),
       archive,
       dto.conflictPolicy ?? 'skip',
+      user.permissions ?? [],
     );
     this.audit(user, req, `${archive.resource}.catalog_import`, {
       conflictPolicy: dto.conflictPolicy ?? 'skip',

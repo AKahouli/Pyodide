@@ -30,9 +30,23 @@ the affected revisions must be projected again before activation.
 - `SEMANTIC_RUNTIME_SERVICE_KEY`: private NestJS-to-runtime service key.
 - `SEMANTIC_BROKER_URL`: dedicated Phase 0 RabbitMQ URL.
 - `YELLOWSTORM_BACKEND_URL`: trusted NestJS origin used by datasource workers.
-- `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: must match NestJS
-  `INTERNAL_SERVICE_SECRET`; sent only to the configured backend origin.
+- `SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN`: dedicated `semantic-runtime`
+  credential matching the NestJS verifier, sent only to the configured backend
+  origin. No `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`/generic-key fallback exists.
 - `YELLOWSTORM_BACKEND_API_PREFIX`: NestJS global API prefix (default `api`).
+
+Workspace asset access additionally requires the backend-signed canonical job
+admission and the current claim's private opaque lease proof. A machine key plus
+an arbitrary actor/job ID is insufficient. The backend rechecks current rights,
+document version and live job/task state for every operation and refresh; a
+reclaimed/expired/cancelled attempt cannot reuse its old proof. Keep these proofs
+out of logs, model inputs and public job payloads. Source events receive separate
+per-sheet candidates; omitted `uploadedAt` uses the backend's UTC millisecond
+timestamp format. See the [semantic asset authority contract](../../docs/security/semantic-asset-grant-contract.md)
+for replay, dataset/derived storage isolation, evidence and rollout gaps. Deploy
+the backend and runtime API/workers together; legacy queued asset jobs without a
+valid signed admission fail closed and require authorized resubmission rather
+than reconstructing authority from stored actor selectors.
 
 ## Autonomous AI extraction
 

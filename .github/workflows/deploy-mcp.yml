@@ -65,5 +65,12 @@ jobs:
 
   # Deploy wiring: no MCP compose/service path is defined in this repo yet.
   # Mirror deploy-adk.yml's "Update Compose and deploy" job here once the target
-  # compose file is known (it must pass the three *_MCP_INGRESS_TOKEN values and
-  # YELLOWSTORM_INTERNAL_SERVICE_TOKEN from the deployment secret manager).
+  # compose file is known. Provision independently (never alias to a generic key):
+  # mcp-agent: AGENT_MCP_BACKEND_SERVICE_TOKEN; mcp-playbook:
+  # PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN; mcp-semantic-model:
+  # SEMANTIC_MODEL_MCP_SERVICE_TOKEN. Bind the same purpose-specific value to its
+  # backend principal verifier. Do not mount INTERNAL_SERVICE_SECRET or the
+  # legacy YELLOWSTORM_INTERNAL_SERVICE_TOKEN in these containers. MCP ingress
+  # credentials/public verification keys remain separately provisioned according
+  # to the configured ingress profile. Effective env/secret mounts are an
+  # external deployment gate until the actual compose/service path is known.

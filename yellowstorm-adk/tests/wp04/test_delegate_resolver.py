@@ -33,11 +33,11 @@ async def test_selected_definition_keeps_native_model_and_binding_contract(monke
     real_client = httpx.AsyncClient
     monkeypatch.setenv("PLATFORM_API_URL", "http://platform.test/api")
     monkeypatch.setattr(delegate_resolver, "get_settings", lambda: SimpleNamespace(
-        API_URL="http://unused.test", INTERNAL_SERVICE_SECRET="internal-test-token"))
+        API_URL="http://unused.test", ADK_ROOT_RUNTIME_SERVICE_TOKEN="root-service-test-token"))
 
     def respond(request):
         sent.append(request)
-        return httpx.Response(201, json={"data": {"executionId": "2" * 24, "definition": {
+        return httpx.Response(201, headers={'X-YellowStorm-Child-Authority': 'private-child-proof'}, json={"data": {"executionId": "2" * 24, "definition": {
             "id": "worker", "name": "specialist", "prompt": "own prompt", "tools": [],
             "chatbot": {"model": "worker-native-model"},
             "brain_context": [{"workspace_id": "own-workspace", "workspace_name": "Own"}],
@@ -48,15 +48,22 @@ async def test_selected_definition_keeps_native_model_and_binding_contract(monke
     monkeypatch.setattr(delegate_resolver.httpx, "AsyncClient", lambda **kwargs:
         real_client(transport=httpx.MockTransport(respond), **kwargs))
     scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id="1" * 24)
-    resolved = await delegate_resolver.resolve_delegate_definition(scope, "call", "delegate_to_agent@call",
-        "worker", "task", "expected", [])
+    binding = delegate_resolver._root_authority.set(delegate_resolver._RootAuthority(scope.execution_id, 'dispatch-proof'))
+    try:
+        resolved = await delegate_resolver.resolve_delegate_definition(scope, "call", "delegate_to_agent@call",
+            "worker", "task", "expected", [])
+    finally:
+        delegate_resolver._root_authority.reset(binding)
     candidate = resolved["candidate"]
     assert candidate.chatbot_name["provider"] == "worker-native-model"
     assert candidate.brain_ids == ["own-workspace"]
     assert candidate.agent_params["connector_bindings_json"] == "[]"
     assert sent[0].url == "http://platform.test/api/v1/internal/root-work/" + "1" * 24 + "/delegate-definition"
-    assert sent[0].headers["X-Internal-Token"] == "internal-test-token"
-    assert b"internal-test-token" not in sent[0].content
+    assert 'X-Internal-Token' not in sent[0].headers
+    assert sent[0].headers['X-YellowStorm-Service-Principal'] == 'adk-root-runtime'
+    assert sent[0].headers['X-YellowStorm-Service-Token'] == 'root-service-test-token'
+    assert sent[0].headers['X-YellowStorm-Execution-Authority'] == 'dispatch-proof'
+    assert b"root-service-test-token" not in sent[0].content
     assert b"actorId" not in sent[0].content and b"scope" not in sent[0].content
 
 
@@ -64,5 +71,5 @@ async def test_selected_definition_keeps_native_model_and_binding_contract(monke
 async def test_missing_internal_authentication_fails_before_network(monkeypatch):
     monkeypatch.setattr(delegate_resolver, "get_settings", lambda: SimpleNamespace(
         API_URL="http://platform.test", INTERNAL_SERVICE_SECRET=None))
-    with pytest.raises(RuntimeError, match="authentication"):
+    with pytest.raises(ValueError, match="authority"):
         await delegate_resolver.resolve_delegate_definition(ExecutionScopeV1(), "call", "branch", "worker", "task", "", [])

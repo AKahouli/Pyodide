@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from app.jobs.models import (
 from app.jobs.recovery import backoff_seconds
 from app.jobs.error_details import public_details
 from app.jobs.worker_liveness import ONLINE_WINDOW_SECONDS
+from app.jobs.asset_admission import admission_candidate, without_asset_authority
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
 TERMINAL_JOB_STATES = {
@@ -245,7 +247,10 @@ class PostgresJobRepository:
             "mimeType": mime,
             "sizeBytes": payload.get("sizeBytes"),
             "contentHash": payload.get("contentHash"),
-            "uploadedAt": payload.get("uploadedAt") or event.occurred_at.isoformat(),
+            # Match the backend's Date.toISOString() fallback exactly: the
+            # signed command compares timestamp text, not datetime equality.
+            "uploadedAt": payload.get("uploadedAt") or event.occurred_at.astimezone(timezone.utc)
+                .isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "indexingStatus": payload.get("indexingStatus"),
             "sourceEventId": event.event_id,
         }
@@ -264,22 +269,35 @@ class PostgresJobRepository:
         )
         for row in sheets:
             sheet_name = row["sheet_name"]
+            admissions = payload.get("assetAdmissions")
+            token = admissions.get(sheet_name or "") if isinstance(admissions, dict) else None
+            if not isinstance(token, str):
+                continue  # An unsigned event never creates asset execution authority.
             options = {"sheetName": sheet_name} if sheet_name else {}
             command = {"actorUserId": actor, "modelId": None,
                        "workspaceId": event.payload.workspace_id,
-                       "payload": {"source": source, "options": options}}
+                        "payload": {"source": source, "options": options,
+                                    "assetAdmission": token}}
+            try:
+                encoded = token.split(".")[1]
+                import base64
+                candidate_body = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))["body"]
+                command["payload"]["assetCommand"] = candidate_body["command"]
+                canonical_id = admission_candidate(JobCommand.model_validate(command), f"{event.event_id}:{sheet_name or ''}")
+            except (ValueError, TypeError, KeyError, IndexError, IdempotencyConflict):
+                continue
             command_json = _json(command)
-            command_hash = _fingerprint(command)
+            command_hash = _fingerprint(without_asset_authority(command))
             idempotency_key = f"source-event:{_fingerprint({'eventId': event.event_id, 'sheet': sheet_name})}"
             job = await connection.fetchrow(
                 """
                 INSERT INTO semantic_jobs.jobs
-                  (job_type, actor_user_id, workspace_id, idempotency_key, command_hash, command)
-                VALUES ('datasource.discovery', $1, $2, $3, $4, $5::jsonb)
-                ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                  (job_type, actor_user_id, workspace_id, idempotency_key, command_hash, command, id)
+                VALUES ('datasource.discovery', $1, $2, $3, $4, $5::jsonb, $6::uuid)
+                ON CONFLICT DO NOTHING
                 RETURNING id::text
                 """,
-                actor, event.payload.workspace_id, idempotency_key, command_hash, command_json,
+                actor, event.payload.workspace_id, idempotency_key, command_hash, command_json, canonical_id,
             )
             if job is None:
                 continue
@@ -314,6 +332,7 @@ class PostgresJobRepository:
         task_name: str,
         queue_name: str,
     ) -> Admission:
+        canonical_id = admission_candidate(command)
         command_json = _json(command.model_dump(by_alias=True, mode="json"))
         task_key = f"{job_type}:initial"
         effective_key = idempotency_key
@@ -323,10 +342,10 @@ class PostgresJobRepository:
                     row = await connection.fetchrow(
                         """
                         INSERT INTO semantic_jobs.jobs
-                          (job_type, actor_user_id, model_id, workspace_id,
-                           idempotency_key, command_hash, command)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-                        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                           (job_type, actor_user_id, model_id, workspace_id,
+                            idempotency_key, command_hash, command, id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8::uuid, gen_random_uuid()))
+                         ON CONFLICT DO NOTHING
                         RETURNING id::text, state
                         """,
                         job_type,
@@ -336,6 +355,7 @@ class PostgresJobRepository:
                         effective_key,
                         command_hash,
                         command_json,
+                        canonical_id,
                     )
                     if row is not None:
                         break
@@ -815,6 +835,8 @@ class PostgresJobRepository:
     async def claim_task(
         self, *, task_id: int, queue_name: str, lease_owner: str, lease_seconds: int
     ) -> Lease | None:
+        capability = secrets.token_hex(32)
+        capability_digest = hashlib.sha256(capability.encode("ascii")).hexdigest()
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
@@ -822,6 +844,7 @@ class PostgresJobRepository:
                     UPDATE semantic_jobs.tasks
                     SET state = 'running', attempt_count = attempt_count + 1,
                         lease_epoch = lease_epoch + 1, lease_owner = $2,
+                        checkpoint = checkpoint || jsonb_build_object('assetCapabilityDigest', $5::text),
                         lease_expires_at = now() + make_interval(secs => $3),
                         started_at = COALESCE(started_at, now()), updated_at = now()
                     WHERE id = (
@@ -843,6 +866,7 @@ class PostgresJobRepository:
                     lease_owner,
                     lease_seconds,
                     task_id,
+                    capability_digest,
                 )
                 if row is None:
                     return None
@@ -872,6 +896,7 @@ class PostgresJobRepository:
                     row["lease_owner"],
                     row["lease_expires_at"],
                     row["attempt_count"],
+                    capability,
                 )
 
     async def renew_lease(
@@ -901,7 +926,7 @@ class PostgresJobRepository:
                 row = await connection.fetchrow(
                     """
                     UPDATE semantic_jobs.tasks t
-                    SET checkpoint = checkpoint || $4::jsonb ||
+                    SET checkpoint = checkpoint || ($4::jsonb - 'assetCapabilityDigest') ||
                           CASE WHEN checkpoint ? 'errorDetails' THEN jsonb_build_object('errorDetails', checkpoint->'errorDetails') ELSE '{}'::jsonb END,
                         lease_expires_at = CASE WHEN $6::boolean
                             THEN now() + make_interval(secs => $5) ELSE t.lease_expires_at END,

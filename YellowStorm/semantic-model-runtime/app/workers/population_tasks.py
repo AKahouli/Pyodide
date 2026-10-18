@@ -1571,6 +1571,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     import asyncpg
 
     from app.jobs.models import StaleLease
+    from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
     from app.persistence.postgres_jobs import PostgresJobRepository
     from app.datasource.parser_sandbox import parser_timeout_seconds
 
@@ -1590,6 +1591,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     )
     lease = None
     guard = None
+    asset_context = None
+    from app.datasource.asset_delivery import bind_asset_execution, reset_asset_execution
     try:
         repository = PostgresJobRepository(pool)
         lease = await repository.claim_task(
@@ -1598,6 +1601,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                                                    parser_timeout_seconds()))
         if lease is None:
             return {"ok": False, "errorCode": "lease_unavailable"}
+        asset_context = bind_asset_execution(lease)
         if attempts_exhausted(lease.attempt_count, max_attempts):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
@@ -1609,8 +1613,6 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         # One independent, authoritative lease renewer for this attempt (P0-02):
         # silent stages keep the lease without progress reports, and a lost or
         # unverifiable lease stops the attempt from making further effects.
-        from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
-
         lease_seconds, renew_seconds = lease_windows_from_env()
         guard = TaskLeaseGuard(
             TaskOwnership(task_id=task_id, job_id=lease.job_id,
@@ -1780,6 +1782,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             return {"ok": False, "errorCode": "lease_lost"}
         raise
     finally:
+        if asset_context is not None:
+            reset_asset_execution(asset_context)
         if guard is not None:
             guard.stop()
         await pool.close()

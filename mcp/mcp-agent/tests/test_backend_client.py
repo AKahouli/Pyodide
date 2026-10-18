@@ -8,7 +8,9 @@ from clients.yellowstorm_agent_client import AgentBackendError, YellowStormAgent
 @pytest.mark.asyncio
 async def test_forwards_internal_and_acting_user_headers_and_unwraps_envelope():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["X-Internal-Token"] == "internal-secret"
+        assert "X-Internal-Token" not in request.headers
+        assert request.headers["X-YellowStorm-Service-Principal"] == "mcp-agent"
+        assert request.headers["X-YellowStorm-Service-Token"] == "internal-secret"
         assert request.headers["X-YellowStorm-User-Id"] == "user-1"
         assert request.headers["X-YellowStorm-Agent-Id"] == "agent-1"
         assert request.headers["X-YellowStorm-Conversation-Id"] == "conversation-1"

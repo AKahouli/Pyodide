@@ -281,6 +281,30 @@ attachment for each supported transport. See
 [ADR-0018](../decisions/ADR-0018-connector-managed-mcp-security.md) for configuration,
 ownership, rollout and the verification gate; no server is certified as a reference.
 
+### Private native execution authority (P1)
+
+Native workspace/asset/image/Telegram calls use dedicated Root/conversation or
+Playbook machine credentials plus live signed execution proof, independently of
+MCP authentication. The backend derives the actor and rechecks canonical leases,
+current rights and target scope. A native-conversation proof cannot control Root
+executions. Root child validation distinguishes the current/frozen parent root
+definition from the selected worker definition; native worker sources can be
+outside conversation links, while root-constrained mode retains its frozen ceiling.
+
+Proofs travel in private gRPC metadata and context-local runtime state; provider
+headers and MCP assertions cannot substitute. Foreground child native authority
+is bound to the canonical child and parent's live stream lease without replacing
+parent-control authority. Admission proof is received only in the internal
+`X-YellowStorm-Child-Authority` response header, then installed in a separate
+task-local native context with renewal/cleanup and no parent fallback. Temporary
+sources are restricted to their admitted IDs intersected with the frozen parent
+ceiling. Required scoped review passed after these role-aware source corrections.
+Background task renewal is independent of an observing RPC, and context/renewal
+cleanup follows execution ownership. See [cross-service contracts](cross-service-contracts.md#grpc-nestjs--adk)
+and the [source/evidence inventory](../../security/internal-principal-inventory.md).
+Local HTTP/gRPC tests and build checks do not establish full application startup,
+live provider/storage or deployment qualification.
+
 - Sessions: PostgreSQL-backed via ADK `DatabaseSessionService`
   (`DATABASE_URL`, `LANGGRAPH_CHECKPOINT_*` settings).
 - Memory: mem0 over Azure AI Search; RAG via hybrid vector+keyword search

@@ -1,5 +1,6 @@
 import { ConversationRootResolverService } from './root-work/conversation-root-resolver.service';
 import { Module, forwardRef } from '@nestjs/common';
+import { ConnectorModule } from '@modules/connector/connector.module';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -95,7 +96,7 @@ import { ConversationUsageAccountingService } from './services/conversation-usag
 import { ConversationNameService } from './services/conversation-name.service';
 
 @Module({
-  imports: [ToolModule, ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
+  imports: [forwardRef(() => ConnectorModule), ToolModule, ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
   controllers: [
     RootInputController,
     RootWorkPublicController,
@@ -110,6 +111,6 @@ import { ConversationNameService } from './services/conversation-name.service';
     ConversationFileController,
   ],
   providers: [RootConversationReplyService, ConversationRootResolverService, RootFollowupService, RootFollowupStore, RootWorkPublicService, ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService, RootDelegateDefinitionService, RootInputService, RootResultService, RootEvidenceService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundJobStore, RootBackgroundEventStore, RootBackgroundLifecycleService, RootBackgroundDriverService, RootBackgroundSubmissionService, RootBackgroundInputService, RootForegroundWorkersService],
-  exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
+  exports: [RootWorkService, ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

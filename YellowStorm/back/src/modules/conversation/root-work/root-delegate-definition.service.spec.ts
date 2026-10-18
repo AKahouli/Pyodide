@@ -290,4 +290,47 @@ describe('lazy selected root delegate definition', () => {
     expect(JSON.parse(worker.agent_params.params['run_code_context_json']).runId).toBe(second.executionId);
     expect(second.executionId).not.toBe(first.executionId);
   });
+
+  async function workerRightsHarness() {
+    const h = harness();
+    const parent = await h.work.getExecution();
+    Object.assign(parent.resultPayload.nativeState.scope, { executionId: parentId, role: 'root', depth: 0 });
+    parent.status = 'completed'; // Admitted background children may outlive the foreground root turn.
+    const childId = '3'.repeat(24);
+    const child = { ...parent, id: childId, role: 'library_worker', depth: 1, status: 'running', parentExecutionId: parentId,
+      resultPayload: { nativeState: { actorId: 'actor', scope: { executionId: childId, role: 'library_worker', depth: 1,
+        parentExecutionId: parentId, immutableSnapshotRef: 'worker-snapshot' }, admittedRequest: { agentId },
+        rootContext: { selected_agent_id: agentId } } } };
+    h.work.getExecution.mockImplementation(async (id: string) => id === parentId ? parent : id === childId ? child : null);
+    return { ...h, parent, child, childId };
+  }
+
+  it.each(['native', 'root_constrained'])('authorizes a live %s library child using distinct selected and root snapshots', async mode => {
+    const h = await workerRightsHarness();
+    h.pool.entries[0].configurationMode = mode;
+    h.state.rootContext.catalog[0].configuration_mode = mode;
+    await expect(h.service.assertCurrentAuthorityRights(h.childId)).resolves.toBeUndefined();
+    expect(h.resolver.resolveForActor).toHaveBeenCalledWith(parentId, 'actor', 'conversation', null);
+    expect(h.agents.buildGrpcAgentsForPlaybook).not.toHaveBeenCalled();
+  });
+
+  it.each(['selected revoked', 'selected revision', 'root revision', 'root revoked', 'configuration mode',
+    'missing frozen entry', 'missing ceiling', 'parent cancelled', 'actor mismatch', 'epoch mismatch',
+    'wrong parent', 'selected identity'])('rejects library child when %s changes', async scenario => {
+    const h = await workerRightsHarness();
+    if (scenario === 'selected revoked') h.pool.entries.length = 0;
+    if (scenario === 'selected revision') h.pool.entries[0].snapshotDigest = 'new-worker';
+    if (scenario === 'root revision') h.pool.rootSnapshotDigest = 'new-root';
+    if (scenario === 'root revoked') h.resolver.resolveForActor.mockRejectedValue(new Error('Root access revoked'));
+    if (scenario === 'configuration mode') h.pool.entries[0].configurationMode = 'root_constrained';
+    if (scenario === 'missing frozen entry') h.state.rootContext.catalog.length = 0;
+    if (scenario === 'missing ceiling') delete h.parent.resultPayload.nativeState.capabilityCeiling;
+    if (scenario === 'parent cancelled') h.parent.status = 'cancelled';
+    if (scenario === 'actor mismatch') h.child.resultPayload.nativeState.actorId = 'foreign';
+    if (scenario === 'epoch mismatch') h.child.conversationEpoch = 5;
+    if (scenario === 'wrong parent') h.child.resultPayload.nativeState.scope.parentExecutionId = 'foreign';
+    if (scenario === 'selected identity') h.child.resultPayload.nativeState.admittedRequest.agentId = 'foreign';
+    await expect(h.service.assertCurrentAuthorityRights(h.childId)).rejects.toThrow();
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+  });
 });

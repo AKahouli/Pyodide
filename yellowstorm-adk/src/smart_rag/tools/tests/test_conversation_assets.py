@@ -4,6 +4,17 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from src.smart_rag.tools.utilities.conversation_assets import create_conversation_asset_tools
+from src.root_runtime import delegate_resolver
+
+
+@pytest.fixture(autouse=True)
+def private_dispatch_authority(monkeypatch):
+    monkeypatch.setattr(delegate_resolver, 'get_settings', lambda: SimpleNamespace(ADK_ROOT_RUNTIME_SERVICE_TOKEN='root-test-machine'))
+    binding = delegate_resolver._root_authority.set(delegate_resolver._RootAuthority('asset-execution', 'private-dispatch-proof'))
+    try:
+        yield
+    finally:
+        delegate_resolver._root_authority.reset(binding)
 CTX = dict(platform_api_url="http://backend/api", platform_api_token="test-token", user_id="actor-a", conversation_id="conversation-a")
 
 def tools():
@@ -22,6 +33,9 @@ async def test_authority_and_same_names(monkeypatch):
     assert calls[0][0] == "http://backend/api/v1/internal/root-work/assets/list"
     assert calls[0][1]["json"]["userId"] == "actor-a"
     assert calls[0][1]["json"]["conversationId"] == "conversation-a"
+    assert calls[0][1]['headers']['X-YellowStorm-Execution-Authority'] == 'private-dispatch-proof'
+    assert calls[0][1]['headers']['X-YellowStorm-Service-Principal'] == 'adk-root-runtime'
+    assert 'X-Internal-Token' not in calls[0][1]['headers']
     assert "userId" not in inspect.signature(tool).parameters
     assert "conversationId" not in inspect.signature(tool).parameters
     assert create_conversation_asset_tools({}) == []
@@ -180,10 +194,12 @@ async def test_prepared_asset_access_is_rechecked_without_reading_bytes(monkeypa
     from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
     async def post(self, url, **kwargs):
         assert url.endswith("/assets/inspect")
+        assert kwargs["headers"]["X-YellowStorm-Execution-Authority"] == "private-dispatch-proof"
+        assert "X-Internal-Token" not in kwargs["headers"]
         assert kwargs["json"] == {"userId": "actor-a", "conversationId": "conversation-a", "ref": "ref"}
         return httpx.Response(404 if state == "denied" else 200, json={"status": state}, request=httpx.Request("POST", url))
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
-    ctx = SimpleNamespace(platform_api_url="http://backend/api", platform_api_token="test", user_id="actor-a")
+    ctx = SimpleNamespace(platform_api_url="http://backend/api", platform_api_token="", user_id="actor-a")
     check = validate_prepared_assets(ctx, "conversation-a", {"path": {"ref": "ref", "sha256": "a" * 64}})
     if state == "ready":
         await check
@@ -199,12 +215,36 @@ async def test_revocation_state_requires_trusted_scope_and_valid_contract(monkey
     from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
     async def post(self,url,**kwargs):
         assert url.endswith("/assets/revocation")
+        assert kwargs["headers"]["X-YellowStorm-Service-Principal"] == "adk-root-runtime"
+        assert kwargs["headers"]["X-YellowStorm-Execution-Authority"] == "private-dispatch-proof"
+        assert "X-Internal-Token" not in kwargs["headers"]
         assert kwargs["json"] == {"userId":"actor-a","conversationId":"conversation-a"}
         return httpx.Response(200,json={"data":body},request=httpx.Request("POST",url))
     monkeypatch.setattr(httpx.AsyncClient,"post",post)
-    ctx=SimpleNamespace(user_id="actor-a",platform_api_url="http://backend/api",platform_api_token="test")
+    ctx=SimpleNamespace(user_id="actor-a",platform_api_url="http://backend/api",platform_api_token="")
     if "cleanupPending" in body and (body["epoch"] is None or isinstance(body["epoch"],str)):
         assert await get_asset_revocation(ctx,"conversation-a") == body
     else:
         with pytest.raises(SandboxMountValidationError):
             await get_asset_revocation(ctx,"conversation-a")
+
+
+@pytest.mark.asyncio
+async def test_revocation_and_receipt_checks_never_use_a_legacy_key_without_dispatch(monkeypatch):
+    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation, validate_prepared_assets
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    calls = []
+    async def post(self, url, **kwargs):
+        calls.append(url)
+        raise AssertionError("Missing private authority must not reach the backend")
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    context = SimpleNamespace(user_id="actor-a", platform_api_url="http://backend/api", platform_api_token="legacy-key")
+    binding = delegate_resolver._root_authority.set(None)
+    try:
+        with pytest.raises(SandboxMountValidationError):
+            await get_asset_revocation(context, "conversation-a")
+        with pytest.raises(SandboxMountValidationError):
+            await validate_prepared_assets(context, "conversation-a", {"path": {"ref": "ref", "sha256": "a" * 64}})
+    finally:
+        delegate_resolver._root_authority.reset(binding)
+    assert calls == []

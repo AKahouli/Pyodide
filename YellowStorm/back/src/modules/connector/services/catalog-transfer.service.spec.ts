@@ -171,7 +171,12 @@ describe('CatalogTransferService export fidelity', () => {
         envMap: { KEY: canary },
         nestedUnknown: { inner: canary },
       },
-      mcpServerUrl: `https://user:${canary}@mcp.example.test/mcp`,
+      mcpServerUrl: `https://user:${canary}@mcp.example.test/mcp?token=${canary}#${canary}`,
+      description: `Imported from https://mcp.example.test/mcp?arbitrary=${canary}`,
+      authConfigSchema: { unknown: { default: canary } },
+      actions: [{ ...connector.actions[0], description: canary,
+        parameterSchema: { properties: { query: { type: 'string', default: canary } } },
+      }],
       mcpServerConfig: { headers: { Authorization: `Bearer ${canary}` }, env: { SECRET: canary }, unknown: canary },
     };
     const store = {
@@ -242,6 +247,37 @@ describe('CatalogTransferService export fidelity', () => {
     expect(archive.security?.connectorCredentials[0].authPayload).toEqual({ token: 'credential-token' });
     expect(archive.security?.connectedAppDefinitions[0].clientSecret).toBe('client-secret');
     expect(archive.security?.userAppConnections[0].accessToken).toBe('access-token');
+  });
+
+  it('keeps an explicitly privileged legacy endpoint only inside the encrypted archive', async () => {
+    const canary = 'TEST_CANARY_R03';
+    const endpoint = `https://mcp.example.test/mcp?token=${canary}`;
+    const store = { findAllExport: jest.fn().mockResolvedValue([{ ...connector, mcpServerUrl: endpoint }]),
+      findNamesByIds: jest.fn().mockResolvedValue(new Map()) };
+    const result = await createService(true, store).exportConnectors(ownerId, {
+      selection: 'all', includeSecurity: true, passphrase: 'synthetic-portable-passphrase',
+    });
+    expect(result.buffer.toString('utf8')).not.toContain(canary);
+    const archive = decryptCatalogArchive(JSON.parse(result.buffer.toString('utf8')) as EncryptedCatalogArchive,
+      'synthetic-portable-passphrase');
+    expect(archive.connectors[0].mcpServerUrl).toBe(endpoint);
+  });
+
+  it.each([
+    ['not-an-endpoint?token=TEST_CANARY_R03', 'not-an-endpoint?token=TEST_CANARY_R03'],
+    ['https://user:TEST_CANARY_R03@[invalid/mcp', 'TEST_CANARY_R03'],
+    ['https://mcp.example.test/mcp?token=TEST_CANARY_R03', '%54%45%53%54%5f%43%41%4e%41%52%59%5f%52%30%33%ZZ'],
+    ['https://mcp.example.test/mcp?token=TEST_CANARY_R03', '%54%45%53%54%5f%43%41%4e%41%52%59%5f%52%30%33%FF'],
+    ['https://mcp.example.test/mcp?token=TEST_CANARY_R03', '%54%45%53%54%5f%43%41%4e%41%52%59%5f%52%30%33%E2%82'],
+  ])('fails closed for malformed historical URL/metadata in ordinary exports', async (endpoint, description) => {
+    const store = { findAllExport: jest.fn().mockResolvedValue([{ ...connector, mcpServerUrl: endpoint,
+      description, authConfigSchema: { nested: { default: 'TEST_CANARY_R03' } },
+    }]), findNamesByIds: jest.fn().mockResolvedValue(new Map()) };
+    const result = await createService(false, store).exportConnectors(ownerId, { selection: 'all', includeSecurity: false });
+    const serialized = result.buffer.toString('utf8');
+    expect(serialized).not.toContain('TEST_CANARY_R03');
+    expect(serialized).not.toContain('%54%45%53%54');
+    expect(serialized).not.toContain('not-an-endpoint');
   });
 
   it('preserves target secrets on overwrite and drops redacted values for new connectors', () => {

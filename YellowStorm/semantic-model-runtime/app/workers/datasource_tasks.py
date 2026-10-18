@@ -357,6 +357,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     import asyncpg
 
     from app.jobs.models import StaleLease
+    from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
     from app.persistence.postgres_jobs import PostgresJobRepository
     from app.datasource.parser_sandbox import parser_timeout_seconds
 
@@ -374,6 +375,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     )
     lease = None
     guard = None
+    asset_context = None
+    from app.datasource.asset_delivery import bind_asset_execution, reset_asset_execution
     try:
         repository = PostgresJobRepository(pool)
         lease = await repository.claim_task(task_id=task_id, queue_name=_QUEUES[1],
@@ -381,6 +384,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                                             lease_seconds=task_lease_seconds(parser_timeout_seconds()))
         if lease is None:
             return {"ok": False, "errorCode": "lease_unavailable"}
+        asset_context = bind_asset_execution(lease)
         if attempts_exhausted(lease.attempt_count, max_attempts):
             # Bounded redelivery: fence to a terminal failed state instead of
             # rejecting forever after the DB comes back.
@@ -393,8 +397,6 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             return {"ok": False, "errorCode": "attempts_exhausted"}
         # Independent lease renewal (P0-02): a parser subprocess cannot renew
         # anything itself, and to_thread cancellation never reaches it.
-        from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
-
         lease_seconds, renew_seconds = lease_windows_from_env()
         guard = TaskLeaseGuard(
             TaskOwnership(task_id=task_id, job_id=lease.job_id,
@@ -474,6 +476,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             return {"ok": False, "errorCode": "lease_lost"}
         raise
     finally:
+        if asset_context is not None:
+            reset_asset_execution(asset_context)
         if guard is not None:
             guard.stop()
         await pool.close()

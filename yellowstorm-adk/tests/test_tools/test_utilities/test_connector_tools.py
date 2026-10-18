@@ -24,6 +24,44 @@ def current_conversation_has_no_deletions(monkeypatch):
     monkeypatch.setattr("src.smart_rag.tools.utilities.conversation_assets.get_asset_revocation", current)
 
 
+@pytest.fixture(autouse=True)
+def private_native_dispatch(monkeypatch):
+    from src.root_runtime import delegate_resolver
+    monkeypatch.setattr(delegate_resolver, "get_settings", lambda: SimpleNamespace(ADK_ROOT_RUNTIME_SERVICE_TOKEN="root-test-machine"))
+    binding = delegate_resolver._root_authority.set(delegate_resolver._RootAuthority("tool-execution", "private-tool-proof"))
+    try:
+        yield
+    finally:
+        delegate_resolver._root_authority.reset(binding)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", [True, False])
+async def test_workspace_save_uses_private_dispatch_without_a_legacy_token(monkeypatch, bound):
+    import httpx
+    from src.root_runtime import delegate_resolver
+    from src.smart_rag.tools.utilities.connector_tools import create_save_file_to_workspace
+    calls = []
+    async def post(self, url, **kwargs):
+        calls.append((url, kwargs))
+        assert kwargs["headers"]["X-YellowStorm-Execution-Authority"] == "private-tool-proof"
+        assert "X-Internal-Token" not in kwargs["headers"]
+        assert kwargs["json"]["userId"] == "owner"
+        return httpx.Response(200, json={"document": {"id": "doc", "originalName": "file.txt", "size": 1}},
+            request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    tool = create_save_file_to_workspace({"platform_api_url": "http://backend/api/v1", "user_id": "owner"})
+    assert tool is not None
+    binding = delegate_resolver._root_authority.set(None) if not bound else None
+    try:
+        result = await tool("https://files.example.test/file", "workspace", "file.txt")
+    finally:
+        if binding is not None:
+            delegate_resolver._root_authority.reset(binding)
+    assert ("successfully" in result) is bound
+    assert len(calls) == int(bound)
+
+
 def test_dynamic_workspace_headers_override_stale_values_and_omit_empty_scope() -> None:
     config = [{"header_name": "Workspace-Id", "source": "workspace"}]
 
@@ -1086,6 +1124,9 @@ async def test_output_receipt_is_issued_only_after_registration(monkeypatch,deni
             "_conversation_output_receipt":{"invocationId":"forged","storagePrefix":"other"}}
     async def post(self,url,**kwargs):
         assert kwargs["json"]["userId"]=="owner" and kwargs["json"]["invocationId"]=="turn"
+        assert kwargs["headers"]["X-YellowStorm-Execution-Authority"] == "private-tool-proof"
+        assert "X-Internal-Token" not in kwargs["headers"]
+        assert kwargs["json"]["inputReceipts"] == [] and kwargs["json"]["sandboxEpoch"] is None
         assert kwargs["json"]["mimeType"]=="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         return httpx.Response(403 if denied else 200,json={"invocationId":"turn","artifactId":"doc-id",
             "storagePath":"owner/system_c1/saved.docx","fileName":"report.docx"},request=httpx.Request("POST",url))
@@ -1093,7 +1134,7 @@ async def test_output_receipt_is_issued_only_after_registration(monkeypatch,deni
     monkeypatch.setattr(httpx.AsyncClient,"post",post)
     binding=_connector_binding({},action_key="send_file_to_user",connector_slug=slug,auth_headers={"X-User-Id":"owner"})
     binding["actions"] += [{"action_key":action,"parameter_schema":{"type":"object","properties":{}}} for action in ["sandbox_create","sandbox_destroy"]]
-    tools={t.name:t for t in create_connector_tools([binding],ConnectorToolContext(session_id="c1",platform_api_url="http://backend/api",platform_api_token="test"))}
+    tools={t.name:t for t in create_connector_tools([binding],ConnectorToolContext(session_id="c1",platform_api_url="http://backend/api",platform_api_token=""))}
     context=SimpleNamespace(invocation_id="turn",state={})
     await tools[f"{slug}_sandbox_create"].func(tool_context=context)
     result=await tools[f"{slug}_send_file_to_user"].func(tool_context=context)

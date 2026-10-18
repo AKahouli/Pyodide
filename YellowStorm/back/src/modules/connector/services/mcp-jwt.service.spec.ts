@@ -44,6 +44,15 @@ describe('McpJwtService current-policy boundary', () => {
     row.mcpTransportType = 'sse';
     await expect(service.issue('connector-1', 'user-1')).rejects.toThrow();
   });
+  it.each(['?token=TEST_CANARY_R03', '?%74oken=TEST_CANARY_R03', '#TEST_CANARY_R03'])
+  ('denies legacy unsafe endpoints before browser token issuance: %s', async suffix => {
+    row.mcpServerUrl = `https://example.com/mcp${suffix}`;
+    let failure: unknown;
+    try { await service.issue('connector-1', 'user-1'); } catch (error) { failure = error; }
+    expect(failure).toBeDefined();
+    expect(JSON.stringify(failure)).not.toContain('TEST_CANARY_R03');
+    expect(users.findById).not.toHaveBeenCalled();
+  });
   it('validates the original bracketed IPv6 destination and raw exact exception without canonical reparsing', async () => {
     const endpoint = 'http://[::1]:8027/Mcp';
     row.mcpServerUrl = endpoint;

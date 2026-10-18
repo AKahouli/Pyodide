@@ -8,7 +8,9 @@ from clients.yellowstorm_playbook_client import PlaybookBackendError, YellowStor
 @pytest.mark.asyncio
 async def test_forwards_internal_and_acting_user_headers_and_unwraps_envelope():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["X-Internal-Token"] == "internal-secret"
+        assert "X-Internal-Token" not in request.headers
+        assert request.headers["X-YellowStorm-Service-Principal"] == "mcp-playbook"
+        assert request.headers["X-YellowStorm-Service-Token"] == "internal-secret"
         assert request.headers["X-YellowStorm-User-Id"] == "user-1"
         assert request.headers["X-YellowStorm-Agent-Id"] == "agent-1"
         assert request.headers["X-Correlation-Id"] == "correlation-1"
@@ -44,7 +46,9 @@ async def test_normalizes_backend_error_without_exposing_tokens():
 @pytest.mark.asyncio
 async def test_streams_events_with_internal_identity_and_resume_cursor():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["X-Internal-Token"] == "internal-secret"
+        assert "X-Internal-Token" not in request.headers
+        assert request.headers["X-YellowStorm-Service-Principal"] == "mcp-playbook"
+        assert request.headers["X-YellowStorm-Service-Token"] == "internal-secret"
         assert request.headers["X-YellowStorm-User-Id"] == "user-1"
         assert request.headers["Last-Event-ID"] == "7"
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=b'id: 8\nevent: completed\ndata: {"sequence":8}\n\n')

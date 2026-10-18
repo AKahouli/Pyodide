@@ -1,6 +1,7 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { internalServicePrincipalGuardFor } from './internal-service-principal.guard';
+import { internalServicePrincipalGuardFor, InternalServicePrincipal, assertUnambiguousSecurityHeaders,
+  AdkRootRuntimeServiceGuard, AdkPlaybookArtifactServiceGuard } from './internal-service-principal.guard';
 
 function ctx(headers: Record<string, string | undefined>): ExecutionContext {
   const norm = Object.fromEntries(
@@ -16,7 +17,7 @@ describe('InternalServicePrincipalGuard (WP07.2/WP07.3)', () => {
   const semanticToken = 'semantic-mcp-principal-secret-0001';
   const bindToken = 'app-runtime-bind-secret-00000001';
 
-  const makeGuard = (principal: 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime', env: Record<string, string>) => {
+  const makeGuard = (principal: InternalServicePrincipal, env: Record<string, string | undefined>) => {
     const config = {
       get: jest.fn((key: string) => env[key]),
     } as unknown as ConfigService;
@@ -82,5 +83,56 @@ describe('InternalServicePrincipalGuard (WP07.2/WP07.3)', () => {
       'x-yellowstorm-service-principal': 'semantic-model-mcp',
       'x-yellowstorm-service-token': 'wrong-token-value!!!!!!!',
     }))).toThrow(UnauthorizedException);
+  });
+
+  it.each([
+    [AdkRootRuntimeServiceGuard, 'adk-root-runtime', 'ADK_ROOT_RUNTIME_SERVICE_TOKEN'],
+    [AdkPlaybookArtifactServiceGuard, 'adk-playbook-artifact', 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN'],
+  ] as const)('exports the dedicated %s guard without generic credential fallback', (Guard, principal, key) => {
+    const config = { get: (name: string) => name === key ? semanticToken : undefined } as unknown as ConfigService;
+    const guard = new Guard(config);
+    expect(guard.canActivate(ctx({ 'x-yellowstorm-service-principal': principal,
+      'x-yellowstorm-service-token': semanticToken }))).toBe(true);
+    expect(() => guard.canActivate(ctx({ 'x-internal-token': semanticToken }))).toThrow();
+  });
+
+  it.each([
+    ['mcp-agent', 'AGENT_MCP_BACKEND_SERVICE_TOKEN'],
+    ['mcp-playbook', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN'],
+    ['semantic-runtime', 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN'],
+    ['adk-root-runtime', 'ADK_ROOT_RUNTIME_SERVICE_TOKEN'],
+    ['adk-playbook-artifact', 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN'],
+  ] as const)('isolates %s from generic and foreign credentials', (principal, key) => {
+    const guard = makeGuard(principal, { [key]: semanticToken, INTERNAL_SERVICE_SECRET: 'generic-secret' });
+    expect(guard.canActivate(ctx({ 'x-yellowstorm-service-principal': principal,
+      'x-yellowstorm-service-token': semanticToken }))).toBe(true);
+    expect(() => guard.canActivate(ctx({ 'x-internal-token': 'generic-secret' }))).toThrow();
+    expect(() => guard.canActivate(ctx({ 'x-yellowstorm-service-principal': principal,
+      'x-yellowstorm-service-token': 'generic-secret' }))).toThrow();
+    expect(() => guard.canActivate(ctx({ 'x-yellowstorm-service-principal': 'semantic-model-mcp',
+      'x-yellowstorm-service-token': semanticToken }))).toThrow();
+  });
+
+  it.each([
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: ' ' },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: 'short', NODE_ENV: 'production' },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: semanticToken, INTERNAL_SERVICE_SECRET: semanticToken },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: semanticToken, AGENT_MCP_BACKEND_SERVICE_TOKEN: semanticToken },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: semanticToken, SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN: semanticToken },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: semanticToken, ADK_ROOT_RUNTIME_SERVICE_TOKEN: semanticToken },
+    { SEMANTIC_MODEL_MCP_SERVICE_TOKEN: semanticToken, ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN: semanticToken },
+  ])('rejects invalid credential configuration without leaking values', (env) => {
+    expect(() => makeGuard('semantic-model-mcp', env).canActivate(ctx({
+      'x-yellowstorm-service-principal': 'semantic-model-mcp', 'x-yellowstorm-service-token': semanticToken,
+    }))).toThrow(/credential configuration/);
+  });
+
+  it.each(['x-yellowstorm-service-principal', 'x-yellowstorm-service-token',
+    'x-yellowstorm-mcp-assertion', 'x-yellowstorm-user-id', 'authorization'])('rejects ambiguous %s headers including raw duplicates', (name) => {
+    for (const value of [['one', 'two'], 'one,two']) {
+      expect(() => assertUnambiguousSecurityHeaders({ headers: { [name]: value } })).toThrow(/Ambiguous/);
+    }
+    expect(() => assertUnambiguousSecurityHeaders({ headers: { [name]: 'one' },
+      rawHeaders: [name, 'one', name.toUpperCase(), 'two'] })).toThrow(/Ambiguous/);
   });
 });

@@ -38,7 +38,8 @@ describe('callGrpcRun router config serialization', () => {
       settings: {},
     });
 
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           router_config: expect.objectContaining({
@@ -114,7 +115,8 @@ describe('callGrpcRun router config serialization', () => {
       settings: {},
     });
 
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ owner_id: 'owner-1' }));
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({ owner_id: 'owner-1' }));
     const metadata = run.mock.calls[0][0].snapshot.nodes[0].metadata;
     expect(metadata.fields).toEqual(expect.objectContaining({
       execution_mode: { kind: 'stringValue', stringValue: 'live' },
@@ -401,7 +403,8 @@ describe('callGrpcRun router config serialization', () => {
       'planner-1',
       { inferenceModelId: 'fallback-model' },
     );
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       settings: expect.objectContaining({
         runtime_settings: expect.objectContaining({
           max_sandbox_calls_per_step: 16,

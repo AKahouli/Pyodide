@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -74,7 +74,7 @@ export class TelegramValidationService {
   }
 
   /** Called by the ADK `request_owner_validation` tool via the internal endpoint. */
-  async create(payload: ValidationRequestPayload): Promise<ValidationCreationResult> {
+  async create(payload: ValidationRequestPayload, expectedOwnerId?: string): Promise<ValidationCreationResult> {
     const { integration_id, conversation_id, question } = payload;
     const guestLabel = payload.guest_label?.trim() || undefined;
     const choices = (payload.choices || []).map((choice) => String(choice).trim()).filter(Boolean);
@@ -93,8 +93,15 @@ export class TelegramValidationService {
     if (!integration) {
       throw new BadRequestException(ErrorCode.AGENT_NOT_FOUND, 'Telegram integration not found');
     }
+    if (expectedOwnerId !== undefined && integration.userId !== expectedOwnerId) {
+      throw new ForbiddenException('Foreign Telegram integration owner');
+    }
     if (!integration.enabled) {
       throw new BadRequestException(ErrorCode.TELEGRAM_INTEGRATION_DISABLED, 'Telegram integration is disabled');
+    }
+    const guestBinding = await this.bindingStore.findByConversation(integration.id, conversation_id);
+    if (expectedOwnerId !== undefined && !guestBinding) {
+      throw new ForbiddenException('Foreign Telegram conversation binding');
     }
     const botToken = this.integrationService.getDecryptedToken(integration);
 
@@ -106,8 +113,6 @@ export class TelegramValidationService {
         "Owner's Telegram chat is not linked yet — the owner must /start the bot with a link code first",
       );
     }
-    const guestBinding = await this.bindingStore.findByConversation(integration.id, conversation_id);
-
     const validation = await this.validationStore.insert({
       integrationId: integration.id,
       agentId: integration.agentId,

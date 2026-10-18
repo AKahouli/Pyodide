@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from src.root_runtime.delegate_resolver import native_actor_headers
 import json
 import mimetypes
 import re
@@ -1550,7 +1551,7 @@ def create_connector_tools(
                             raise ValueError("Failed nested publication")
                         owner = _header_user_id(effective_auth_headers)
                         api_url = str(context.platform_api_url or "").rstrip("/")
-                        if not all((owner, _session_id, invocation_id, api_url, context.platform_api_token)):
+                        if not all((owner, _session_id, invocation_id, api_url)):
                             raise ValueError("Missing trusted publication context")
                         source = publication.get("ceph_path") if isinstance(publication, dict) else None
                         if not isinstance(source, str) or not source.startswith(f"{owner}/system_{_session_id}/"):
@@ -1562,7 +1563,7 @@ def create_connector_tools(
                         file_name = publication.get("filename") or str(publication.get("path") or source).replace("\\", "/").rsplit("/", 1)[-1]
                         async with httpx.AsyncClient(timeout=90.0) as client:
                             response = await client.post(f"{api_url}/internal/root-work/assets/register",
-                                headers={"X-Internal-Token": context.platform_api_token},
+                                headers=await native_actor_headers(),
                                 json={"userId": owner, "conversationId": _session_id, "invocationId": invocation_id,
                                     "sourcePath": source, "fileName": file_name,
                                     "inputReceipts": [{"ref": receipt["ref"], "sha256": receipt["sha256"]} for receipt in asset_receipts.values()],
@@ -1619,14 +1620,13 @@ def create_connector_tools(
 def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]:
     """Bind trusted platform credentials to the native workspace file tool."""
     platform_api_url = agent_params.get("platform_api_url", "")
-    platform_api_token = agent_params.get("platform_api_token", "")
     user_id = agent_params.get("user_id", "")
 
-    if not platform_api_url or not platform_api_token:
+    if not platform_api_url:
         return None
 
     def redact_runtime_context(message: str) -> str:
-        for value in (platform_api_token, platform_api_url, user_id):
+        for value in (platform_api_url, user_id):
             if value:
                 message = message.replace(value, "[REDACTED]")
         return message
@@ -1662,7 +1662,7 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                     endpoint,
                     json=body,
                     headers={
-                        "X-Internal-Token": platform_api_token,
+                        **await native_actor_headers(),
                         "Content-Type": "application/json",
                     },
                 )

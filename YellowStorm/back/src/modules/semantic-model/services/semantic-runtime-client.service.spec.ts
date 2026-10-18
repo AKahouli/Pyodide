@@ -14,8 +14,9 @@ const runCommand = {
   actorUserId: 'u1',
   modelId: 'm1',
   workspaceId: 'w1',
-  payload: { purpose: 'build' },
+  payload: { purpose: 'build', sources: [] },
 };
+const assetGrants = { admit: jest.fn().mockResolvedValue('signed-admission') };
 
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -97,12 +98,13 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
 
   it('posts population runs with service key, idempotency key and timeout', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j1', reused: false }));
-    const client = new SemanticRuntimeClientService(config() as any);
+    const client = new SemanticRuntimeClientService(config() as any, assetGrants as never);
     const result = await client.requestPopulationRun(runCommand, 'idem-1');
     expect(result).toEqual({ jobId: 'j1', reused: false });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://runtime:8000/v1/semantic-model-population/runs');
-    expect(JSON.parse(init.body)).toEqual(runCommand);
+    expect(JSON.parse(init.body)).toEqual({ ...runCommand, payload: { ...runCommand.payload, assetAdmission: 'signed-admission', assetCommand: JSON.stringify(runCommand) } });
+    expect(assetGrants.admit).toHaveBeenCalledWith('u1', 'm1', 'population', [], 'idem-1', runCommand);
     expect(init.headers).toEqual(expect.objectContaining({
       'X-Semantic-Service-Key': 'secret',
       'Idempotency-Key': 'idem-1',
@@ -205,7 +207,7 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
   });
 
   it('says why the runtime refused a run, and that it cannot be reached when it is down', async () => {
-    const client = new SemanticRuntimeClientService(config() as any);
+    const client = new SemanticRuntimeClientService(config() as any, assetGrants as never);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: [
       { loc: ['body', 'payload', 'sources'], msg: 'Value error, a run reads at least one source' },
     ] }), { status: 422 }));

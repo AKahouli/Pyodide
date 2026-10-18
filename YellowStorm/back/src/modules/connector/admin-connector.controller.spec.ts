@@ -257,4 +257,17 @@ describe('AdminConnectorController MCP inspection', () => {
     )).rejects.toBeInstanceOf(BadRequestException);
     expect(store.insert).not.toHaveBeenCalled();
   });
+
+  it('persists only nonsecret import audit fields even when a legacy mock returns an unsafe endpoint', async () => {
+    const audit = { logSuccess: jest.fn() };
+    const service = { importFromMcp: jest.fn().mockResolvedValue({ serverName: 'safe', tools: [] }) };
+    const controller = new AdminConnectorController(service as never, audit as never,
+      {} as never, {} as never, config as never);
+    await controller.importFromMcp({ transportType: 'streamable_http',
+      serverUrl: 'https://mcp.example.test/mcp?arbitrary=TEST_CANARY_R03',
+    }, user, { ip: '127.0.0.1', headers: {} } as never);
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ metadata: { toolCount: 0 } }));
+    expect(JSON.stringify(audit.logSuccess.mock.calls)).not.toContain('TEST_CANARY_R03');
+    expect(JSON.stringify(audit.logSuccess.mock.calls)).not.toContain('serverUrl');
+  });
 });

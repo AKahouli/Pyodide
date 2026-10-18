@@ -134,6 +134,17 @@ Index failure is truthful and retryable; stale index hits are authoritatively de
 Interpreter calls verify trusted revocation state and prepared-input receipts;
 registration rechecks epoch/receipts under the deletion lock, rejecting publication
 if deletion happened during output read. Cleanup pending on bytes blocks reuse.
+
+P1 parent-branch integration changes authentication for these same checks, not
+their deletion semantics: revocation and receipt revalidation now require the
+private native dispatch proof, and the backend revocation route inherits the
+scoped machine/execution guards. A legacy key cannot bootstrap the check.
+Generic-token presence is no longer required for staging or output registration;
+epoch/receipt validation, sandbox reset and exact-path/digest verification remain
+mandatory. Focused merged verification: 114 backend tests, 108 ADK tests,
+production typecheck and required integration review PASS. Full P1 rollout limits
+remain in the [deployment manifest](../../security/p1-deployment-change-manifest.yaml).
+
 These checks do not recall delivered bytes, independently saved outputs or bearer
 URLs already issued (up to ten minutes). Mutable external storage aliases still
 have a hash-check/delete race without a storage version API; immediate physical

@@ -107,6 +107,15 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
+P1 asset authority now uses the dedicated `semantic-runtime` principal plus a
+backend-signed canonical admission and a live task/lease/opaque claim proof.
+Population retains active model/source authorization; model-less discovery is
+limited to the exact uploaded source. Every operation and refresh rechecks current
+rights/version, with job/attempt/source/options-isolated datasets and no raw-key
+fallback. The [semantic asset contract](../../security/semantic-asset-grant-contract.md)
+records source owners, scoped review, timestamp interoperability and outstanding
+database/Ceph/deployment qualification. This local evidence does not close P1.
+
 Runtime failure details are captured before exception codes are collapsed and
 retained in existing task checkpoint/job progress JSON across retries, recovery
 exhaustion and terminal completion. Job status has optional `errorDetails`; index

@@ -1915,11 +1915,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     await terminal!.settlement;
   }
 
-  private executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
+  private async executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
     const logOpts: LogOptions = { requestId };
     let nativeWrites = Promise.resolve();
     let nativeWriteError: unknown;
 
+    const rootExecutionId = grpcRequest.execution_scope?.execution_id;
+    let rootAuthority: string | undefined;
+    if (rootExecutionId) {
+      const lease = this.streamExecutionLeases.get(streamKey);
+      if (!lease || !this.rootWorkService) throw new Error('Root dispatch authority unavailable');
+      rootAuthority = await this.rootWorkService.issueForegroundAuthority(rootExecutionId, userId, conversationId, messageId, lease);
+    }
+    let nativeAuthority: string | undefined;
+    if (!rootExecutionId) {
+      const lease = this.streamExecutionLeases.get(streamKey);
+      if (!lease || !this.rootWorkService) throw new Error('Native dispatch authority unavailable');
+      nativeAuthority = await this.rootWorkService.issueNativeConversationAuthority(userId, conversationId, messageId, lease);
+    }
     return new Promise<void>((resolve, reject) => {
       this.logger.debug(
         'gRPC call initiated',
@@ -1935,6 +1948,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       // Create metadata with user header for LiteLLM logging + shared API key
       const metadata = createGrpcMetadata(this.configService);
+      if (rootAuthority) metadata.set('x-yellowstorm-root-authority', rootAuthority);
+      if (nativeAuthority) metadata.set('x-yellowstorm-native-authority', nativeAuthority);
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
@@ -2991,9 +3006,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.executeSingleAgentGrpcStream(params.messageId, grpcRequest, timeoutMs, logOpts);
   }
 
-  private executeSingleAgentGrpcStream(messageId: string, grpcRequest: Record<string, unknown>, timeoutMs: number, logOpts?: LogOptions): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
-    return new Promise((resolve, reject) => {
+  private async executeSingleAgentGrpcStream(messageId: string, grpcRequest: Record<string, unknown>, timeoutMs: number, logOpts?: LogOptions): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+    const userId = (grpcRequest.user_context as { user_id?: string } | undefined)?.user_id;
+    const conversationId = grpcRequest.conversation_id;
+    if (!userId || typeof conversationId !== 'string' || !this.rootWorkService) throw new Error('Native dispatch authority unavailable');
+    const leaseId = randomUUID();
+    if (!await this.messageService.claimStreamExecution(messageId, leaseId, 90_000)) {
+      throw new Error('Single-agent execution is already owned or no longer runnable');
+    }
+    let heartbeat: NodeJS.Timeout | undefined;
+    try {
+      const authority = await this.rootWorkService.issueNativeConversationAuthority(userId, conversationId, messageId, leaseId);
+      return await new Promise<{ durationMs: number; componentCount: number; chunkCount: number }>((resolve, reject) => {
       const metadata = createGrpcMetadata(this.configService);
+      metadata.set('x-yellowstorm-native-authority', authority);
       const username = (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
       metadata.set('user', username);
 
@@ -3008,9 +3034,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (terminal) return;
         terminal = true;
         if (timeoutHandle) clearTimeout(timeoutHandle);
-        void this.messageService.completeAIMessage({ messageId, components: Array.from(buffer.values()), terminalStatus: 'failed' })
+        void this.messageService.completeAIMessage({ messageId, streamExecutionLeaseId: leaseId, components: Array.from(buffer.values()), terminalStatus: 'failed' })
           .then(() => reject(error), reject);
       };
+
+      let renewing = false;
+      heartbeat = setInterval(() => {
+        if (terminal || renewing) return;
+        renewing = true;
+        void this.messageService.renewStreamExecution(messageId, leaseId, 90_000)
+          .then(ok => { if (!ok) { fail(new Error('Native execution lease changed')); call.cancel(); } })
+          .catch(() => { fail(new Error('Native execution lease renewal failed')); call.cancel(); })
+          .finally(() => { renewing = false; });
+      }, 30_000);
 
       const resetIdleTimeout = () => {
         if (timeoutHandle) {
@@ -3073,7 +3109,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const components = Array.from(buffer.values());
 
         void this.messageService
-          .completeAIMessage({ messageId, components, durationMs })
+          .completeAIMessage({ messageId, streamExecutionLeaseId: leaseId, components, durationMs })
           .then(() => {
             resolve({ durationMs, componentCount: components.length, chunkCount });
           })
@@ -3081,7 +3117,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             reject(error);
           });
       });
-    });
+      });
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      await this.messageService.releaseStreamExecution(messageId, leaseId);
+    }
   }
 
   private sanitizeComponent(component: MessageComponent): MessageComponent {

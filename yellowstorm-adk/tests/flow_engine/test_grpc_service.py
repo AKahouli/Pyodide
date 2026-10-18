@@ -1,9 +1,26 @@
 import asyncio
 
 import pytest
+from types import SimpleNamespace
 from google.protobuf.json_format import ParseDict
 
 from src.flow_engine.grpc_service import _snapshot_hitl_blockers, _snapshot_hitl_policy
+
+
+@pytest.fixture(autouse=True)
+def authenticated_dispatch_context(monkeypatch):
+    """Domain tests previously used None for the gRPC context. Supply the
+    dispatch metadata now required by the real private authority boundary."""
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+    from src.flow_engine.runtime import artifact_publication
+    monkeypatch.setattr(artifact_publication, 'get_settings', lambda: SimpleNamespace(
+        API_URL='http://backend/api', ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN='test-only-artifact-machine-key'))
+    context = SimpleNamespace(invocation_metadata=lambda: [('x-yellowstorm-artifact-authority', 'test-dispatch-proof')])
+    for name in ('Run', 'RunFromCheckpoint'):
+        original = getattr(PlaybookFlowRuntimeServicer, name)
+        def with_context(self, request, supplied, _original=original):
+            return _original(self, request, supplied or context)
+        monkeypatch.setattr(PlaybookFlowRuntimeServicer, name, with_context)
 
 try:
     from src.flow_engine.grpc_service import _run_request_log_context

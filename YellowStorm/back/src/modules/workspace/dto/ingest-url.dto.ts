@@ -47,7 +47,7 @@ export class IngestUrlDto {
   filename!: string;
 
   @ApiProperty({
-    description: 'User ID on whose behalf the file is ingested (trusted via service auth)',
+    description: 'Compatibility selector; must match the actor in the live signed dispatch proof',
   })
   @IsString()
   userId!: string;

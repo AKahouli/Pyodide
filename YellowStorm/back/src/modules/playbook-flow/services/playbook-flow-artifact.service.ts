@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { DocumentService } from '@modules/document/document.service';
@@ -11,6 +11,12 @@ import { publicPlaybookTaskResult, trustedPlaybookArtifacts } from '../utils/pla
 import type { PlaybookArtifactAction } from '../dto/request-playbook-artifact-access.dto';
 import { randomBytes } from 'crypto';
 import { PlaybookShareService } from './playbook-share.service';
+import { McpJwtService, AdkExecutionAuthority } from '@modules/connector/services/mcp-jwt.service';
+import { ExecutionLeaseRepository } from '../persistence/execution-lease.repository';
+import { UserService } from '@modules/user/user.service';
+import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
+import { AuthorizationService } from '@modules/authorization/authorization.service';
+import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
 
 const ARTIFACT_AUDIENCE = 'yellostorm-playbook-artifact';
 const ARTIFACT_TOKEN_TYPE = 'playbook-artifact';
@@ -36,7 +42,55 @@ export class PlaybookFlowArtifactService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly playbookShareService: PlaybookShareService,
+    @Optional() private readonly executionSigner?: McpJwtService,
+    @Optional() private readonly executionLeases?: ExecutionLeaseRepository,
+    @Optional() private readonly users?: UserService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {}
+
+  async issuePublicationAuthority(executionId: string, ownerId: string): Promise<string> {
+    const execution = await this.executionRepository.findOwned(executionId, ownerId);
+    const generation = execution?.startedAt && await this.executionLeases?.authorityGeneration(executionId, ownerId, execution.flowId);
+    if (!execution || execution.status !== 'running' || !generation || !this.executionSigner) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid artifact execution authority');
+    }
+    const claims: AdkExecutionAuthority = { purpose: 'playbook-artifact', executionId, sub: ownerId,
+      flowId: execution.flowId, dispatchStartedAt: execution.startedAt!.toISOString(), generation };
+    const token = this.executionSigner.issueAdkExecutionAuthority(claims);
+    await this.assertPublicationAuthority(token, executionId, ownerId);
+    return token;
+  }
+
+  async assertPublicationAuthority(token: string | undefined, executionId: string, ownerId?: string, renewal = false): Promise<AdkExecutionAuthority> {
+    if (!this.executionSigner || !this.users || !this.authorization || !this.executionLeases) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Artifact execution authority unavailable');
+    }
+    const claims = this.executionSigner.verifyAdkExecutionAuthority(token, 'playbook-artifact');
+    if (claims.executionId !== executionId || ownerId !== undefined && ownerId !== claims.sub) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Artifact execution authority mismatch');
+    }
+    const execution = await this.executionRepository.findOwned(executionId, claims.sub);
+    const generation = execution && await this.executionLeases.authorityGeneration(executionId, claims.sub, execution.flowId);
+    if (!execution || !(execution.status === 'running' || renewal && execution.status === 'pending_approval') || !generation || generation !== claims.generation
+      || execution.flowId !== claims.flowId || execution.startedAt?.toISOString() !== claims.dispatchStartedAt) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Stale artifact execution authority');
+    }
+    const user = await this.users.findById(claims.sub);
+    if (!user) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Artifact actor unavailable');
+    assertAccountApproved(user);
+    const roles = await this.authorization.getUserRoles(claims.sub);
+    const permissions = await this.authorization.getUserPermissions(roles.map(role => role.id));
+    if (!hasPermission(permissions, Permissions.PLAYBOOK_EXECUTE)) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Artifact actor permission revoked');
+    }
+    await this.accessService.assertExecutionAccess(execution.flowId, claims.sub, 'read');
+    return claims;
+  }
+
+  async renewPublicationAuthority(token: string | undefined, executionId: string): Promise<{ token: string }> {
+    const claims = await this.assertPublicationAuthority(token, executionId, undefined, true);
+    return { token: this.executionSigner!.issueAdkExecutionAuthority(claims) };
+  }
 
   async listRecent(userId: string, limit: number): Promise<{
     source: 'playbook';
@@ -72,6 +126,7 @@ export class PlaybookFlowArtifactService {
     executionId: string,
     ownerId: string,
     file: { buffer: Buffer; originalname: string; mimetype: string } | undefined,
+    authority?: string,
   ): Promise<{ artifactId: string; filename: string; mimeType: string; size: number }> {
     if (!file?.buffer?.length) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Artifact file is required');
@@ -79,6 +134,7 @@ export class PlaybookFlowArtifactService {
     if (file.buffer.length > PLAYBOOK_ARTIFACT_MAX_BYTES) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Artifact exceeds the 10 MB publication limit');
     }
+    await this.assertPublicationAuthority(authority, executionId, ownerId);
     const execution = await this.executionRepository.findOwned(executionId, ownerId);
     if (execution?.status !== 'running') {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Running execution not found');

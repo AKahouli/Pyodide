@@ -14,6 +14,8 @@ import {
   Inject,
   Optional,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -47,6 +49,8 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorAuthService } from './interfaces/connector-auth.interface';
+import { MigrateQueryHeadersDto } from './dto/migrate-query-headers.dto';
+import { ENCRYPTED_CONNECTOR_HEADERS } from './connector-auth.service';
 
 @ApiTags('Admin Connectors')
 @ApiBearerAuth()
@@ -112,6 +116,9 @@ export class AdminConnectorController {
     const connector = body.connectorId
       ? await this.connectorService.getRuntimeById(body.connectorId)
       : undefined;
+    if (connector?.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+      && (body.runtimeAuthConfig !== undefined || body.dynamicHeaders !== undefined))
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Saved encrypted connector authentication cannot be overridden for inspection');
     if (connector && (body.serverUrl !== connector.mcpServerUrl || body.transportType !== connector.mcpTransportType)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Save connector connection changes before testing');
     }
@@ -215,11 +222,24 @@ export class AdminConnectorController {
       action: 'connectors.import_mcp',
       targetId: '',
       targetType: 'Connector',
-      metadata: { serverUrl: body.serverUrl, toolCount: result.tools.length },
+      metadata: { toolCount: result.tools.length },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
     return result;
+  }
+
+  @Post(':id/migrate-query-headers')
+  @RequirePermissions([Permissions.CONNECTORS_UPDATE, Permissions.CONNECTORS_SECURITY_MANAGE])
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async migrateQueryHeaders(@Param('id') id: string, @Body() dto: MigrateQueryHeadersDto,
+    @CurrentUser() user: AuthUser, @Req() req: Request): Promise<PublicConnectorDto> {
+    const connector = await this.connectorService.migrateQueryHeaders(id, dto, user.permissions ?? []);
+    this.auditLogService.logSuccess({ actorId: user._id.toString(), actorEmail: user.email,
+      action: 'connectors.update', targetId: id, targetType: 'Connector',
+      metadata: { credentialMigration: 'query-to-encrypted-headers', headerCount: dto.mappings.length,
+        securityRevision: connector.securityRevision }, ipAddress: req.ip, userAgent: req.headers['user-agent'] });
+    return connector;
   }
 
   @Patch(':id')

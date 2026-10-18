@@ -33,6 +33,8 @@ describe('PlaybookFlowArtifactService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(service, 'assertPublicationAuthority').mockResolvedValue({ purpose: 'playbook-artifact',
+      executionId: 'execution-1', sub: 'owner-1', generation: 'test-generation' });
     executionRepository.findById.mockResolvedValue({ id: 'execution-1', ownerId: 'owner-1', flowId: 'flow-1', status: 'completed' });
     executionRepository.findOwned.mockResolvedValue({ id: 'execution-1', ownerId: 'owner-1', flowId: 'flow-1', status: 'running' });
     taskResultRepository.listForExecution.mockResolvedValue([task]);
