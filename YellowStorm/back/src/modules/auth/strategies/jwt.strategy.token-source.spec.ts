@@ -64,7 +64,7 @@ describe('query-token stream guards (EventSource routes)', () => {
   const jwtService = new JwtService({});
   const authService = { isSessionValid: jest.fn().mockResolvedValue(true) };
   const context = (token: string | undefined) => {
-    const request: Record<string, unknown> = { query: { token } };
+    const request: Record<string, unknown> = { query: { token }, originalUrl: '/api/v1/conversation-v2/stream' };
     return {
       request,
       ctx: { switchToHttp: () => ({ getRequest: () => request }) } as never,
@@ -74,7 +74,7 @@ describe('query-token stream guards (EventSource routes)', () => {
   const guards: [string, () => { canActivate(ctx: never): Promise<boolean> }][] = [
     ['notifications SSE', () => new SseAuthGuard(jwtService, configService as never, authService as never)],
     [
-      'conversation stream',
+      'conversation-v2 stream',
       () => new ConversationStreamAuthGuard(jwtService, configService as never, authService as never),
     ],
     [

@@ -2275,9 +2275,18 @@ export const useConversationStore = create<ConversationState>()(
         console.warn('[ConversationStore] stream resync required', {
           reason: event.reason,
         });
-        const conversationId = get().currentConversationId;
+        const state = get();
+        const conversationId = state.currentConversationId;
         if (!conversationId) return;
-        void get().recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
+        const hasTrackedRun = state.inFlightSendConversations.has(conversationId)
+          || (state.isStreaming && state.streamingConversationId === conversationId)
+          || (state.isAwaitingFirstChunk && state.awaitingConversationId === conversationId)
+          || state.streamingStateCache.has(conversationId)
+          || Object.values(state.liveAnswers).some(answer => answer.conversationId === conversationId);
+        // A route id alone does not establish access: failed or unfinished
+        // navigation must not turn periodic resync into repeated denied reads.
+        if (state.currentConversation?.id !== conversationId && !hasTrackedRun) return;
+        void state.recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
         void forcedResyncActiveStream(conversationId);
       },
 

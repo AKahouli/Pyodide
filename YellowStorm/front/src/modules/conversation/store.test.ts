@@ -210,11 +210,29 @@ describe('conversation optimistic messages', () => {
 
   it('refetches canonical messages when the server reports a stream resync', async () => {
     fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
-    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    fetchConversationMock.mockResolvedValue({ id: 'conv-1' });
+    await useConversationStore.getState().setCurrentConversation('conv-1');
 
     useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap', lastSeenCursor: 'boot-1:9' });
 
     await vi.waitFor(() => expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', expect.anything()));
+  });
+
+  it.each([true, false])('ignores repeated resync for an unloaded route (loading=%s)', async conversationLoading => {
+    useConversationStore.setState({ currentConversationId: 'denied', currentConversation: null, conversationLoading });
+    for (let index = 0; index < 3; index++) useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await Promise.resolve();
+    expect(fetchActiveStreamsMock).not.toHaveBeenCalled();
+    expect(fetchActiveStreamMock).not.toHaveBeenCalled();
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('still resyncs an unhydrated conversation with a pending send before stream_start', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
+    useConversationStore.setState({ currentConversationId: 'conv-1', currentConversation: null, inFlightSendConversations: new Set(['conv-1']) });
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamsMock).toHaveBeenCalledWith('conv-1'));
+    expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1');
   });
 
   it('preserves choice interaction display text while the request is pending', async () => {
