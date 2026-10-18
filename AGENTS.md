@@ -24,6 +24,8 @@
 
 ## Verification and delivery
 
+- Keep test output concise: use a machine-readable or quiet reporter where available, save full output to a unique local log/report, and inspect counts plus the first relevant failure and location (normally at most 120 lines). Expand only for an unresolved error; avoid loading full DOM dumps or repeated successful output. Preserve the real exit status and verification evidence; never hide failures by filtering output. Read bounded source sections rather than whole files when the relevant location is known.
+
 | Risk | Required checks |
 | --- | --- |
 | Trivial text/formatting | lightweight check; no specialist |

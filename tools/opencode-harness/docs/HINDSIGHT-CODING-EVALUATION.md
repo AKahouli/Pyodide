@@ -2,6 +2,10 @@
 
 ## Question and protocol
 
+Follow-up: [narrower native recall and concise output](HINDSIGHT-RECALL-TUNING.md)
+records the subsequent settings and repeat comparison. Results below describe
+the original, broader recall policy and remain historical measurements.
+
 Does automatically captured project experience improve a real code repair beyond
 the same source, Git documentation and task description without automatic recall?
 This follows the earlier [curated retrieval check](HINDSIGHT-EVALUATION.md).

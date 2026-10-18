@@ -10,8 +10,9 @@ Neither replaces the reviewed Git documentation or local task checkpoints.
 
 The client example requests up to 1,500 tokens of relevant lessons, using
 `memory:durable-v1` with strict tag matching. New conversations retain that tag
-and consolidate within the same scope. Historical records remain stored but are
-excluded from automatic injection. For an explicit historical investigation,
+and consolidate within the same scope. Automatic recall now uses consolidated
+`observation` lessons rather than raw conversation facts. Raw history remains
+stored outside default injection. For an explicit historical investigation,
 use the recall API with the relevant query and without the default tag filter;
 verify any result against source and current checkpoints.
 
@@ -34,9 +35,13 @@ settings. An older incompatible service produces an advisory upgrade message;
 coding continues with source, Git documentation and checkpoints.
 
 The current local RRF ranker orders candidates without confidence scores.
-Semantic/keyword cutoffs (0.84/0.4) and disabled graph/temporal expansion make
-irrelevant prompts return no lesson. These are calibrated for the current
-embedding setup and can miss weak paraphrases; reevaluate after model changes.
+Semantic/keyword floors are 0.87/1.0, with graph/temporal expansion disabled.
+The lexical floor is strict, not formally disabled retrieval. These calibrated
+settings favor precise matches and can miss weak paraphrases. New lessons are
+unavailable to default recall until observation consolidation completes; use
+current source/Git docs while it catches up. The QA/login probe now misses, while
+four other earlier lesson queries still match. Reevaluate after model changes.
+Neither observations nor thresholds guarantee every historical status is absent.
 The 1,500-token setting budgets retrieved content, not all plugin guide text.
 
 Inspect `/operations?status=failed` and each operation's `error_message` before
@@ -48,7 +53,8 @@ reset an active worker or replay an old source snapshot over a newer document.
 Do not delete memories or failed records merely to clear a dashboard.
 Pending jobs can be healthy when parallel coding sessions keep sending updates.
 
-See [the measured evaluation](HINDSIGHT-EVALUATION.md) and the proposed
+See [the recall/output tuning and repeat comparison](HINDSIGHT-RECALL-TUNING.md),
+[the earlier measured evaluation](HINDSIGHT-EVALUATION.md) and the proposed
 [decision record](decisions/HADR-0002-durable-experience-recall.md).
 
 ## A. Install uv inside WSL
@@ -185,8 +191,8 @@ the configuration has:
 | `resolveWorktrees: true` | Linked worktrees share the main repo's memory bank |
 | `optInOnly: true`, your `optInPaths` | Explicit repository enrollment |
 | `retainSessions: true` | Automatic transcript capture |
-| `autoInject: recall`, low budget/1000 tokens | Bounded recall, no routine reflection call |
-| `recallOptions.types: [world, experience]` | Retrieve retained facts without depending on observation consolidation |
+| `autoInject: recall`, low budget/1500 tokens | Bounded recall, no routine reflection call |
+| `recallOptions.types: [observation]` | Reusable consolidated lessons; fresh facts wait for consolidation |
 | `autoSeed: false`, `codebaseSurvey: false` | Avoid an automatic whole-codebase ingestion/survey |
 | `autoUpdate: false` | Upgrade the pinned integration deliberately |
 

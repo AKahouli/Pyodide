@@ -21,6 +21,8 @@
 
 ## Documentation and delivery
 
+- Keep test output concise: use a machine-readable or quiet reporter where available, save full output to a unique local log/report, and inspect counts plus the first relevant failure and location (normally at most 120 lines). Expand only for an unresolved error; avoid loading full DOM dumps or repeated successful output. Preserve the real exit status and verification evidence; never hide failures by filtering output. Read bounded source sections rather than whole files when the relevant location is known.
+
 - Update affected feature/architecture/contracts alongside implementation in the same branch/PR. Once source is stable, assign maintainer exact docs under `docs/agent-context/`, rationale, evidence and check/review state asynchronously when supported; otherwise update them directly. The primary owns instructions/module READMEs elsewhere. Preserve accepted ADRs; changed durable decisions get a proposed superseding record. Full completion requires reviewed updates or a specific no-impact reason.
 - Deliver the smallest complete agreed flow early. Preview is unvalidated; ready-to-test requires focused checks and frontend QA. Required high-risk review may remain pending for local testing, never full completion. Docs don't delay ready-to-test. Reuse passed checks for unchanged inputs; rerun affected coverage.
 - Keep milestone replies concise. End each human reply with **Follow-up:** actor, next action/location and expected result. For ongoing background work, state what runs and that the user can keep messaging. No vague lessons, settled-scope repetition or routine approval. Only the primary adds the footer; specialists return evidence. Never claim memory writes/checks succeeded without confirmation.
