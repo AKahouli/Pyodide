@@ -58,8 +58,9 @@ views restored unchanged. The first default agent called all three tools and rea
 Orchid/173 from its PDF. Frontend production build passed in 3m12s.
 
 Final browser evidence captured the first profile's panel, PDF preview and correct
-agent result. Second-profile final preview is BLOCKED on session renewal (sign-in
-requested once); its upload/download/reload and direct reads already passed.
+agent result. After second-account sign-in, its final preview and another full
+reload PASSED: same.pdf remained ready and displayed only BETA/Juniper/289, with
+the same document reference and original two messages; no agent was rerun.
 That profile's default-agent inference is separately BLOCKED by an existing
 protected MCP provider credential, not asset authorization. Repository observability
 policy reports eight violations in unrelated MCP files, none in this asset scope;
