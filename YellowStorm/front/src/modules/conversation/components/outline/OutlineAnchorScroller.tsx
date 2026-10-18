@@ -1,3 +1,6 @@
+import { MessageRouteAnchorLoader } from './ConversationMessageSearch';
+import { useModuleTranslation } from '@/modules/localization';
+import { toast } from '@/lib/notifications';
 import { useEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
@@ -16,6 +19,7 @@ const STOP_SCROLL_FALLBACK_MS = 900;
  * the anchor currently in view for the rail's active highlight.
  */
 export function OutlineAnchorScroller() {
+  const { t } = useModuleTranslation('conversation');
   const { scrollRef, stopScroll } = useStickToBottomContext();
   const scrollRequest = useConversationUiStore((s) => s.outlineScrollRequest);
   const consumeOutlineScroll = useConversationUiStore((s) => s.consumeOutlineScroll);
@@ -39,9 +43,16 @@ export function OutlineAnchorScroller() {
     if (!scrollRequest) return;
     const container = scrollRef.current;
     const { anchorId } = scrollRequest;
-    consumeOutlineScroll();
     const element = anchorId ? document.getElementById(anchorId) : null;
-    if (!container || !element) return;
+    if (!container || !element) {
+      const deadline = window.setTimeout(() => { consumeOutlineScroll(); toast.error(t('outline.jumpError')); }, 3000);
+      const observer = new MutationObserver(() => {
+        if (anchorId && document.getElementById(anchorId)) { clearTimeout(deadline); observer.disconnect(); useConversationUiStore.getState().requestOutlineScroll(anchorId); }
+      });
+      if (container) observer.observe(container, { childList: true, subtree: true });
+      return () => { clearTimeout(deadline); observer.disconnect(); };
+    }
+    consumeOutlineScroll();
 
     stopScroll();
     const targetTop = Math.max(0, container.scrollTop + element.getBoundingClientRect().top - container.getBoundingClientRect().top - SCROLL_TOP_PADDING_PX);
@@ -99,5 +110,5 @@ export function OutlineAnchorScroller() {
     };
   }, [trackedHeadings, scrollRef, setActiveOutlineAnchor]);
 
-  return null;
+  return <MessageRouteAnchorLoader />;
 }

@@ -18,7 +18,7 @@ import { ConversationService } from '../services/conversation.service';
 import { ModelsService } from '../../models/models.service';
 import { TeamService } from '../../team/team.service';
 import { SendMessageDto, isValidOpenUiSubmission } from '../dto/send-message.dto';
-import { MessageQueryDto } from '../dto/message-query.dto';
+import { MessageQueryDto, MessageSearchDto, MessageAroundDto } from '../dto/message-query.dto';
 import { MessageFeedbackDto } from '../dto/message-feedback.dto';
 import { UpdateMessageDto } from '../dto/update-message.dto';
 import { ReportFrontendLatencyDto } from '../dto/report-frontend-latency.dto';
@@ -863,6 +863,16 @@ export class MessageController {
     @Query() query: MessageQueryDto,
   ) {
     return this.messageService.findByConversation(conversationId, query);
+  }
+
+  @Get('search')
+  async search(@Param('conversationId') conversationId: string, @Query() query: MessageSearchDto) {
+    return this.messageService.searchConversationMessages(conversationId, query.q, query.limit);
+  }
+
+  @Get(':messageId/around')
+  async around(@Param('conversationId') conversationId: string, @Param('messageId') messageId: string, @Query() query: MessageAroundDto) {
+    return this.messageService.messagesAround(conversationId, messageId, query.limit);
   }
 
   @Get(':messageId')

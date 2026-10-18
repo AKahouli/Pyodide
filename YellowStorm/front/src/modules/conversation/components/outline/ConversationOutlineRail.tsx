@@ -1,3 +1,4 @@
+import { ConversationMessageSearch } from './ConversationMessageSearch';
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { HelpCircle, PanelLeftClose, Search } from 'lucide-react';
@@ -102,6 +103,7 @@ export function ConversationOutlineRail({ embedded = false, onSelect }: Readonly
           <PanelLeftClose className='size-4' />
         </Button>
       </div>}
+      <ConversationMessageSearch onSelect={onSelect} />
       {groups.length > 0 && (
         <div className='relative px-3 pb-2'>
           <Search className='pointer-events-none absolute left-5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' aria-hidden='true' />

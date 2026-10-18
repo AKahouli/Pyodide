@@ -1,3 +1,4 @@
+import type { ConversationMessageSearch, ConversationMessagesAround } from './types';
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
 import { useConversationUiStore } from './uiStore';
 import type { MiniAppStateIdentity, MiniAppStateSnapshot, MiniAppStateWrite } from './components/openui/mini-app-state';
@@ -185,6 +186,15 @@ export async function fetchTaggedAgents(id: string): Promise<any[]> {
 }
 
 // ===== Message APIs =====
+export async function searchConversationMessages(conversationId: string, q: string, signal?: AbortSignal): Promise<ConversationMessageSearch> {
+  const response = await apiClient.get<ApiResponse<ConversationMessageSearch>>(API_ENDPOINTS.conversations.searchMessages(conversationId), { params: { q, limit: 20 }, signal });
+  return response.data.data;
+}
+export async function fetchMessagesAround(conversationId: string, messageId: string, signal?: AbortSignal): Promise<ConversationMessagesAround> {
+  const response = await apiClient.get<ApiResponse<ConversationMessagesAround>>(API_ENDPOINTS.conversations.messagesAround(conversationId, messageId), { params: { limit: 100 }, signal });
+  return response.data.data;
+}
+
 
 export async function fetchMessages(conversationId: string, params?: MessageListParams): Promise<PaginatedResponse<Message>> {
   const response = await apiClient.get<ApiResponse<BackendPaginatedMessages>>(API_ENDPOINTS.conversations.messages(conversationId), { params });

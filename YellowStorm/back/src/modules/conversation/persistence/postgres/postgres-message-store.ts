@@ -21,6 +21,47 @@ import type { ConversationUsageMetrics } from '../../utils/usage-metrics';
 export class PostgresMessageStore implements MessageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
+  async searchConversationMessages(conversationId: string, query: string, limit: number): Promise<{ records: Array<{ id: string; questionMessageId: string | null; conversationType: string; createdAt: Date; snippet: string }>; hasMore: boolean }> {
+    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+    // Never search serialized programs, tool payloads or private drafts. Deleted
+    // text components also suppress the duplicate message.content fallback.
+    const readable = sql<string>`concat_ws(' ',
+      CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(${schema.messages.components}, '[]'::jsonb)) c
+        WHERE c->>'type' = 'text' AND (c->'data'->>'assetDeletedAt' IS NOT NULL OR c->'data'->>'content' ~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='))
+        AND COALESCE(${schema.messages.content}, '') !~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='
+        THEN ${schema.messages.content} END,
+      (SELECT string_agg(c->'data'->>'content', ' ') FROM jsonb_array_elements(COALESCE(${schema.messages.components}, '[]'::jsonb)) c
+        WHERE c->>'type' = 'text' AND c->'data'->>'assetDeletedAt' IS NULL
+        AND c->'data'->>'content' !~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='))`;
+    const rows = await this.db.select({ id: schema.messages.id, questionMessageId: schema.messages.questionMessageId,
+      conversationType: schema.messages.conversationType, createdAt: schema.messages.createdAt,
+      snippet: sql<string>`substring(${readable} FROM greatest(1, strpos(lower(${readable}), lower(${query})) - 80) FOR 240)` })
+      .from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId), sql`${readable} ILIKE ${pattern} ESCAPE '\\'`))
+      .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(limit + 1);
+    return { records: rows.slice(0, limit), hasMore: rows.length > limit };
+  }
+
+  async listAround(conversationId: string, targetId: string, limit: number): Promise<{ records: MessageRecord[]; hasOlder: boolean; hasNewer: boolean } | null> {
+    const [target] = await this.db.select().from(schema.messages).where(and(eq(schema.messages.id, targetId), eq(schema.messages.conversationId, conversationId))).limit(1);
+    if (!target) return null;
+    const before = Math.floor((limit - 1) / 2), after = limit - 1 - before;
+    const [older, newer] = await Promise.all([
+      this.db.select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+        sql`(${schema.messages.createdAt}, ${schema.messages.id}) < (${target.createdAt}, ${target.id})`))
+        .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(before + 1),
+      this.db.select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+        sql`(${schema.messages.createdAt}, ${schema.messages.id}) > (${target.createdAt}, ${target.id})`))
+        .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id)).limit(after + 1),
+    ]);
+    const window = [...older.slice(0, before).reverse(), target, ...newer.slice(0, after)];
+    const questionIds = [...new Set(window.flatMap(row => row.questionMessageId ? [row.questionMessageId] : []))];
+    const questions = questionIds.length ? await this.db.select().from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), inArray(schema.messages.id, questionIds), eq(schema.messages.conversationType, 'user'))) : [];
+    const unique = [...new Map([...questions, ...window].map(row => [row.id, row])).values()];
+    unique.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+    return { records: unique.map(mapPostgresMessage), hasOlder: older.length > before, hasNewer: newer.length > after };
+  }
+
   async hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean> {
     const rows = await resolveQueryable(this.db).select({ id: schema.messages.id }).from(schema.messages)
       .where(and(eq(schema.messages.conversationId, conversationId), sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) item

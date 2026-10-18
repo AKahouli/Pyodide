@@ -516,6 +516,7 @@ interface ConversationState {
   // Actions - Messages
   fetchMessages: (conversationId: string) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
+  loadMessageAround: (messageId: string, signal?: AbortSignal) => Promise<void>;
   sendMessage: (conversationId: string, payload: SendMessagePayload, onAccepted?: (assistantMessageId?: string) => void) => Promise<void>;
   updateFeedback: (conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null) => Promise<void>;
   regenerateMessage: (conversationId: string, messageId: string) => Promise<void>;
@@ -1186,6 +1187,32 @@ export const useConversationStore = create<ConversationState>()(
           toast.error(translateConversation('toasts.messages.loadError'));
           console.error('[ConversationStore] fetchMessages error:', err);
         }
+      },
+
+      loadMessageAround: async (messageId, signal) => {
+        const conversationId = get().currentConversationId;
+        if (!conversationId) throw new Error('Conversation unavailable');
+        const generation = liveAccountGeneration, sequence = currentMessagesRequestSequence;
+        const result = await api.fetchMessagesAround(conversationId, messageId, signal);
+        if (signal?.aborted || generation !== liveAccountGeneration || sequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) throw new Error('Conversation changed');
+        const candidates = [...result.messages, ...Object.values(result.branchesByQuestion ?? {}).flat()];
+        const target = candidates.find(message => message.id === messageId && message.conversationId === conversationId);
+        if (!target) throw new Error('Message unavailable');
+        set(state => {
+          const messages = new Map(state.messages.map(message => [message.id, message]));
+          // Never replace active streamed content with an older navigation snapshot.
+          for (const message of result.messages) if (!messages.has(message.id) && message.conversationId === conversationId) messages.set(message.id, message);
+          if (!messages.has(target.id)) messages.set(target.id, target);
+          const branchCache = new Map(state.branchCache), activeBranches = new Map(state.activeBranches);
+          for (const [questionId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+            const existing = new Map((branchCache.get(questionId) ?? []).map(message => [message.id, message]));
+            for (const branch of branches) if (!existing.has(branch.id)) existing.set(branch.id, branch);
+            branchCache.set(questionId, [...existing.values()]);
+            if (!activeBranches.has(questionId) && branches.length) activeBranches.set(questionId, branches[branches.length - 1].id);
+          }
+          if (target.conversationType === 'ai' && target.questionMessageId) activeBranches.set(target.questionMessageId, target.id);
+          return { messages: [...messages.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.questionMessageId === b.id ? 1 : b.questionMessageId === a.id ? -1 : a.id.localeCompare(b.id))), branchCache, activeBranches };
+        });
       },
 
       loadMoreMessages: async () => {

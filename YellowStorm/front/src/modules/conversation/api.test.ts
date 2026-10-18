@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchRootInputs, fetchRootResult, fetchRootEvidence, fetchConversations, fetchMessages, getArtifactDownloadUrl, getCitationViewUrl, getGeneratedImageHistory, rerunReliabilityEvaluation, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchRootInputs, fetchRootResult, fetchRootEvidence, fetchConversations, fetchMessages, fetchMessagesAround, searchConversationMessages, getArtifactDownloadUrl, getCitationViewUrl, getGeneratedImageHistory, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -16,6 +16,8 @@ vi.mock('@/lib/api', () => ({
       byId: (id: string) => `/conversations/${id}`,
       branch: (id: string) => `/conversations/${id}/branches`,
       messages: (id: string) => `/conversations/${id}/messages`,
+      searchMessages: (id: string) => `/conversations/${id}/messages/search`,
+      messagesAround: (id: string, mid: string) => `/conversations/${id}/messages/${mid}/around`,
       activeStream: (id: string) => `/conversations/${id}/active-stream`,
       rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
       rootResult: (id: string, executionId: string) => `/conversations/${id}/root-results/${executionId}`,
@@ -118,6 +120,7 @@ describe('conversation api', () => {
     expect(apiClient.post).toHaveBeenCalledWith(
       '/conversations/conversation-1/messages/message-1/citations/url',
       { source: 'deepsearch', fileName: 'report.pdf', reference: '2' },
+      { signal: undefined },
     );
   });
 
@@ -215,5 +218,19 @@ describe('conversation api', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/conversations/c1/messages/m1/reliability-evaluation/rerun');
     expect(result.reliabilityEvaluation.status).toBe('pending');
+  });
+});
+
+describe('transcript navigation transport', () => {
+  it('uses bounded literal search and around routes with cancellation', async () => {
+    const signal = new AbortController().signal;
+    const search = { matches: [], hasMore: false };
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: search } });
+    expect(await searchConversationMessages('conversation', 'literal % _', signal)).toEqual(search);
+    expect(apiClient.get).toHaveBeenLastCalledWith('/conversations/conversation/messages/search', { params: { q: 'literal % _', limit: 20 }, signal });
+    const window = { messages: [], branchesByQuestion: {}, pagination: { mode: 'around', hasOlder: true, hasNewer: true } };
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: window } });
+    expect(await fetchMessagesAround('conversation', 'target', signal)).toEqual(window);
+    expect(apiClient.get).toHaveBeenLastCalledWith('/conversations/conversation/messages/target/around', { params: { limit: 100 }, signal });
   });
 });

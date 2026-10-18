@@ -1,3 +1,4 @@
+vi.mock('./ConversationMessageSearch', () => ({ ConversationMessageSearch: () => null, MessageRouteAnchorLoader: () => null }));
 import { render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OutlineAnchorScroller } from './OutlineAnchorScroller';
@@ -62,11 +63,13 @@ describe('OutlineAnchorScroller', () => {
     expect(scrollContext.stopScroll.mock.calls.length).toBeGreaterThan(initialCalls);
   });
 
-  it('does nothing when the anchor id has no matching element', () => {
+  it('reports a missing anchor after the bounded mount wait', () => {
     useConversationUiStore.getState().requestOutlineScroll('missing-anchor');
     render(<OutlineAnchorScroller />);
 
     expect(container.scrollTo).not.toHaveBeenCalled();
+    expect(useConversationUiStore.getState().outlineScrollRequest).not.toBeNull();
+    vi.advanceTimersByTime(3000);
     expect(useConversationUiStore.getState().outlineScrollRequest).toBeNull();
   });
 

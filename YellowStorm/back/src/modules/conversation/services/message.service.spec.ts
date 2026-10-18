@@ -115,6 +115,31 @@ describe('MessageService store lifecycle', () => {
     expect(messageStore.updateUser).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])('rejects missing/foreign parent before any write (atomic=%s)', async atomic => {
+    const parentMessageId = new Types.ObjectId().toString();
+    messageStore.findByIdInConversation.mockResolvedValue(null);
+    messageStore.createUserWithAiPlaceholder = jest.fn();
+    const data = { conversationId, senderId, content: 'Refine this', parentMessageId };
+    await expect(atomic ? service.createUserMessageWithAiPlaceholder({ ...data, placeholder: { conversationId, senderId } })
+      : service.createUserMessage(data)).rejects.toThrow('Message not found');
+    expect(messageStore.findByIdInConversation).toHaveBeenCalledWith(conversationId, parentMessageId);
+    expect(messageStore.createUser).not.toHaveBeenCalled();
+    expect(messageStore.createUserWithAiPlaceholder).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exact same-conversation parent and retains lineage', async () => {
+    const parentMessageId = new Types.ObjectId().toString();
+    messageStore.findByIdInConversation.mockResolvedValue(record({ id: parentMessageId }));
+    await service.createUserMessage({ conversationId, senderId, content: 'Refine this', parentMessageId });
+    expect(messageStore.createUser).toHaveBeenCalledWith(expect.objectContaining({ parentMessageId }));
+  });
+
+  it('rejects malformed parent without querying another identity', async () => {
+    await expect(service.createUserMessage({ conversationId, senderId, content: 'Refine', parentMessageId: '../other' })).rejects.toThrow('Message not found');
+    expect(messageStore.findByIdInConversation).not.toHaveBeenCalled();
+    expect(messageStore.createUser).not.toHaveBeenCalled();
+  });
+
   it('resolves turn recipients once and broadcasts user before placeholder despite delayed lookup', async () => {
     const user = record(), placeholder = record({ conversationType: 'ai' });
     messageStore.createUserWithAiPlaceholder = jest.fn().mockResolvedValue({ user, placeholder });

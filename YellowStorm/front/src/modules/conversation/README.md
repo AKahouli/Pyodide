@@ -136,6 +136,17 @@ The slide preview's existing image-based PPTX export remains a distinct format.
 Coverage: `document-export.test.ts`, `openui-export-assets.test.ts`,
 `docx-export.test.ts`, `MessageActions.test.tsx` and `ConversationHeader.test.tsx`.
 
+### Conversation search and saved targets
+
+The outline panel separates server message search from filtering loaded headings.
+Literal queries are bounded to 200 characters and 20 results. Search excludes raw
+OpenUI programs, tool payloads, deleted content and private draft state. Results
+navigate with `?message=<id>`; the existing authenticated around-target route loads
+missing context and selects the exact saved answer before scrolling. It merges
+messages without replacing live replies, draft state or the pagination cursor.
+Actor/conversation/request guards discard late responses; an unavailable anchor
+reports an error. No additional SSE connection or virtualization was introduced.
+
 Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
 by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
 `Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,

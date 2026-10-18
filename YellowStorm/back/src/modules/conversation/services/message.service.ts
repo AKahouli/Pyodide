@@ -111,7 +111,16 @@ export class MessageService {
     this.appUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
   }
 
+  private async assertParentInConversation(data: CreateUserMessageData): Promise<void> {
+    if (data.parentMessageId === undefined) return;
+    if (!/^[a-f0-9]{24}$/.test(data.parentMessageId)
+      || !await this.messageStore.findByIdInConversation(data.conversationId, data.parentMessageId)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+  }
+
   async createUserMessage(data: CreateUserMessageData): Promise<MessageResponse> {
+    await this.assertParentInConversation(data);
     this.logger.log('Creating user message', {
       conversationId: data.conversationId,
       contentLength: data.content.length,
@@ -255,6 +264,7 @@ export class MessageService {
       placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'>;
     },
   ): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
+    await this.assertParentInConversation(data);
     const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
     if (data.content.length > maxLength) {
       throw new AppException({
@@ -488,6 +498,37 @@ export class MessageService {
         error: err instanceof Error ? err.message : err,
       });
     }
+  }
+
+  async searchConversationMessages(conversationId: string, q: string, limit = 20) {
+    const query = q.trim();
+    if (!query || query.length > 200 || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid message search');
+    }
+    const redact = await this.resolveRedactSensitiveText();
+    if (redact) return { matches: [], hasMore: false };
+    const result = await this.messageStore.searchConversationMessages(conversationId, query, limit);
+    return { matches: result.records.map(row => ({ messageId: row.id, questionMessageId: row.questionMessageId ?? undefined,
+      conversationType: row.conversationType, createdAt: row.createdAt.toISOString(), snippet: redact ? '' : row.snippet })), hasMore: result.hasMore };
+  }
+
+  async messagesAround(conversationId: string, messageId: string, limit = 50) {
+    if (!/^[a-f0-9]{24}$/.test(messageId) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid message window');
+    }
+    const window = await this.messageStore.listAround(conversationId, messageId, limit);
+    if (!window) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    const redact = await this.resolveRedactSensitiveText();
+    const files = await this.resolveAttachedFiles(window.records.flatMap(row => row.attachedFileIds ?? []));
+    const mapped = window.records.map(row => {
+      const response = this.mapToResponse(row, redact);
+      if (row.attachedFileIds?.length) response.attachedFiles = row.attachedFileIds.map(id => files.get(id))
+        .filter((file): file is AttachedFileResponse => Boolean(file));
+      return response;
+    });
+    const branchesByQuestion: Record<string, MessageResponse[]> = {};
+    for (const row of mapped) if (row.questionMessageId) (branchesByQuestion[row.questionMessageId] ??= []).push(row);
+    return { messages: mapped, branchesByQuestion, pagination: { mode: 'around' as const, hasOlder: window.hasOlder, hasNewer: window.hasNewer } };
   }
 
   async findByConversation(conversationId: string, params: MessageQueryParams): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {

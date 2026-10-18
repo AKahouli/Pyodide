@@ -927,3 +927,18 @@ export interface RootExecutionEvidenceLocation {
   url: string;
   fileName: string;
 }
+
+/** Authorized literal transcript matches; snippets never grant file access. */
+export interface ConversationMessageMatch {
+  messageId: string;
+  questionMessageId?: string;
+  conversationType: 'user' | 'ai';
+  createdAt: string;
+  snippet: string;
+}
+export interface ConversationMessageSearch { matches: ConversationMessageMatch[]; hasMore: boolean }
+export interface ConversationMessagesAround {
+  messages: Message[];
+  branchesByQuestion?: Record<string, Message[]>;
+  pagination: { mode: 'around'; hasOlder: boolean; hasNewer: boolean };
+}
