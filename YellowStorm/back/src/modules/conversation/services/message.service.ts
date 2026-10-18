@@ -155,6 +155,10 @@ export class MessageService {
     return response;
   }
 
+  listAssetMessages(conversationId: string, cursor: string | undefined, limit: number) {
+    return this.messageStore.listCursor({ conversationId, cursor, limit, conversationType: 'ai' });
+  }
+
   listRecentArtifactMessages(userId: string, limit: number) {
     return this.messageStore.listRecentArtifactMessages(userId, limit);
   }

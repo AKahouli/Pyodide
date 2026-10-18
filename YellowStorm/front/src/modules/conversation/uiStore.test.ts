@@ -26,6 +26,8 @@ describe('conversation UI reliability state', () => {
     expect(readContextPanelPreferences()).toEqual({ contextPanel: 'outline', contextPanelWidth: 380, outlineCollapsed: false });
     store.getState().setContextPanel('work');
     expect(store.getState().outlineCollapsed).toBe(true);
+    store.getState().setContextPanel('files');
+    expect(readContextPanelPreferences().contextPanel).toBe('files');
     store.getState().setContextPanelWidth(1000);
     expect(store.getState().contextPanelWidth).toBe(480);
     store.getState().setOutlineCollapsed(false);

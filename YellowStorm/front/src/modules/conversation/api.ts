@@ -1,8 +1,50 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
+import { useConversationUiStore } from './uiStore';
 import type { MiniAppStateIdentity, MiniAppStateSnapshot, MiniAppStateWrite } from './components/openui/mini-app-state';
 import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationUsageMetrics, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload, RecentConversationArtifact } from './types';
 
 // ===== Conversation APIs =====
+
+export interface ConversationAsset {
+  ref: string;
+  origin: 'upload' | 'generated' | 'workspace';
+  kind: 'image' | 'file' | 'app';
+  name: string;
+  mimeType?: string;
+  size?: number;
+  status: string;
+  documentId?: string;
+  workspaceId?: string;
+  messageId?: string;
+  componentId?: string;
+  version?: string;
+  actions: { view: boolean; download: boolean; read: boolean };
+}
+export interface ConversationAssetPage {
+  assets: ConversationAsset[];
+  nextCursor: string | null;
+  sourceErrors?: ConversationAsset['origin'][];
+}
+export async function fetchConversationAssets(conversationId: string, params: {
+  cursor?: string; limit?: number; search?: string; kind?: ConversationAsset['kind'];
+} = {}, signal?: AbortSignal): Promise<ConversationAssetPage> {
+  let cursor = params.cursor;
+  const errors = new Set<ConversationAsset['origin']>();
+  // Skip empty upload/workspace pages so a generated-only conversation opens usefully.
+  // Bounded traversal retains an explicit Next button for long filtered histories.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await apiClient.get<ApiResponse<ConversationAssetPage>>(API_ENDPOINTS.conversations.assets(conversationId), { params: { ...params, cursor }, signal });
+    const page = response.data.data;
+    page.sourceErrors?.forEach(origin => errors.add(origin));
+    if (page.assets.length || !page.nextCursor || page.nextCursor === cursor || attempt === 2) return { ...page, sourceErrors: [...errors] };
+    cursor = page.nextCursor;
+  }
+  throw new Error('Unreachable asset page');
+}
+export async function getConversationAssetUrl(conversationId: string, ref: string, signal?: AbortSignal): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(`${API_ENDPOINTS.conversations.asset(conversationId, ref)}/url`, undefined, { signal });
+  return response.data.data;
+}
 
 function miniAppStateUrl(identity: MiniAppStateIdentity): string {
   return `/conversations/${encodeURIComponent(identity.conversationId)}/messages/${encodeURIComponent(identity.messageId)}/openui/${encodeURIComponent(identity.componentId)}/state`;
@@ -397,6 +439,7 @@ export async function requestFileUploadUrl(conversationId: string, data: { filen
 
 export async function confirmFileUpload(conversationId: string, documentId: string): Promise<DocumentResponse> {
   const response = await apiClient.post<ApiResponse<DocumentResponse>>(API_ENDPOINTS.conversations.fileConfirm(conversationId), { documentId });
+  useConversationUiStore.getState().invalidateAssets();
   return response.data.data;
 }
 

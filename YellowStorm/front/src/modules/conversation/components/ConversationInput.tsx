@@ -13,6 +13,7 @@ import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowed
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
+import { AssetPromptBridge } from './AssetPromptBridge';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
@@ -303,11 +304,14 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           </>
         }
         belowTextarea={
+          <>
+          <AssetPromptBridge conversationId={conversationId} />
           <ComposerSuggestionChips
             fetchDisabled={
               inputDisabled || isLimitExceeded || isStreaming || isAwaitingFirstChunk || isUploading
             }
           />
+          </>
         }
       />
       {(!runtimeManaged || latestContextTelemetry) && <div className='mt-1 flex min-h-0 items-center justify-between gap-3 px-1'>

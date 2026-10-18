@@ -1,5 +1,27 @@
 # Conversations
 
+## Files & artifacts panel and read-only agent access
+
+The classic conversation header opens Files & artifacts in the existing responsive
+context panel. Uploads, generated files/images, saved OpenUI programs and accessible
+linked workspace sources use stable references with paginated search/type filters.
+Preview/download resolves fresh authorized URLs using existing viewers. Reload does
+not run an agent or saved task. One logical artifact represents one saved OpenUI
+text component, potentially containing multiple mini-apps.
+
+`list_conversation_assets`, `inspect_conversation_asset` and
+`read_conversation_asset` share the projection and recheck trusted runtime actor,
+current membership/governed audience and workspace access. Read returns bounded
+extracted text, image input, saved program source or an explicit unsupported result.
+Evidence authorization is preserved; private drafts never become shared content.
+Model-supplied filenames, paths and URLs do not grant access.
+
+Use in prompt inserts a readable exact selector without sending. Phase 1 adds no
+MCP staging, output registration, deletion or publishing. Existing workspace
+storage/quotas remain authoritative. See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
+Sources: conversation artifact/controller/attachment services,
+`ConversationFilesPanel`, `AssetPromptBridge` and ADK native-tool registry.
+
 ## HtmlView artifacts and administrator execution policy
 
 Admin → Conversation → Generative UI selects `generativeUi.htmlMode`. Strict is

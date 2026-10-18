@@ -19,6 +19,7 @@ import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 import { RootJobResultDto } from '../dto/root-work-public.dto';
 import { RootConversationReplyService } from '../root-work/root-conversation-reply.service';
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
+import { InternalConversationAssetDto } from '../dto/conversation-asset.dto';
 import { GenerateConversationImageDto } from '../dto/generate-conversation-image.dto';
 import { RateLimit } from '../../rate-limiter/decorators/rate-limit.decorator';
 
@@ -32,6 +33,23 @@ export class RootDelegateInternalController {
     private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService,
     private readonly conversationReplies: RootConversationReplyService,
     private readonly artifacts: ConversationArtifactService) {}
+
+  @Post('assets/list')
+  @RateLimit({ limit: 60, windowMs: 60_000, keyPrefix: 'conversation-assets' })
+  listAssets(@Body() request: InternalConversationAssetDto) {
+    return this.artifacts.listAssets(request.conversationId, request.userId, request);
+  }
+
+  @Post('assets/inspect')
+  inspectAsset(@Body() request: InternalConversationAssetDto) {
+    return this.artifacts.inspectAsset(request.conversationId, request.userId, request.ref ?? '');
+  }
+
+  @Post('assets/read')
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'conversation-asset-read' })
+  readAsset(@Body() request: InternalConversationAssetDto) {
+    return this.artifacts.readAsset(request.conversationId, request.userId, request.ref ?? '', request.maxChars);
+  }
 
   @Post('images/generate')
   @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'conversation-image-generation' })

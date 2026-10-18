@@ -1,5 +1,5 @@
-import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { HttpException, Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { ModelsService } from '../../models/models.service';
 import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { AgentService } from '../../agent/agent.service';
@@ -17,6 +17,11 @@ import { GovernedConversationRuntimeService } from '../../governance/services/go
 import { GuardedUrlDownloaderService } from '../../workspace/services/guarded-url-downloader.service';
 import { BadRequestException } from '../../exceptions';
 import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
+
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { ConversationAttachmentService } from './conversation-attachment.service';
+import type { DocumentResponse } from '../../workspace/interfaces/workspace-document.interface';
+import type { ConversationAsset, ConversationAssetQueryDto } from '../dto/conversation-asset.dto';
 
 type ImageReceipt = { imageSource: string; fileName: string; mimeType: string; generated: boolean;
   sandboxPath: string; originalImageSource?: string };
@@ -38,7 +43,169 @@ export class ConversationArtifactService {
     @Optional() private readonly imageGateway?: LiteLLMConnectionService,
     @Optional() @Inject(forwardRef(() => AgentService)) private readonly agents?: AgentService,
     @Optional() private readonly tools?: ToolService,
+    @Optional() private readonly assetSettings?: ConversationSettingsService,
+    @Optional() private readonly attachments?: ConversationAttachmentService,
   ) {}
+
+  private assetRef(parts: string[]): string { return Buffer.from(JSON.stringify(parts)).toString('base64url'); }
+
+  private parseAssetRef(ref: string): string[] {
+    try {
+      if (!ref || ref.length > 2048 || !/^[a-zA-Z0-9_-]+$/.test(ref)) throw new Error();
+      const parts: unknown = JSON.parse(Buffer.from(ref, 'base64url').toString());
+      if (!Array.isArray(parts) || parts.length !== 3 || !parts.every(p => typeof p === 'string' && p.length > 0 && p.length <= 128)
+        || !['document', 'artifact', 'app'].includes(parts[0])) throw new Error();
+      return parts;
+    } catch { throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found'); }
+  }
+
+  private async assetScope(conversationId: string, userId: string) {
+    // Reuse the current membership + governed audience boundary, even for internal callers.
+    return this.conversationService.requireCurrentParticipant(conversationId, userId);
+  }
+
+  private documentAsset(document: DocumentResponse, systemWorkspaceId?: string): ConversationAsset {
+    const generated = document.metadata?.assetOrigin === 'generated' || !!document.metadata?.imageParentId
+      || (!document.metadata?.assetOrigin && /^generated-/.test(document.originalName)); // Legacy generated images predate explicit provenance.
+    const ready = document.status === DocumentStatus.COMPLETED;
+    return { ref: this.assetRef(['document', document.workspaceId, document.id]),
+      origin: document.workspaceId === systemWorkspaceId ? (generated ? 'generated' : 'upload') : 'workspace',
+      kind: document.mimeType.startsWith('image/') ? 'image' : 'file', name: document.originalName,
+      mimeType: document.mimeType, size: document.size, status: ready ? 'ready' : document.status,
+      documentId: document.id, workspaceId: document.workspaceId,
+      actions: { view: ready, download: ready, read: ready } };
+  }
+
+  private componentAsset(messageId: string, component: { id: string; type: string; data: Record<string, unknown> }): ConversationAsset | undefined {
+    const data = component.data;
+    if (component.type === 'artifact' && typeof data.artifactId === 'string' && (data.storagePath || data.evidenceId)) {
+      return { ref: this.assetRef(['artifact', messageId, data.artifactId]), origin: 'generated', kind: 'file',
+        name: typeof data.filename === 'string' ? data.filename : 'Generated file',
+        mimeType: typeof data.mimeType === 'string' ? data.mimeType : undefined,
+        status: 'ready', messageId, componentId: component.id, actions: { view: true, download: true, read: true } };
+    }
+    if (component.type === 'text' && typeof data.content === 'string' && /^\s*root\s*=\s*[A-Z]\w*\(/m.test(data.content)) {
+      return { ref: this.assetRef(['app', messageId, component.id]), origin: 'generated', kind: 'app',
+        name: 'Interactive artifact', status: 'ready', messageId, componentId: component.id,
+        version: createHash('sha256').update(data.content).digest('hex'), actions: { view: true, download: false, read: true } };
+    }
+    return undefined;
+  }
+
+  async listAssets(conversationId: string, userId: string, query: ConversationAssetQueryDto = {}): Promise<{ assets: ConversationAsset[]; nextCursor: string | null; sourceErrors?: ('upload' | 'generated' | 'workspace')[] }> {
+    const conversation = await this.assetScope(conversationId, userId);
+    const limit = Math.min(Math.max(query.limit ?? 30, 1), 50);
+    let group = 'upload', page = 1, offset = 0, messageCursor: string | undefined;
+    if (query.cursor) {
+      try {
+        const value = JSON.parse(Buffer.from(query.cursor, 'base64url').toString());
+        if (!['upload', 'workspace', 'message'].includes(value.group) || !Number.isInteger(value.page) || value.page < 1 || value.page > 100000
+          || (value.offset !== undefined && (!Number.isInteger(value.offset) || value.offset < 0 || value.offset > 100000))
+          || (value.after !== undefined && typeof value.after !== 'string')) throw new Error();
+        group = value.group; page = value.page; messageCursor = value.after; offset = value.offset ?? 0;
+      } catch { throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid asset cursor'); }
+    }
+    let assets: ConversationAsset[]; let next: object | null;
+    try {
+    if (group !== 'message') {
+      const enabled = await this.assetSettings?.isAttachmentIntelligenceEnabled() ?? false;
+      const result = enabled ? await (group === 'upload'
+        ? this.conversationService.getUploadedDocuments(conversationId, { page, limit, search: query.search, includeAllStatuses: true }, userId)
+        : this.conversationService.getWorkspaceDocuments(conversationId, { page, limit, search: query.search, includeAllStatuses: true }, userId)) : undefined;
+      assets = (result?.documents ?? []).filter(d => !d.isFolder).map(d => this.documentAsset(d, conversation.systemWorkspaceId));
+      next = result && page < result.pagination.totalPages ? { group, page: page + 1 }
+        : { group: group === 'upload' ? 'workspace' : 'message', page: 1 };
+    } else {
+      const result = await this.messageService.listAssetMessages(conversationId, messageCursor, 50);
+      const candidates = result.records.filter(m => m.isComplete && !m.isStreaming).flatMap(m => (m.components ?? [])
+        .map(c => this.componentAsset(m.id, c)).filter((a): a is ConversationAsset => !!a));
+      const matches = candidates.filter(a => (!query.kind || a.kind === query.kind)
+        && (!query.search || a.name.toLowerCase().includes(query.search.toLowerCase())));
+      assets = matches.slice(offset, offset + limit);
+      next = offset + limit < matches.length ? { group, page: 1, after: messageCursor, offset: offset + limit }
+        : result.hasMore ? { group, page: 1, after: result.nextCursor } : null;
+    }
+    } catch (error) {
+      // A denied scope must fail closed. Only operational failures become a partial source alert.
+      if (!(error instanceof HttpException) || error.getStatus() < 500) throw error;
+      const source = group === 'message' ? 'generated' : group as 'upload' | 'workspace';
+      const nextSource = group === 'upload' ? 'workspace' : 'message';
+      return { assets: [], sourceErrors: [source], nextCursor: group === 'message' ? null
+        : Buffer.from(JSON.stringify({ group: nextSource, page: 1 })).toString('base64url') };
+    }
+    assets = assets.filter(a => (!query.kind || a.kind === query.kind)
+      && (!query.search || a.name.toLowerCase().includes(query.search.toLowerCase())));
+    return { assets, nextCursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : null };
+  }
+
+  private async resolveAsset(conversationId: string, userId: string, ref: string) {
+    const conversation = await this.assetScope(conversationId, userId);
+    const [type, parentId, id] = this.parseAssetRef(ref);
+    if (type === 'document') {
+      if (!await this.assetSettings?.isAttachmentIntelligenceEnabled()) throw new BadRequestException(ErrorCode.CHAT_ATTACHMENTS_DISABLED, 'Conversation file attachments are disabled');
+      const allowed = await this.conversationService.filterAccessibleWorkspaceIds(userId, conversation.workspaces ?? []);
+      if (parentId !== conversation.systemWorkspaceId && !allowed.includes(parentId)) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+      const document = await this.workspaceDocumentService.findById(parentId, id);
+      if (!document || document.isFolder) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+      return { asset: this.documentAsset(document, conversation.systemWorkspaceId), document };
+    }
+    const message = await this.messageService.getMessageDocument(parentId);
+    if (message.conversationId.toString() !== conversationId || !message.isComplete || message.isStreaming) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+    const component = message.components?.find(c => type === 'artifact' ? c.type === 'artifact' && c.data.artifactId === id : c.id === id);
+    const asset = component && this.componentAsset(parentId, component);
+    if (!asset || asset.ref !== ref) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset not found');
+    return { asset, component };
+  }
+
+  async inspectAsset(conversationId: string, userId: string, ref: string): Promise<ConversationAsset> {
+    return (await this.resolveAsset(conversationId, userId, ref)).asset;
+  }
+
+  async assetUrl(conversationId: string, userId: string, ref: string): Promise<{ viewUrl: string; downloadUrl: string }> {
+    const resolved = await this.resolveAsset(conversationId, userId, ref);
+    if (resolved.asset.status !== 'ready') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset is not ready');
+    if (resolved.document) {
+      const result = await this.workspaceDocumentService.getDownloadUrl(resolved.document.workspaceId, resolved.document.id);
+      return { viewUrl: result.url, downloadUrl: result.url };
+    }
+    const [type, messageId, id] = this.parseAssetRef(ref);
+    if (type !== 'artifact') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Use the saved conversation viewer');
+    return this.resolveDownloadUrl(conversationId, messageId, id, userId);
+  }
+
+  async readAsset(conversationId: string, userId: string, ref: string, maxChars = 12000): Promise<{ asset: ConversationAsset; contentType: 'text' | 'image' | 'openui' | 'unsupported'; text?: string; dataUrl?: string; program?: string; truncated?: boolean; reason?: string }> {
+    const resolved = await this.resolveAsset(conversationId, userId, ref);
+    const { asset, document, component } = resolved;
+    const bound = Math.min(Math.max(maxChars, 1), 30000);
+    if (asset.status !== 'ready') return { asset, contentType: 'unsupported', reason: 'Asset is not ready' };
+    if (asset.kind === 'app') {
+      const program = String(component!.data.content);
+      return { asset, contentType: 'openui', program: program.slice(0, bound), truncated: program.length > bound };
+    }
+    if (document) {
+      if (asset.kind === 'image' && document.size <= 6 * 1024 * 1024) {
+        const bytes = await this.readGeneratedImage(document.path!);
+        if (bytes.length > 6 * 1024 * 1024) return { asset, contentType: 'unsupported', reason: 'Image exceeds inline read limit' };
+        return { asset, contentType: 'image', dataUrl: `data:${document.mimeType};base64,${bytes.toString('base64')}` };
+      }
+      const settings = await this.assetSettings?.getSettings();
+      const profile = await this.attachments?.readAuthorizedText(document, settings?.attachmentIntelligence.maxIndexedTabularRows ?? 1000);
+      const text = profile?.content;
+      if (text !== undefined) return { asset, contentType: 'text', text: text.slice(0, bound), truncated: text.length > bound || profile?.extraction.truncated };
+    }
+    if (component?.data.evidenceId || component?.data.executionId) {
+      // Governed evidence metadata always takes precedence over a legacy storage path.
+      await this.resolveDownloadUrl(conversationId, asset.messageId!, String(component.data.artifactId), userId);
+      return { asset, contentType: 'unsupported', reason: 'Evidence bytes require the authorized evidence viewer' };
+    }
+    if (component && typeof component.data.storagePath === 'string' && this.attachments) {
+      const profile = await this.attachments.readAuthorizedArtifactText({ id: String(component.data.artifactId),
+        path: component.data.storagePath, originalName: asset.name, mimeType: asset.mimeType ?? 'application/octet-stream' });
+      if (profile.content !== undefined) return { asset, contentType: 'text', text: profile.content.slice(0, bound),
+        truncated: profile.content.length > bound || profile.extraction.truncated };
+    }
+    return { asset, contentType: 'unsupported', reason: 'No readable text is available; use authorized download or code interpreter' };
+  }
 
   async generateImage(request: GenerateConversationImageDto, signal?: AbortSignal): Promise<ImageReceipt | PreparedPdfSource> {
     const conversation = await this.conversationService.getConversationDocument(request.conversationId);
@@ -116,6 +283,7 @@ export class ConversationArtifactService {
     signal?.throwIfAborted();
     const document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, request.userId,
       bytes, fileName, mimeType, undefined, undefined, false);
+    await this.workspaceDocumentService.mergeMetadata(workspaceId, document.id, { assetOrigin: 'generated' });
     if (source && source.document.id !== document.id) {
       await this.workspaceDocumentService.mergeMetadata(workspaceId, document.id, { imageParentId: source.document.id });
     }

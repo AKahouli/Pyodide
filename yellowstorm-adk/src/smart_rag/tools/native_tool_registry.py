@@ -9,6 +9,7 @@ from src.smart_rag.tools.utilities.render_chart import render_chart
 from src.smart_rag.tools.utilities.run_code import create_run_code_tool
 from src.smart_rag.tools.utilities.generate_image import create_generate_image_tool
 from src.guardrails.tool_registry import tool_policy
+from src.smart_rag.tools.utilities.conversation_assets import ASSET_TOOL_NAMES, create_conversation_asset_tools
 
 
 NATIVE_TOOL_REGISTRY: dict[str, Any] = {
@@ -38,6 +39,12 @@ def get_native_tool(name: str, runtime_context: dict[str, Any] | None = None) ->
     tool = NATIVE_TOOL_REGISTRY.get(normalized_name)
     if tool is not None:
         setattr(tool, "metadata", tool_policy(normalized_name, getattr(tool, "metadata", None)))
+        return tool
+    if normalized_name in ASSET_TOOL_NAMES:
+        tool = next((tool for tool in create_conversation_asset_tools(runtime_context)
+                     if tool.__name__ == normalized_name), None)
+        if tool is not None:
+            setattr(tool, "metadata", tool_policy(normalized_name))
         return tool
     factory = RUNTIME_NATIVE_TOOL_FACTORIES.get(normalized_name)
     tool = factory(runtime_context or {}) if factory else None
@@ -87,4 +94,10 @@ def resolve_native_tools(
         if tool is not None and name not in resolved_names:
             resolved.append(_configured_native_tool(tool, description.strip() if isinstance(description, str) else None))
             resolved_names.add(name)
+    # Conversation assets are a baseline capability, not an admin catalogue opt-in.
+    # Missing trusted context leaves non-conversation agents unchanged.
+    for tool in create_conversation_asset_tools(runtime_context):
+        if tool.__name__ not in resolved_names:
+            setattr(tool, "metadata", tool_policy(tool.__name__))
+            resolved.append(tool)
     return resolved

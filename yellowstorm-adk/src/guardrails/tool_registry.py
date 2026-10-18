@@ -5,6 +5,9 @@ TOOL_SAFETY_VALUES = frozenset({"read", "write", "delete", "internal", "unknown"
 
 
 NATIVE_TOOL_POLICIES: dict[str, dict[str, str]] = {
+    "list_conversation_assets": {"safety": "read", "kind": "retrieval"},
+    "inspect_conversation_asset": {"safety": "read", "kind": "retrieval"},
+    "read_conversation_asset": {"safety": "read", "kind": "retrieval"},
     "generate_image": {"safety": "write", "kind": "image_generation"},
     "adk_request_input": {"safety": "internal", "kind": "invocation_control"},
     "calculator": {"safety": "read", "kind": "native"},

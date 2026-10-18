@@ -14,8 +14,13 @@ export interface OutlineScrollRequest {
 }
 
 export interface ConversationUiState {
-  contextPanel: 'outline' | 'work' | null;
-  setContextPanel: (panel: 'outline' | 'work' | null) => void;
+  contextPanel: 'outline' | 'work' | 'files' | null;
+  setContextPanel: (panel: 'outline' | 'work' | 'files' | null) => void;
+  assetPromptRequest: { actorId: string; conversationId: string; ref: string; name: string; nonce: number } | null;
+  requestAssetPrompt: (actorId: string, conversationId: string, ref: string, name: string) => void;
+  consumeAssetPrompt: () => void;
+  assetListRevision: number;
+  invalidateAssets: () => void;
   contextPanelWidth: number;
   setContextPanelWidth: (width: number) => void;
   /** Anchor ids live in the DOM (rendered headings / message wrappers), keyed by AI message id. */
@@ -42,14 +47,18 @@ export const initialConversationUiState = {
   contextPanel: null,
   contextPanelWidth: 320,
   autoReliabilityEnabled: false,
+  assetPromptRequest: null,
+  assetListRevision: 0,
 } as {
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   outlineScrollRequest: OutlineScrollRequest | null;
   activeOutlineAnchorId: string | null;
   outlineCollapsed: boolean;
-  contextPanel: 'outline' | 'work' | null;
+  contextPanel: 'outline' | 'work' | 'files' | null;
   contextPanelWidth: number;
   autoReliabilityEnabled: boolean;
+  assetPromptRequest: ConversationUiState['assetPromptRequest'];
+  assetListRevision: number;
 };
 
 let outlineScrollNonce = 0;
@@ -58,7 +67,7 @@ export const CONTEXT_PANEL_PREFS_KEY = 'conversation.contextPanel';
 export function readContextPanelPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem(CONTEXT_PANEL_PREFS_KEY) || '{}');
-    const contextPanel = saved?.panel === 'outline' || saved?.panel === 'work' ? saved.panel as 'outline' | 'work' : null;
+    const contextPanel = saved?.panel === 'outline' || saved?.panel === 'work' || saved?.panel === 'files' ? saved.panel as ConversationUiState['contextPanel'] : null;
     const contextPanelWidth = typeof saved?.width === 'number' && Number.isFinite(saved.width) ? Math.min(480, Math.max(260, saved.width)) : 320;
     return { contextPanel, contextPanelWidth, outlineCollapsed: contextPanel !== 'outline' };
   } catch {
@@ -85,6 +94,12 @@ export const useConversationUiStore = create<ConversationUiState>()(
     (set, get) => ({
       ...initialConversationUiState,
       ...readContextPanelPreferences(),
+      requestAssetPrompt: (actorId, conversationId, ref, name) => {
+        outlineScrollNonce += 1;
+        set({ assetPromptRequest: { actorId, conversationId, ref, name, nonce: outlineScrollNonce } }, false, 'requestAssetPrompt');
+      },
+      consumeAssetPrompt: () => set({ assetPromptRequest: null }, false, 'consumeAssetPrompt'),
+      invalidateAssets: () => set(state => ({ assetListRevision: state.assetListRevision + 1 }), false, 'invalidateAssets'),
       setContextPanel: (contextPanel) => {
         set({ contextPanel, outlineCollapsed: contextPanel !== 'outline' }, false, 'setContextPanel');
         persistContextPanel(contextPanel, get().contextPanelWidth);

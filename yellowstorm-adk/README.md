@@ -2,6 +2,18 @@
 
 AI-powered multi-agent backend API built on [Google's Agent Development Kit (ADK)](https://github.com/google/adk-python). It orchestrates teams of specialized AI agents that collaborate to handle complex user queries via both REST/SSE and gRPC interfaces.
 
+## Conversation asset tools
+
+With trusted platform/user/conversation runtime context, the existing native-tool
+assembly includes `list_conversation_assets`, `inspect_conversation_asset` and
+`read_conversation_asset`. They discover persisted uploads, generated outputs and
+accessible workspace sources by stable reference, including after reload. Read is
+bounded text/program content or an image through the existing multimodal buffer;
+it never grants access from a filename, path, URL or model-provided actor ID.
+Backend membership/workspace/evidence checks remain authoritative. File contents
+are untrusted data. MCP staging and deletion are separate phases. Focused tests:
+`src/smart_rag/tools/tests/test_conversation_assets.py`.
+
 ## Architecture Overview 
 
 ```

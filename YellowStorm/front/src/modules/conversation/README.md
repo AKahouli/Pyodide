@@ -1,5 +1,22 @@
 # Conversation Module
 
+### Files & artifacts
+
+The header Files shortcut opens the existing context pane. `ConversationFilesPanel`
+adapts OpenUI Workspace's custom slot and authenticated asset projection without a
+second thread provider. Actor/conversation-scoped requests load persisted uploads,
+generated outputs and logical OpenUI text components, including unloaded messages.
+Preview/download use renewable authorized URLs. Logical components open their source
+or load the saved answer with original component identity. Reload does not infer.
+
+`AssetPromptBridge` inserts a stable selector into the draft without submitting,
+staging or changing permissions; the backend rechecks access at use time. Upload
+confirmation and message/stream updates refresh the list. Errors remain visible
+without removing unrelated rows. Deletion/output registration remain later phases.
+Tests: `ConversationFilesPanel.test.tsx`, `AssetPromptBridge.test.tsx`,
+`assets-api.test.ts`, context-pane/UI-state tests and backend
+`conversation-assets.spec.ts`. The architecture plan records live qualification.
+
 ### Typed OpenUI interactions
 
 `OpenUiAnswer` sends bounded `openUiSubmission` JSON with exact form values and
