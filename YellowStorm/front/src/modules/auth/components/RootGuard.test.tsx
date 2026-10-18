@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { makeAuthState } from '../test-utils';
 import { RootGuard } from './RootGuard';
+import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 
 const useAuthMock = vi.hoisted(() => vi.fn());
 const fetchModelsMock = vi.hoisted(() => vi.fn());
@@ -52,6 +53,14 @@ describe('RootGuard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: false });
+  });
+
+  it.each([
+    ['/conversation/saved', false], ['/studio', true], ['/studio/saved', true], ['/conversation-v2/saved', true],
+  ])('requests the v2 pipe only for its own route: %s', (path, enabled) => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+    renderWithRouter(<RootGuard />, [path]);
+    expect(useConversationV2StreamConnection).toHaveBeenCalledWith(enabled);
   });
 
   it('renders landing page for guests', () => {

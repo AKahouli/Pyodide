@@ -517,7 +517,7 @@ module (`appMarketplaceApi`), not `conversationV2Api`.
 [`conversationV2Stream.ts`](conversationV2Stream.ts) manages the global SSE
 connection:
 
-- Connects to `GET /conversation-v2/stream` on app mount.
+- The app-shell hook connects to `GET /conversation-v2/stream` on Studio/legacy v2 routes or for current/background running v2 work. It retains active runs across navigation and closes when no route/work needs the pipe; token refresh cannot open an unused pipe on a classic conversation tab.
 - Registers named event listeners for each event type.
 - Dispatches events to the store via `handleStreamEvent()` (routes by `sessionId`).
 - Heartbeat handling: server sends `event: heartbeat` every 15s; a 35s watchdog reconnects on silence.

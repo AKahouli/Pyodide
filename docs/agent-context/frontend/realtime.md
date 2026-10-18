@@ -22,7 +22,7 @@ Classic PostgreSQL cursors use `pg:1:<sequence>`; legacy process cursors resync.
 
 ### Pattern 3: Singleton Per-User Multiplexed Stream (conversation-v2)
 
-`ConversationV2StreamService` opens **one** `EventSource` per authenticated user to `/conversation-v2/stream`, kept alive for the whole app session. The connection hook (`useConversationV2StreamConnection`) is mounted **once at the app shell** (`RootGuard`), not per conversation page. The connection is intentionally decoupled from any single conversation view: it stays open across navigation so multiple conversations can stream at the same time and the user can switch between them freely.
+`ConversationV2StreamService` opens **one** `EventSource` per app instance/tab for the authenticated user to `/conversation-v2/stream`. The connection hook (`useConversationV2StreamConnection`) is mounted **once at the app shell** (`RootGuard`), not per conversation page. It connects on Studio/legacy v2 routes or while the current/background cache contains running v2 work. Running work retains its pipe across navigation; an unused classic tab does not open a v2 pipe, including on token refresh. This avoids consuming a browser HTTP/1.1 connection for unused v2 functionality. Existing event replay and visibility reconciliation remain unchanged.
 
 Events are tagged with their `sessionId`; the Zustand store renders the current session live and accumulates the rest in a background cache. Session pages hydrate background state and replay paged historical events for gap recovery. Heartbeat, backoff, and reconnect are handled in the service; token refresh reintegrates via the axios interceptor.
 

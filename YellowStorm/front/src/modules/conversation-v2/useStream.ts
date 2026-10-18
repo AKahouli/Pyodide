@@ -13,12 +13,15 @@ import { useAuth } from '@/modules/auth';
  * `sessionId`; the store renders the current one live and accumulates the rest
  * in its background cache.
  */
-export function useConversationV2StreamConnection() {
+export function useConversationV2StreamConnection(enabled = true) {
   const { isAuthenticated, user } = useAuth();
   const pendingApproval = user?.status === 'inactive';
+  const hasRunningWork = useConversationV2Store(state => state.streaming
+    || [...state.streamingStateCache.values()].some(session => session.streaming));
+  const shouldConnect = enabled || hasRunningWork;
 
   useEffect(() => {
-    if (!isAuthenticated || pendingApproval) return;
+    if (!isAuthenticated || pendingApproval || !shouldConnect) return;
 
     conversationV2StreamService.connect();
     const handleVisibilityChange = () => {
@@ -40,5 +43,5 @@ export function useConversationV2StreamConnection() {
       unsubscribe();
       conversationV2StreamService.disconnect();
     };
-  }, [isAuthenticated, pendingApproval]);
+  }, [isAuthenticated, pendingApproval, shouldConnect]);
 }

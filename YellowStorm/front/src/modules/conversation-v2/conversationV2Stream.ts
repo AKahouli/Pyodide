@@ -76,6 +76,8 @@ class ConversationV2StreamService {
   }
 
   reconnectWithNewToken(): void {
+    // A token refresh must not open an unused v2 pipe on classic conversation tabs.
+    if (!this.listeners.size && !this.connectionListeners.size) return;
     this.clearTimers();
     this.eventSource?.close();
     this.eventSource = null;
