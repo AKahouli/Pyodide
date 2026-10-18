@@ -7,6 +7,12 @@ It did not demonstrate faster overall task delivery. Focused retrieval became
 more precise after source-checked lesson curation and native filtering; these
 small curated checks are not an independent general benchmark.
 
+The subsequent [real-code repair comparison](HINDSIGHT-CODING-EVALUATION.md) used
+automatically captured lessons instead of those curated seeds: memory improved
+the independently tested result in that pair, but consumed more tokens and still
+recalled historical task-status text. It supersedes any inference that this first
+retrieval check established general efficiency or fully solved memory noise.
+
 ## Recovery
 
 - Six failed operation records were three retain jobs plus their batch parents.
