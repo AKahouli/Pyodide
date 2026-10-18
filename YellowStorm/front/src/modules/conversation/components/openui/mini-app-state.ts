@@ -44,9 +44,11 @@ export function registerMiniAppExportGuard(identity: MiniAppStateIdentity, guard
   };
 }
 /** Flush before fetching, then compare the authenticated snapshot before capture. */
-export async function assertMiniAppExportReady(identity: MiniAppStateIdentity, snapshot?: MiniAppStateSnapshot): Promise<void> {
+export async function assertMiniAppExportReady(identity: MiniAppStateIdentity, snapshot?: MiniAppStateSnapshot, requireMounted = false): Promise<void> {
   if (snapshot) validateMiniAppSnapshot(snapshot, identity.programDigest);
+  if (requireMounted && !exportGuards.get(exportIdentityKey(identity))?.size) throw new Error('Open the saved dashboard before exporting');
   for (const guard of exportGuards.get(exportIdentityKey(identity)) ?? []) await guard(snapshot);
+  if (requireMounted && !exportGuards.get(exportIdentityKey(identity))?.size) throw new Error('Saved dashboard changed during export');
 }
 
 export function validateMiniAppState(value: unknown): ReturnType<typeof typedActionData> {

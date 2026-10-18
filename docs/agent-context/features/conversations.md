@@ -111,6 +111,16 @@ generated scripts only after initial state arrives. Source, expand, stop and res
 retains draft values. HtmlView exports require its open, ready saved preview;
 the validated channel captures its current DOM without rerunning scripts.
 Static HTML/PDF/DOCX contain editable text/tables and labelled visual snapshots.
+The HtmlView toolbar separately offers a self-contained interactive HTML download
+using the current acknowledged saved values and the administrator's execution
+mode. It bundles the existing trusted runtime in an opaque iframe, has no app API,
+agent/document bridge or storage, and rejects application-dependent resources.
+Local controls and generated redraws run offline; reopening resets to the exported
+snapshot rather than retaining subsequent offline edits. Actor/source/revision
+changes stop download. Interactive JavaScript retains the documented self-navigation
+limitation. Tests and two real saved-dashboard downloads passed. Browser automation
+cannot open `file://`; the user manually verified both files' initial values,
+controls/filter interactions and snapshot restoration on reload.
 Exact scoped form values override variable defaults as in the live renderer;
 actor, source and revision changes reject capture. MCP image snapshots use exact
 uploaded bytes and returned private asset IDs. Live HTML/DOCX and a three-page PDF

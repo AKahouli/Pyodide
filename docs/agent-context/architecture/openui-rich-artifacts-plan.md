@@ -7,6 +7,71 @@ unchanged. Each implementation phase below has a separate commit and test gate.
 
 ## Current delivery: exports, refinement and conversation navigation
 
+### OpenUiStandaloneHtmlExport implementation and qualification
+
+Status: **implemented; native offline-file checks user-verified**. The
+user approved the named OpenUiStandaloneHtmlExport design in the current task.
+This extends the
+existing HtmlView implementation; no service, table, backend API or deployment is
+introduced. The passive HTML/PDF/DOCX exports remain available.
+
+- Add an explicit interactive HTML download for generated HtmlView dashboards.
+  Reuse `html-sandbox.ts`, the trusted `public/openui-html.js` bridge and existing
+  saved MiniApp identity/revision checks, with packaging in the conversation's
+  existing export utilities. Do not add a separate dashboard framework.
+- Package sanitized original HTML, CSS, permitted embedded media, the trusted
+  bridge and the acknowledged typed state into one offline HTML file. Local
+  inputs, filters, selections and generated visual redraws remain interactive;
+  opening the file initializes the exported saved values, not model defaults.
+- Keep generated content inside an opaque `sandbox="allow-scripts"` iframe.
+  The offline host supplies only validated local state, not application RPCs.
+  Respect the current administrator strict/interactive mode; exporting never
+  promotes strict content into arbitrary generated JavaScript execution.
+- Bundle the trusted runtime under a nonce/hash CSP without localhost URLs.
+  Encode state and nested markup to prevent script/srcdoc breakouts; generated
+  content cannot authorize itself as the trusted bootstrap. Bind the local
+  MessagePort to the expected frame and retain message/state/size limits.
+- Exclude credentials, conversation/workspace identifiers, private document
+  selectors and agent/task bridges. Agent execution and private document actions
+  cannot run offline. Any exported user-visible data is a detached downloaded
+  copy; later server deletion or access revocation cannot recall it.
+  Export only the current HtmlView's declared typed state, not the whole MiniApp
+  draft. Reject application-dependent resource URLs, private asset selectors and
+  privileged action dependencies explicitly rather than producing a broken file.
+- Block remote resources and fetches with CSP. As with the approved in-app
+  interactive mode, generated JavaScript self-navigation cannot be completely
+  prevented by a browser iframe; do not claim zero-network confinement.
+- Test two different dashboards, number/boolean/string/selection restoration,
+  filter and chart/SVG/canvas updates, opening without localhost, file reload,
+  source/revision/actor changes during export, hostile markup/state, unchanged
+  passive exports and legacy conversations. Reopening restores the exported
+  snapshot; persisting subsequent offline edits is outside this first scope.
+
+Rollback is removal of the interactive download action. Existing conversations,
+draft storage, authentication and static export formats require no migration.
+
+The HtmlView toolbar now downloads a self-contained interactive file from its
+acknowledged saved values. Mounted autosave guards flush before authenticated
+snapshot reads; final actor/source/mode/writable/revision/signature checks reject
+changed or revoked state before download. The bundled trusted runtime uses nonce
+CSP and an opaque iframe with a frame/token-bound, validated local MessagePort.
+It has no app RPC or storage. Reopening starts from the exported snapshot; later
+offline edits are not persisted. Existing answer-level HTML remains passive.
+
+Qualification: 61 affected tests and full TypeScript checks passed. Tests execute
+the trusted runtime with strict filters/SVG, interactive generated JavaScript,
+typed values, reopening reset, hostile encoding and rejected protocol messages.
+Independent security/correctness review accepted the packaging and delivery guards.
+Actual Sales (16,178 bytes) and Operations (15,223 bytes) files downloaded from the
+existing conversation. Inspection confirmed North/numeric 25/boolean true and
+Late/the saved operations note respectively, without app URL or conversation ID.
+The browser tool's policy blocks `file://` opening; no alternative-host workaround
+was attempted. The user manually verified both native offline files: initial
+North/25/checked and Late/saved note, controls/filter interactions, and reload
+restoration of the exported snapshot all passed. This native-file result is
+user-verified, not browser-automation evidence. The production build passed
+(2m 16s), including TypeScript and the bundled trusted runtime.
+
 ### Saved HtmlView export qualification (18 October 2026)
 
 Implemented the bounded live capture channel using the existing private identity.

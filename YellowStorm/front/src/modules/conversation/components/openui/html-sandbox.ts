@@ -10,9 +10,8 @@ export function htmlState(value: unknown, declared?: Record<string, unknown>): R
   return state;
 }
 
-/** Policy precedes model markup; strict mode allows only our bootstrap script. */
-export function htmlDocument(html: string, scheme: 'light' | 'dark', nonce: string, mode: HtmlMode = 'strict'): string {
-  if (html.length > 100_000 || !/^[a-f0-9]{32}$/.test(nonce)) throw new Error('Invalid HTML document');
+export function sanitizeHtmlSource(html: string, mode: HtmlMode = 'strict'): Document {
+  if (html.length > 100_000) throw new Error('Invalid HTML document');
   const doc = new DOMParser().parseFromString(html, 'text/html');
   if (doc.querySelectorAll('*').length > 3000) throw new Error('HTML complexity limit');
   doc.querySelectorAll('iframe,frame,frameset,object,embed,base,meta,link,form,template,foreignObject,use,image,animate,animateTransform,animateMotion,set,script[src]').forEach(node => node.remove());
@@ -29,9 +28,16 @@ export function htmlDocument(html: string, scheme: 'light' | 'dark', nonce: stri
       if (node.hasAttribute('type') && !['text/javascript', 'application/javascript'].includes(node.getAttribute('type') ?? '')) node.remove();
     }
   });
-  const bootstrap = new URL('/openui-html.js', location.origin).href;
   // Inert generated scripts are evaluated only by the trusted loader in interactive mode.
   doc.querySelectorAll('script').forEach(script => script.setAttribute('type', 'application/yellowmind'));
+  return doc;
+}
+
+/** Policy precedes model markup; strict mode allows only our bootstrap script. */
+export function htmlDocument(html: string, scheme: 'light' | 'dark', nonce: string, mode: HtmlMode = 'strict'): string {
+  if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Error('Invalid HTML document');
+  const doc = sanitizeHtmlSource(html, mode);
+  const bootstrap = new URL('/openui-html.js', location.origin).href;
   const policy = HTML_CSP.replace('__SCRIPTS__', bootstrap + (mode === 'interactive' ? " 'unsafe-eval'" : ''));
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:${scheme}}body{margin:0;font:14px/1.5 system-ui;overflow-wrap:anywhere}*,*::before,*::after{box-sizing:border-box}img,svg,canvas{max-width:100%}</style>${doc.head.innerHTML}</head><body>${doc.body.innerHTML}<script src="${bootstrap}" data-token="${nonce}" data-mode="${mode}"></script></body></html>`;
 }

@@ -26,6 +26,7 @@ describe('private mini-app autosave', () => {
     await act(async () => { await expect(assertMiniAppExportReady(identity, snapshot({}, 0))).rejects.toThrow('no longer current'); });
     unmount();
     await expect(assertMiniAppExportReady(identity, snapshot({}, 0))).resolves.toBeUndefined();
+    await expect(assertMiniAppExportReady(identity, undefined, true)).rejects.toThrow('Open the saved dashboard');
   });
 
   it('keeps export guards isolated by actor and every source identity field', async () => {

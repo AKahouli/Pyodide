@@ -2,6 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
+import { showError, showSuccess } from '@/lib/notifications';
+import { fetchOpenUiAppState } from '../../api';
+import { assertMiniAppExportReady, miniAppStateSignature, validateMiniAppSnapshot } from './mini-app-state';
 import { registerHtmlCapture, sameHtmlState, type HtmlCapture } from './html-capture';
 import type { MiniAppStateIdentity } from './mini-app-state';
 import { sanitizeHtmlCapture } from './html-sandbox';
@@ -27,11 +30,53 @@ export function HtmlViewContent({ html, height, title, value, onChange, writable
   const [expanded, setExpanded] = useState(false);
   const [source, setSource] = useState(false);
   const [connectedDocument, setConnectedDocument] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const exportLock = useRef(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const token = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [html, scheme, restart, mode]);
   const doc = useMemo(() => {
     try { return htmlDocument(html, scheme, token, mode); }
     catch { return null; }
   }, [html, scheme, mode, token]);
+  const exportScope = useRef({ identity: captureIdentity, doc, mode, name, connectedDocument, stopped, streaming, error });
+  exportScope.current = { identity: captureIdentity, doc, mode, name, connectedDocument, stopped, streaming, error };
+  async function exportInteractive() {
+    if (exportLock.current || !captureIdentity) return;
+    exportLock.current = true; setExporting(true);
+    const scope = exportScope.current;
+    const assertCurrent = () => {
+      const latest = exportScope.current;
+      if (!active.current || latest.identity !== scope.identity || latest.doc !== scope.doc || latest.mode !== scope.mode || latest.name !== scope.name
+          || latest.stopped || latest.streaming || latest.error || latest.connectedDocument !== scope.doc || !current.current.writable) throw new Error('HTML state changed during export');
+    };
+    try {
+      assertCurrent();
+      await assertMiniAppExportReady(captureIdentity, undefined, true);
+      const saved = validateMiniAppSnapshot(await fetchOpenUiAppState(captureIdentity), captureIdentity.programDigest);
+      if (saved.canWrite === false) throw new Error('Private dashboard access required');
+      await assertMiniAppExportReady(captureIdentity, saved, true);
+      assertCurrent();
+      const state = htmlState(current.current.value ?? {});
+      const [{ createStandaloneHtmlExport }, { downloadBlob }, { buildExportFilename }] = await Promise.all([
+        import('../../utils/standalone-html-export'), import('../../utils/docx-export'), import('../../utils/document-export'),
+      ]);
+      const blob = await createStandaloneHtmlExport({ html, state, mode, scheme, title: title || t('openui.html.title'),
+        labels: { interactiveWarning: t('openui.html.scriptWarning'), error: t('openui.html.error'), localOnly: t('openui.html.offlineHint') } });
+      assertCurrent();
+      const acknowledged = validateMiniAppSnapshot(await fetchOpenUiAppState(captureIdentity), captureIdentity.programDigest);
+      await assertMiniAppExportReady(captureIdentity, acknowledged, true);
+      assertCurrent();
+      if (acknowledged.canWrite === false || acknowledged.stateRevision !== saved.stateRevision
+          || miniAppStateSignature(acknowledged.state) !== miniAppStateSignature(saved.state) || !sameHtmlState(state, current.current.value)) throw new Error('HTML state changed during export');
+      downloadBlob(blob, buildExportFilename(title || t('openui.html.title'), 'html'));
+      showSuccess(t('toasts.export.htmlSuccess'));
+    } catch (error) {
+      if (active.current) showError(t(error instanceof Error && /state|revision|changed/i.test(error.message) ? 'openui.html.exportChanged' : 'openui.html.exportInteractiveError'));
+    } finally {
+      exportLock.current = false; if (active.current) setExporting(false);
+    }
+  }
   useEffect(() => setError(false), [doc]);
   const lifecycle = useMemo(() => ({ ready: false, port: undefined as MessagePort | undefined, timer: undefined as ReturnType<typeof setTimeout> | undefined }), [doc, stopped, streaming]);
   const sync = () => {
@@ -107,6 +152,7 @@ export function HtmlViewContent({ html, height, title, value, onChange, writable
     {mode === 'interactive' && <p className='text-xs text-muted-foreground'>{t('openui.html.scriptWarning')}</p>}
     <div className='flex flex-wrap items-center gap-2'>
       <span className='mr-auto text-sm font-medium'>{title || t('openui.html.title')}</span>
+      {captureIdentity && <Button type='button' variant='outline' size='sm' disabled={exporting || stopped || streaming || unavailable || connectedDocument !== doc || !writable} onClick={() => void exportInteractive()}>{t(exporting ? 'openui.html.exporting' : 'openui.html.exportInteractive')}</Button>}
       <Button type='button' variant='ghost' size='sm' onClick={() => setSource(v => !v)}>{t('openui.html.source')}</Button>
       <Button type='button' variant='ghost' size='sm' onClick={() => setExpanded(v => !v)}>{t(expanded ? 'openui.html.collapse' : 'openui.html.expand')}</Button>
       <Button type='button' variant='outline' size='sm' onClick={() => setStopped(true)}>{t('openui.html.stop')}</Button>

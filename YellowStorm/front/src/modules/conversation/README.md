@@ -2185,7 +2185,19 @@ Also wires mention-seen observers for group-capable data shape; group-specific U
 
 In group conversations, the input receives **members** (everyone except the current user) for `@` tagging. When replying to a specific member, **`autoMention`** can prefill a mention—see input and **`EditableUserMessage`** for details.
 
-### OpenUI image loading
+### Standalone HtmlView downloads
+
+Saved HtmlViews expose **Download interactive HTML**. The handler flushes autosave,
+checks the authenticated saved revision before and after packaging, and exports
+only that HtmlView's typed state. The offline file embeds the existing trusted
+bridge in an opaque sandboxed iframe and preserves the administrator's strict or
+interactive mode. Local controls and generated dashboard logic continue to work;
+agent tasks and private document access are unavailable. Reopening restores the
+exported snapshot; later offline edits are not persisted. Unsupported external or
+application dependencies reject export. Existing answer HTML exports remain
+static snapshots. See `standalone-html-export.test.ts` and `HtmlView.export.test.tsx`.
+
+### OpenUI image loading cache
 
 `OpenUiRenderer` owns a bounded `createScopedImageCache` for each answer scope.
 Repeated sources share pending/settled blobs; views own and revoke their object URLs.
