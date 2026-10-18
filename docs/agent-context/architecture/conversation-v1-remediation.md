@@ -74,6 +74,14 @@ they are not exposed as public URL authorization.
   persistence after reload passed. The other signed-in account saw only
   Conversation not found, with no message content. Earlier saved OpenUI dashboard
   values also restored in `ae30ed8cb3e7a9afa00b872f`.
+- Final signed-in reload check after the backend restart: the saved completed
+  answer and branch selection restore without rerunning the agent; navigating
+  to the original branch restores its saved Like feedback. The second account
+  remains on Conversation not found with no private answer content. Final
+  screenshots are saved in the local remediation evidence directory.
+- The denied page stays quiet across multiple observed periodic stream-resync
+  cycles (30-second cadence): no repeated recovery toasts or private answer
+  content appears while the second account remains denied.
 - Workflow YAML parses; assertions confirm security triggers, the focused job
   and failure propagation from all three test commands. Remote main and current
   integration branch were observed unprotected; no remote protection setting or
