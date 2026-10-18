@@ -13,7 +13,14 @@ export interface OutlineScrollRequest {
   nonce: number;
 }
 
+export const MAX_SELECTED_CONVERSATION_ASSETS = 8;
+export interface SelectedConversationAsset { ref: string; name: string; nonce: number }
 export interface ConversationUiState {
+  selectedAssets: { actorId: string; conversationId: string; items: SelectedConversationAsset[] } | null;
+  scopeAssetSelection: (actorId: string, conversationId: string) => void;
+  addAssetSelection: (actorId: string, conversationId: string, ref: string, name: string) => boolean;
+  removeAssetSelection: (actorId: string, conversationId: string, nonce: number) => void;
+  clearSubmittedAssets: (actorId: string, conversationId: string, nonces: number[]) => void;
   contextPanel: 'outline' | 'work' | 'files' | null;
   setContextPanel: (panel: 'outline' | 'work' | 'files' | null) => void;
   assetPromptRequest: { actorId: string; conversationId: string; ref: string; name: string; nonce: number } | null;
@@ -49,6 +56,7 @@ export const initialConversationUiState = {
   autoReliabilityEnabled: false,
   assetPromptRequest: null,
   assetListRevision: 0,
+  selectedAssets: null,
 } as {
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   outlineScrollRequest: OutlineScrollRequest | null;
@@ -58,6 +66,7 @@ export const initialConversationUiState = {
   contextPanelWidth: number;
   autoReliabilityEnabled: boolean;
   assetPromptRequest: ConversationUiState['assetPromptRequest'];
+  selectedAssets: ConversationUiState['selectedAssets'];
   assetListRevision: number;
 };
 
@@ -94,6 +103,25 @@ export const useConversationUiStore = create<ConversationUiState>()(
     (set, get) => ({
       ...initialConversationUiState,
       ...readContextPanelPreferences(),
+      scopeAssetSelection: (actorId, conversationId) => {
+        const current = get().selectedAssets;
+        if (current?.actorId !== actorId || current.conversationId !== conversationId) set({ selectedAssets: { actorId, conversationId, items: [] } }, false, 'scopeAssetSelection');
+      },
+      addAssetSelection: (actorId, conversationId, ref, name) => {
+        if (!actorId || !conversationId || !/^[A-Za-z0-9_-]{1,2048}$/.test(ref)) return false;
+        const current = get().selectedAssets;
+        const items = current?.actorId === actorId && current.conversationId === conversationId ? current.items : [];
+        if (items.some(item => item.ref === ref)) return true;
+        if (items.length >= MAX_SELECTED_CONVERSATION_ASSETS) return false;
+        outlineScrollNonce += 1;
+        set({ selectedAssets: { actorId, conversationId, items: [...items, { ref, name: name.replace(/[\r\n]/g, ' ').slice(0, 240), nonce: outlineScrollNonce }] } }, false, 'addAssetSelection');
+        return true;
+      },
+      removeAssetSelection: (actorId, conversationId, nonce) => get().clearSubmittedAssets(actorId, conversationId, [nonce]),
+      clearSubmittedAssets: (actorId, conversationId, nonces) => {
+        const current = get().selectedAssets;
+        if (current?.actorId === actorId && current.conversationId === conversationId) set({ selectedAssets: { ...current, items: current.items.filter(item => !nonces.includes(item.nonce)) } }, false, 'clearSubmittedAssets');
+      },
       requestAssetPrompt: (actorId, conversationId, ref, name) => {
         outlineScrollNonce += 1;
         set({ assetPromptRequest: { actorId, conversationId, ref, name, nonce: outlineScrollNonce } }, false, 'requestAssetPrompt');

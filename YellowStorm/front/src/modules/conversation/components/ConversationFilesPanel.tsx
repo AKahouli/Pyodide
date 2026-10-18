@@ -26,7 +26,6 @@ export function ConversationFilesPanel({ conversationId }: { conversationId: str
 function ScopedFilesPanel({ conversationId, actorId }: { conversationId: string; actorId: string }) {
   const { t } = useModuleTranslation('conversation');
   const [search, setSearch] = useState('');
-  const [kind, setKind] = useState<ConversationAsset['kind'] | ''>('');
   const [page, setPage] = useState<ConversationAssetPage>();
   const [cursor, setCursor] = useState<string>();
   const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>([]);
@@ -59,11 +58,11 @@ function ScopedFilesPanel({ conversationId, actorId }: { conversationId: string;
     // Debounce server-side filtering; results always belong to this actor and conversation.
     const timer = setTimeout(() => {
       if (!actorId) return;
-      void list.execute(conversationId, { cursor, limit: 20, search: search.trim() || undefined, kind: kind || undefined }, controller.signal)
+      void list.execute(conversationId, { cursor, limit: 20, search: search.trim() || undefined }, controller.signal)
         .then(result => { if (scope.current.active && id === request.current && result) setPage(result); });
     }, 200);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [actorId, conversationId, cursor, search, kind, refresh, messageCount, streaming, revision, list.execute]);
+  }, [actorId, conversationId, cursor, search, refresh, messageCount, streaming, revision, list.execute]);
 
   function resetPage() { setCursor(undefined); setCursorHistory([]); }
   async function open(asset: ConversationAsset) {
@@ -123,25 +122,15 @@ function ScopedFilesPanel({ conversationId, actorId }: { conversationId: string;
         <h2 className='text-sm font-semibold'>{t('assets.title')}</h2>
         <Button variant='ghost' size='icon' className='size-9 shrink-0' aria-label={t('assets.refresh')} onClick={() => { resetPage(); setRefresh(value => value + 1); }}><RefreshCw className='size-4' /></Button>
       </div>
-      <div className='relative'>
+      <div className='relative mb-4'>
         <Search className='pointer-events-none absolute left-2.5 top-3 size-4 text-muted-foreground' aria-hidden />
         <Input className='pl-9' aria-label={t('assets.search')} placeholder={t('assets.search')} value={search} maxLength={200} onChange={event => { resetPage(); setSearch(event.target.value); }} />
       </div>
-      <label className='my-3 flex items-center gap-2 text-xs text-muted-foreground'>
-        {t('assets.type')}
-        <select className='h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' value={kind} onChange={event => { resetPage(); setKind(event.target.value as typeof kind); }}>
-          <option value=''>{t('assets.allTypes')}</option>
-          <option value='image'>{t('assets.images')}</option>
-          <option value='file'>{t('assets.documents')}</option>
-          <option value='app'>{t('assets.apps')}</option>
-        </select>
-      </label>
-      <p className='mb-3 text-xs leading-relaxed text-muted-foreground'>{t('assets.agentHint')}</p>
       {error && <p role='alert' className='my-3 break-words text-sm text-destructive'>{error.message}</p>}
       {cleanupItems.map(asset => <div key={asset.ref} role='status' className='my-3 text-sm text-muted-foreground'><p>{t('assets.cleanupPending', { name: asset.name })}</p><Button variant='outline' size='sm' disabled={busyRef === asset.ref} aria-label={`${t('assets.retryCleanup')} ${asset.name}`} onClick={() => void deleteAsset(asset)}>{t('assets.retryCleanup')}</Button></div>)}
       {page?.sourceErrors?.map(origin => <p role='alert' key={origin} className='my-2 text-sm text-destructive'>{t('assets.sourceError', { source: t(`assets.origin.${origin}`) })}</p>)}
       {!page && !list.error && <p role='status' className='flex items-center gap-2 py-4 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin motion-reduce:animate-none' />{t('assets.loading')}</p>}
-      {page?.assets.length === 0 && <p className='py-5 text-sm text-muted-foreground'>{t(search || kind ? 'assets.noMatches' : 'assets.empty')}</p>}
+      {page?.assets.length === 0 && <p className='py-5 text-sm text-muted-foreground'>{t(search ? 'assets.noMatches' : 'assets.empty')}</p>}
       {(['upload', 'generated', 'workspace'] as const).map(origin => {
         const assets = page?.assets.filter(asset => asset.origin === origin) ?? [];
         if (!assets.length) return null;

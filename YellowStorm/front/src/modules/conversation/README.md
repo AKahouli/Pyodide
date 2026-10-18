@@ -9,8 +9,11 @@ generated outputs and logical OpenUI text components, including unloaded message
 Preview/download use renewable authorized URLs. Logical components open their source
 or load the saved answer with original component identity. Reload does not infer.
 
-`AssetPromptBridge` inserts a stable selector into the draft without submitting,
-staging or changing permissions; the backend rechecks access at use time. Upload
+`AssetPromptBridge` adds readable removable filename chips without submitting,
+staging or changing permissions; exact selectors are serialized only on send and
+the backend rechecks access at use time. Selection is transient, actor/conversation
+scoped, deduplicated and limited to eight refs. Failed sends preserve chips;
+successful sends clear only submitted nonces, preserving later additions. Upload
 confirmation and message/stream updates refresh the list. Errors remain visible
 without removing unrelated rows. Agents can prepare exact refs for the existing
 code interpreter; registered generated outputs return through this same listing
@@ -20,6 +23,8 @@ Deleted history renders an unavailable placeholder and exports omit its content.
 Pending physical cleanup is a separate retry-only list that survives reload;
 retries never refund quota twice. Linked sources remain managed in their workspace.
 File types use the workspace's readable type-label helper and filename fallback.
+Search remains in the panel; the type dropdown and instructional paragraph were
+removed to keep narrow layouts focused on files and actions. Use adds a chip.
 Tests: `ConversationFilesPanel.test.tsx`, `AssetPromptBridge.test.tsx`,
 `assets-api.test.ts`, context-pane/UI-state tests and backend
 `conversation-assets.spec.ts`. The architecture plan records live qualification.

@@ -42,3 +42,20 @@ describe('conversation UI reliability state', () => {
     expect(readContextPanelPreferences()).toEqual({ contextPanel: null, contextPanelWidth: 320, outlineCollapsed: true });
   });
 });
+
+describe('conversation asset selection', () => {
+  it('does not clear a removed and re-added ref or another actor after an earlier send', async () => {
+    const { useConversationUiStore: store, initialConversationUiState } = await import('./uiStore');
+    store.setState(initialConversationUiState);
+    store.getState().addAssetSelection('alice', 'c1', 'same-ref', 'same.pdf');
+    const submitted = store.getState().selectedAssets!.items[0].nonce;
+    store.getState().removeAssetSelection('alice', 'c1', submitted);
+    store.getState().addAssetSelection('alice', 'c1', 'same-ref', 'same.pdf');
+    store.getState().clearSubmittedAssets('alice', 'c1', [submitted]);
+    expect(store.getState().selectedAssets?.items).toHaveLength(1);
+    store.getState().scopeAssetSelection('bob', 'c2');
+    store.getState().addAssetSelection('bob', 'c2', 'bob-ref', 'same.pdf');
+    store.getState().clearSubmittedAssets('alice', 'c1', [submitted]);
+    expect(store.getState().selectedAssets).toMatchObject({ actorId: 'bob', conversationId: 'c2', items: [{ ref: 'bob-ref' }] });
+  });
+});

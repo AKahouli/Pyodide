@@ -827,7 +827,8 @@ export class ConversationArtifactService {
   }[]> {
     const messages = await this.messageService.listRecentArtifactMessages(userId, Math.max(limit * 3, 12));
     return messages.flatMap((message) => (message.components ?? [])
-      .filter((component) => component.type === 'artifact')
+      .filter((component) => component.type === 'artifact' && !component.data?.assetDeletedAt
+        && (!component.data?.availability || component.data.availability === 'ready'))
       .map((component) => ({
         source: 'conversation' as const,
         artifactId: typeof component.data?.artifactId === 'string' ? component.data.artifactId : '',

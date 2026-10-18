@@ -16,6 +16,14 @@ opaque cursor; account/session replacement clears it. Exponential backoff (base
 1s, cap 60s), heartbeat timeout (~30s), eviction and canonical resync remain.
 Classic PostgreSQL cursors use `pg:1:<sequence>`; legacy process cursors resync.
 
+Notification EventSource connections pause while the tab is hidden; reconnect
+and token-refresh nudges cannot reopen that hidden pipe. The authenticated
+provider owns visibility cleanup and refetches the durable list/unread count
+when visible. Actor-generation checks discard late prior-user responses. This
+leaves HTTP/1.1 connections available for file/API requests when multiple app tabs
+are open. Conversation agent pipes and server execution remain unchanged; this
+is not a cross-tab notification leader or an unlimited-tab connection guarantee.
+
 ### Pattern 2: BroadcastChannel Leader-Election (playbook)
 
 `PlaybookStreamService` — one `EventSource` shared across tabs via `BroadcastChannel` with leader election. Leader owns the connection and broadcasts events to followers. Followers sync state via channel messages. Heartbeat, reconnect, and buffered step updates. SSE events dispatched into TanStack Query cache (when `querySseEnabled`) and optionally mirrored to Zustand.

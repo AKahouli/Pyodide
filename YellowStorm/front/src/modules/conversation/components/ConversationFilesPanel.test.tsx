@@ -31,6 +31,14 @@ beforeEach(() => {
 });
 
 describe('Files & artifacts', () => {
+  it('keeps the panel focused on search and file actions', async () => {
+    render(<ConversationFilesPanel conversationId='c1' />);
+    await screen.findByText('example.pdf');
+    expect(screen.getByRole('textbox', { name: 'assets.search' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('assets.agentHint')).toBeNull();
+    expect(screen.getByRole('button', { name: 'assets.useInPrompt' })).toBeInTheDocument();
+  });
   it('restores pending cleanup after remount separately from available assets', async () => {
     const deleted = file({ status: 'deleted', actions: { view: false, download: false, read: false, delete: true } });
     mocks.list.mockResolvedValueOnce({ assets: [], nextCursor: null, pendingCleanup: [deleted] })

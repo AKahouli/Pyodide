@@ -37,11 +37,16 @@ export class NotificationsService {
   private readonly maxReconnectDelay = 60000; // 1 minute
   private readonly heartbeatTimeout = 30000; // 30 seconds (heartbeat every 15s + buffer)
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectedToastTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Connect to SSE stream
    */
   connect(): void {
+    if (document.visibilityState === 'hidden') {
+      this.pause();
+      return;
+    }
     // Don't reconnect if evicted due to connection limit
     if (this.isEvicted) {
       return;
@@ -97,6 +102,12 @@ export class NotificationsService {
     this.emit({ type: "disconnected" });
   }
 
+  /** Release only this passive pipe; active agent streams have separate owners. */
+  pause(): void {
+    this.disconnect();
+    toast.dismiss('sse-connection');
+  }
+
   /**
    * Subscribe to notification events
    * @returns Unsubscribe function
@@ -136,10 +147,13 @@ export class NotificationsService {
 
   private setupEventHandlers(): void {
     if (!this.eventSource) return;
+    const source = this.eventSource;
+    const current = () => this.eventSource === source && document.visibilityState !== 'hidden';
 
-    this.eventSource.onopen = () => {
-      if (this.isEvicted) return;
-      setTimeout(() => {
+    source.onopen = () => {
+      if (!current() || this.isEvicted) return;
+      this.connectedToastTimer = setTimeout(() => {
+        if (!current()) return;
         toast.success(tNotification("service.toasts.connected", "Connected to real time notification services"), {
           id: "sse-connection", duration:700
         });
@@ -147,7 +161,8 @@ export class NotificationsService {
       this.reconnectAttempts = 0;
     };
 
-    this.eventSource.onerror = (error) => {
+    source.onerror = (error) => {
+      if (!current()) return;
       console.error("[NotificationsService] Connection error:", error);
       this.isConnected = false;
 
@@ -173,7 +188,8 @@ export class NotificationsService {
 
     // Handle all messages - NestJS SSE sends MessageEvent objects as JSON in the data field
     // instead of using the SSE event: field for named events
-    this.eventSource.onmessage = (event) => {
+    source.onmessage = (event) => {
+      if (!current()) return;
       try {
         const parsed = JSON.parse(event.data);
 
@@ -224,6 +240,7 @@ export class NotificationsService {
   }
 
   private resetHeartbeatTimer(): void {
+    if (document.visibilityState === 'hidden') return;
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
     }
@@ -235,6 +252,7 @@ export class NotificationsService {
   }
 
   private scheduleReconnect(): void {
+    if (document.visibilityState === 'hidden') return;
     if (this.isEvicted) {
       return;
     }
@@ -265,6 +283,10 @@ export class NotificationsService {
   }
 
   private clearTimers(): void {
+    if (this.connectedToastTimer) {
+      clearTimeout(this.connectedToastTimer);
+      this.connectedToastTimer = null;
+    }
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;

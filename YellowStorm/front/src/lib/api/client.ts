@@ -178,6 +178,31 @@ const ROTATION_CONFLICT_CODE = 'ERR_1131';
  * as an auth loss — no redirect, no generation bump.
  */
 const BOOT_RESTORE_HEADER = 'X-YellowStorm-Boot-Restore';
+let restoringFromCookie = 0;
+let restoringGeneration = -1;
+let observedToken: string | null = null;
+let latestTokenUpdateAt = 0;
+let disposed = false;
+
+// Claims route same-origin messages only; the backend still verifies every JWT.
+function accessTokenClaims(token: string | null, allowExpired = false): { sub: string; sessionId: string; iat: number; exp: number } | null {
+  try {
+    if (!token || token.length > 32768 || token.split('.').length !== 3) return null;
+    const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')));
+    if (claims.type !== 'access' || typeof claims.sub !== 'string' || !claims.sub || typeof claims.sessionId !== 'string' || !claims.sessionId
+      || !Number.isFinite(claims.iat) || !Number.isFinite(claims.exp) || claims.exp <= claims.iat
+      || (!allowExpired && claims.exp <= Date.now() / 1000) || claims.iat > Date.now() / 1000 + 30) return null;
+    return claims;
+  } catch { return null; }
+}
+
+function cachedActorId(): string | null {
+  try {
+    const user = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEYS.user) ?? 'null');
+    return typeof user?.id === 'string' ? user.id : null;
+  } catch { return null; }
+}
 
 function extractApiErrorCode(error: unknown): string | null {
   if (error && typeof error === 'object') {
@@ -203,11 +228,14 @@ async function runCoordinatedRefresh(
   usedToken: string | null,
   extraHeaders: Record<string, string> = {},
 ): Promise<string> {
+  const requestedGeneration = getAuthGeneration();
   return withCrossTabRefreshLock(async () => {
-    const generationAtStart = getAuthGeneration();
+    const generationAtStart = requestedGeneration;
+    if (getAuthGeneration() !== generationAtStart) throw new AuthTransientError('Session changed while awaiting refresh');
 
     // Another tab may have completed recovery while this caller waited.
     const storedNow = currentStoredToken();
+    if (!usedToken && storedNow && accessTokenClaims(storedNow)) return storedNow;
     if (usedToken && storedNow && usedToken !== storedNow) {
       clearRefreshAttempt();
       return storedNow;
@@ -232,7 +260,7 @@ async function runCoordinatedRefresh(
         setAccessToken(accessToken);
         scheduleProactiveRefresh(accessToken);
         clearRefreshAttempt();
-        broadcastAuthEvent('refreshed');
+        broadcastAuthEvent('refreshed', { accessToken, completedAt: latestTokenUpdateAt });
         return accessToken;
       } catch (refreshError) {
         lastError = refreshError;
@@ -250,11 +278,15 @@ async function runCoordinatedRefresh(
 }
 
 function scheduleProactiveRefresh(token = currentStoredToken()): void {
+  if (token !== observedToken) {
+    observedToken = token;
+    latestTokenUpdateAt = Math.max(Date.now(), latestTokenUpdateAt + 1);
+  }
   if (proactiveRefreshTimer !== null) {
     window.clearTimeout(proactiveRefreshTimer);
     proactiveRefreshTimer = null;
   }
-  if (!token) return;
+  if (!token || disposed) return;
 
   try {
     const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -473,6 +505,8 @@ function clearAuthData() {
  * and bouncing a guest off #/register would be wrong.
  */
 export async function restoreSessionFromCookie(): Promise<string | null> {
+  restoringFromCookie += 1;
+  restoringGeneration = getAuthGeneration();
   try {
     return await runCoordinatedRefresh(null, { [BOOT_RESTORE_HEADER]: '1' });
   } catch (error) {
@@ -482,6 +516,8 @@ export async function restoreSessionFromCookie(): Promise<string | null> {
       return null;
     }
     throw error;
+  } finally {
+    restoringFromCookie -= 1;
   }
 }
 
@@ -501,20 +537,35 @@ registerRecoveryProbe(async () => {
   await refreshAccessToken();
 });
 
-// Stale tabs learn about a completed rotation and reconnect their SSE pipes.
-// Tokens are per-tab memory now, so a stale tab cannot adopt the newer token
-// from the broadcast: it reconnects with its own (possibly expired) token and
-// self-heals because scheduleProactiveRefresh() below fires immediately for
-// an expired token, starting that tab's own rotation.
-subscribeAuthBroadcast((type) => {
+// Share the rotated access token in memory before reconnecting: reconnecting
+// with the predecessor token would rotate again and revoke the winning tab.
+const unsubscribeAuthBroadcast = subscribeAuthBroadcast((type, refresh) => {
   if (type === 'refreshed') {
-    scheduleProactiveRefresh();
+    const current = currentStoredToken();
+    const incoming = accessTokenClaims(refresh?.accessToken ?? null);
+    const existing = accessTokenClaims(current, true);
+    if (!refresh || !incoming || (!current && (!restoringFromCookie || restoringGeneration !== getAuthGeneration()))
+      || (existing && incoming.sub !== existing.sub)
+      || (!current && incoming.sub !== cachedActorId())
+      || (current && !existing) || refresh.completedAt <= latestTokenUpdateAt
+      || refresh.completedAt > Date.now() + 30_000 || Date.now() - refresh.completedAt > 30_000
+      || (existing && incoming.iat < existing.iat) || current === refresh.accessToken) return;
+    setAccessToken(refresh.accessToken);
+    scheduleProactiveRefresh(refresh.accessToken);
+    latestTokenUpdateAt = refresh.completedAt;
     notificationsService.reconnectWithNewToken();
     conversationStreamService.reconnectWithNewToken();
     conversationV2StreamService.reconnectWithNewToken();
   } else {
     safeRedirectToLogin();
   }
+});
+
+import.meta.hot?.dispose(() => {
+  disposed = true;
+  unsubscribeAuthBroadcast();
+  if (proactiveRefreshTimer !== null) window.clearTimeout(proactiveRefreshTimer);
+  proactiveRefreshTimer = null;
 });
 
 scheduleProactiveRefresh();

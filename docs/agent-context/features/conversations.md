@@ -4,7 +4,8 @@
 
 The classic conversation header opens Files & artifacts in the existing responsive
 context panel. Uploads, generated files/images, saved OpenUI programs and accessible
-linked workspace sources use stable references with paginated search/type filters.
+linked workspace sources use stable references with paginated search. The API
+retains type filtering; the compact panel exposes search and file actions.
 Preview/download resolves fresh authorized URLs using existing viewers. Reload does
 not run an agent or saved task. One logical artifact represents one saved OpenUI
 text component, potentially containing multiple mini-apps.
@@ -16,7 +17,10 @@ extracted text, image input, saved program source or an explicit unsupported res
 Evidence authorization is preserved; private drafts never become shared content.
 Model-supplied filenames, paths and URLs do not grant access.
 
-Use in prompt inserts a readable exact selector without sending. The agent can
+Use adds a removable filename chip without sending. Up to eight exact references
+are serialized only at submission; chips are transient and scoped to the current
+actor/conversation. Failed sends retain selections and successful sends clear only
+their submitted nonces. The agent can
 call `prepare_conversation_asset` for selected ready files before creating the
 existing code-interpreter sandbox. Preparation rechecks access and returns an
 exact content-addressed input path; receipts belong to the current invocation.
@@ -36,6 +40,8 @@ readable labels such as PDF, DOCX and PPTX rather than raw MIME strings.
 Interpreter execution rechecks availability and fences output registration against
 deletion; stale sandboxes must be discarded before reuse. Already downloaded bytes,
 independent outputs and existing bearer URLs (up to ten minutes) cannot be recalled.
+The home page's recent files also excludes deleted component and canonical document
+references, including old message cards whose own deletion marker is absent.
 See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
 Sources: conversation artifact/controller/attachment services,
 `ConversationFilesPanel`, `AssetPromptBridge` and ADK native-tool registry.

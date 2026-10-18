@@ -179,12 +179,20 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]> {
+    const readyArtifact = sql`item->>'type' = 'artifact' AND item->'data'->>'assetDeletedAt' IS NULL
+      AND coalesce(item->'data'->>'availability', 'ready') = 'ready'
+      AND NOT EXISTS (SELECT 1 FROM ${schema.workspaceDocuments}
+        WHERE ${schema.workspaceDocuments.workspaceId} = ${schema.conversations.systemWorkspaceId}
+        AND ${schema.workspaceDocuments.metadata}->>'assetDeletedAt' IS NOT NULL
+        AND (${schema.workspaceDocuments.id} = item->'data'->>'artifactId'
+          OR (${schema.workspaceDocuments.path} = item->'data'->>'storagePath' AND item->'data'->>'storagePath' <> ''))) `;
     const rows = await this.db
       .select({
         id: schema.messages.id,
         conversationId: schema.messages.conversationId,
         conversationTitle: schema.conversations.title,
-        components: schema.messages.components,
+        components: sql<MessageComponent[]>`(SELECT coalesce(jsonb_agg(item ORDER BY ordinal), '[]'::jsonb)
+          FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal) WHERE ${readyArtifact})`,
         updatedAt: schema.messages.updatedAt,
       })
       .from(schema.messages)
@@ -200,6 +208,7 @@ export class PostgresMessageStore implements MessageStore {
           sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${userId})`,
         ),
         sql`${schema.messages.components} @> '[{"type":"artifact"}]'::jsonb`,
+        sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) AS item WHERE ${readyArtifact})`,
       ))
       .orderBy(desc(schema.messages.updatedAt), desc(schema.messages.id))
       .limit(limit);

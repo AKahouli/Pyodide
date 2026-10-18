@@ -1,13 +1,15 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationInput } from './ConversationInput';
+import { initialConversationUiState, useConversationUiStore } from '../uiStore';
 
 const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 const removeFileMock = vi.hoisted(() => vi.fn());
+const uploadIdsMock = vi.hoisted(() => ({ value: ['doc-1'] as string[] }));
 const streamingMock = vi.hoisted(() => ({ value: false }));
 const currentConversationMock = vi.hoisted(() => ({
   value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot'; taggedAgentIds?: string[]; concurrentRepliesEnabled?: boolean; rootAgentId?: string },
@@ -83,10 +85,11 @@ vi.mock('@/components/ai-elements/input', () => ({
       </button>
       <button
         type='button'
-        onClick={() => void onSubmit({ text: 'hello' }, 'model-1')}
+        onClick={() => void onSubmit({ text: 'hello' }, 'model-1').catch(() => undefined)}
       >
         submit-with-reasoning
       </button>
+      <button type='button' onClick={() => void onSubmit({ text: '' }, 'model-1').catch(() => undefined)}>submit-chip-only</button>
       <button
         type='button'
         onClick={() => void onSubmit({ text: 'hello' }, 'model-1', undefined, ['member-1'])}
@@ -111,7 +114,7 @@ vi.mock('@/modules/workspace/hooks/useAllowedUploadExtensions', () => ({
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: { name?: string; ref?: string }) => key === 'assets.promptReference' ? `${params?.name} [${params?.ref}]` : key,
   }),
 }));
 
@@ -128,7 +131,7 @@ vi.mock('../hooks/useConversationFileUpload', () => ({
     files: [{ localId: 'l1', file: new File(['x'], 'a.txt', { type: 'text/plain' }), status: 'completed', progress: 100, documentId: 'doc-1' }],
     addFiles: vi.fn(),
     removeFile: removeFileMock,
-    completedFileIds: ['doc-1'],
+    completedFileIds: uploadIdsMock.value,
     isUploading: false,
     clearAll: clearAllMock,
     clearSubmitted: clearAllMock,
@@ -211,8 +214,43 @@ vi.mock('../store', () => ({
 }));
 
 describe('ConversationInput', () => {
+  it('sends exact selected refs only at submission and clears accepted selections', async () => {
+    useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'exact-ref', 'report.pdf');
+    render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith('conv-1', expect.objectContaining({ content: 'hello\n\nreport.pdf [exact-ref]' })));
+    expect(useConversationUiStore.getState().selectedAssets?.items).toEqual([]);
+  });
+  it('preserves selections on failed send and never submits foreign selectors', async () => {
+    useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'exact-ref', 'report.pdf');
+    sendMessageMock.mockRejectedValueOnce(new Error('offline'));
+    const view = render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(useConversationUiStore.getState().selectedAssets?.items).toHaveLength(1);
+    view.rerender(<ConversationInput conversationId='conv-2' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    expect(sendMessageMock.mock.calls[1][1].content).toBe('hello');
+  });
+  it('accepts a chip-only message and preserves selections added while submission is pending', async () => {
+    uploadIdsMock.value = [];
+    useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'first-ref', 'first.pdf');
+    let finish!: () => void;
+    sendMessageMock.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-chip-only' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    act(() => useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'second-ref', 'second.pdf'));
+    await act(async () => finish());
+    await waitFor(() => expect(useConversationUiStore.getState().selectedAssets?.items.map(item => item.ref)).toEqual(['second-ref']));
+    expect(sendMessageMock.mock.calls[0][1].content).toBe('first.pdf [first-ref]');
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    sendMessageMock.mockResolvedValue(undefined);
+    useConversationUiStore.setState(initialConversationUiState);
+    uploadIdsMock.value = ['doc-1'];
     streamingMock.value = false;
     currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'] };
     workspaceSelectionMock.value = ['ws-2'];

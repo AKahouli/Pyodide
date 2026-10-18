@@ -25,8 +25,8 @@ describeIntegration('conversation output registration transactions', () => {
   const output = { userId: actor, conversationId, invocationId: 'turn-1', sourcePath: `${actor}/system_${conversationId}/outputs/report.docx`,
     fileName: 'report.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
 
-  async function setup(quota = 1024) {
-    const workspace = await workspaces.create({ name: `Conversation output QA ${newObjectId()}`, alias: newObjectId(), storagePrefix: newObjectId(), createdBy: actor, allocatedStorage: quota });
+  async function setup(quota = 1024, fixtureActor = actor, fixtureConversationId = conversationId) {
+    const workspace = await workspaces.create({ name: `Conversation output QA ${newObjectId()}`, alias: newObjectId(), storagePrefix: newObjectId(), createdBy: fixtureActor, allocatedStorage: quota });
     fixtures.push(workspace.id);
     const blobs = new Map<string, Buffer>();
     const logger = { setContext: jest.fn(), debug: jest.fn(), log: jest.fn(), warn: jest.fn() };
@@ -56,7 +56,7 @@ describeIntegration('conversation output registration transactions', () => {
         const current = (await workspaces.findById(workspace.id))!;
         return { allowed: size <= current.allocatedStorage - current.usedStorage, available: current.allocatedStorage - current.usedStorage };
       },
-      getStorageContext: async () => ({ ownerUserId: actor, storagePrefix: workspace.storagePrefix }),
+      getStorageContext: async () => ({ ownerUserId: fixtureActor, storagePrefix: workspace.storagePrefix }),
       updateStorageUsage: (id: string, usedStorage: number, documentCount: number) => workspaces.incrementCounters(id, { usedStorage, documentCount }),
     };
     const write = new WorkspaceDocumentWrite(documents, workspaceService as never, storage as never,
@@ -69,13 +69,13 @@ describeIntegration('conversation output registration transactions', () => {
     const workspaceDocuments = { uploadSmallFile: write.uploadSmallFile.bind(write), mergeMetadata: metadata,
       findById: read.findById.bind(read), deleteConversationAsset: tree.deleteConversationAsset.bind(tree), getDownloadUrl: read.getDownloadUrl.bind(read) };
     const conversations = { requireCurrentParticipant: async (_id: string, userId: string) => {
-      if (userId !== actor) throw new Error('current membership');
-      return { createdBy: actor, systemWorkspaceId: workspace.id };
+      if (userId !== fixtureActor || _id !== fixtureConversationId) throw new Error('current membership');
+      return { createdBy: fixtureActor, systemWorkspaceId: workspace.id };
     }, filterAccessibleWorkspaceIds: async () => [], getUploadedDocuments: async (_id: string, query: object) => read.findByMultipleWorkspaces([workspace.id], query),
       getWorkspaceDocuments: async () => ({ documents: [], pagination: { totalPages: 0 } }) };
     const messageService = { getAssetRevocationState: messages.getAssetRevocationState.bind(messages), markDocumentArtifactsUnavailable: messages.markDocumentArtifactsUnavailable.bind(messages),
       listPendingAssetCleanup: messages.listPendingAssetCleanup.bind(messages), markAssetUnavailable: messages.markAssetUnavailable.bind(messages),
-      getMessageDocument: messages.findById.bind(messages), setAssetCleanup: messages.setAssetCleanup.bind(messages) };
+      getMessageDocument: messages.findById.bind(messages), setAssetCleanup: messages.setAssetCleanup.bind(messages), listRecentArtifactMessages: messages.listRecentArtifactMessages.bind(messages) };
     const settings = { isAttachmentIntelligenceEnabled: async () => true };
     const service = new ConversationArtifactService(messageService as never, storage as never, conversations as never, workspaceDocuments as never,
       undefined, undefined, undefined, undefined, undefined, undefined, undefined, settings as never, undefined, documents);
@@ -237,5 +237,76 @@ describeIntegration('conversation output registration transactions', () => {
     release();
     await expect(publication).rejects.toThrow('Sandbox asset access changed');
     expect((await documents.findAllByWorkspaceId(t.workspace.id)).filter(document => !document.metadata?.assetDeletedAt)).toEqual([]);
+  });
+
+  it('isolates two actors through concurrent same-name uploads, output registration and deletion', async () => {
+    const otherActor = newObjectId(), otherConversation = newObjectId();
+    const [a, b] = await Promise.all([setup(), setup(1024, otherActor, otherConversation)]);
+    const inputA = Buffer.from('ALPHA private input'), inputB = Buffer.from('BETA private input');
+    const [uploadA, uploadB] = await Promise.all([
+      a.write.uploadSmallFile(a.workspace.id, actor, inputA, 'same.docx', output.mimeType, undefined, false, false),
+      b.write.uploadSmallFile(b.workspace.id, otherActor, inputB, 'same.docx', output.mimeType, undefined, false, false),
+    ]);
+    const refA = Buffer.from(JSON.stringify(['document', a.workspace.id, uploadA.id])).toString('base64url');
+    const refB = Buffer.from(JSON.stringify(['document', b.workspace.id, uploadB.id])).toString('base64url');
+    expect(refA).not.toBe(refB);
+    const [stagedA, stagedB] = await Promise.all([
+      a.service.prepareAsset(conversationId, actor, refA, 'same-turn', true),
+      b.service.prepareAsset(otherConversation, otherActor, refB, 'same-turn', true),
+    ]);
+    expect(Buffer.from(stagedA.contentBase64!, 'base64')).toEqual(inputA);
+    expect(Buffer.from(stagedB.contentBase64!, 'base64')).toEqual(inputB);
+    const requestB = { ...output, userId: otherActor, conversationId: otherConversation,
+      sourcePath: `${otherActor}/system_${otherConversation}/outputs/same.docx`, fileName: 'same.docx' };
+    a.blobs.set(output.sourcePath, Buffer.from('ALPHA generated output'));
+    b.blobs.set(requestB.sourcePath, Buffer.from('BETA generated output'));
+    const [generatedA, generatedB] = await Promise.all([
+      a.service.registerAsset({ ...output, fileName: 'same.docx', inputReceipts: [{ ref: refA, sha256: stagedA.sha256 }] }),
+      b.service.registerAsset({ ...requestB, inputReceipts: [{ ref: refB, sha256: stagedB.sha256 }] }),
+    ]);
+    expect(generatedA.asset.ref).not.toBe(generatedB.asset.ref);
+    expect(a.blobs.get(generatedA.storagePath)?.toString()).toBe('ALPHA generated output');
+    expect(b.blobs.get(generatedB.storagePath)?.toString()).toBe('BETA generated output');
+    await expect(b.service.deleteAsset(otherConversation, otherActor, refA)).rejects.toThrow('Asset not found');
+    await expect(b.service.deleteAsset(conversationId, otherActor, generatedA.asset.ref)).rejects.toThrow('current membership');
+    const quotaB = await workspaces.findById(b.workspace.id);
+    const epochB = await b.service.assetRevocationState(otherConversation, otherActor);
+    const [, retainedB] = await Promise.all([
+      a.service.deleteAsset(conversationId, actor, refA),
+      b.service.prepareAsset(otherConversation, otherActor, generatedB.asset.ref, 'after-reload', true),
+    ]);
+    expect(Buffer.from(retainedB.contentBase64!, 'base64').toString()).toBe('BETA generated output');
+    expect(await b.service.assetRevocationState(otherConversation, otherActor)).toEqual(epochB);
+    expect(await workspaces.findById(b.workspace.id)).toMatchObject({ usedStorage: quotaB!.usedStorage, documentCount: quotaB!.documentCount });
+    await a.service.deleteAsset(conversationId, actor, generatedA.asset.ref);
+    expect(await workspaces.findById(a.workspace.id)).toMatchObject({ usedStorage: 0, documentCount: 0 });
+    expect((await b.service.listAssets(otherConversation, otherActor)).assets.map(asset => asset.ref)).toEqual(expect.arrayContaining([refB, generatedB.asset.ref]));
+    expect((await b.service.prepareAsset(otherConversation, otherActor, refB, 'last-step', true)).contentBase64).toBe(inputB.toString('base64'));
+  });
+
+  it('omits deleted and unavailable artifacts from home recents even when canonical message references lack a tombstone', async () => {
+    const t = await setup();
+    const canonical = await t.service.registerAsset(output);
+    await t.service.deleteAsset(conversationId, actor, canonical.asset.ref);
+    await db.insert(schema.conversations).values({ id: conversationId, createdBy: actor, systemWorkspaceId: t.workspace.id, title: 'Recent artifact QA' });
+    try {
+      const components = [
+        { id: 'deleted-marker', type: 'artifact' as const, data: { artifactId: 'legacy-deleted', filename: 'deleted-marker.docx', storagePath: 'private/deleted', assetDeletedAt: new Date().toISOString() } },
+        { id: 'deleted-canonical', type: 'artifact' as const, data: { artifactId: canonical.documentId, filename: 'deleted-canonical.docx', storagePath: canonical.storagePath } },
+        { id: 'deleted-path', type: 'artifact' as const, data: { artifactId: 'old-native-id', filename: 'deleted-path.docx', storagePath: canonical.storagePath } },
+        { id: 'unavailable', type: 'artifact' as const, data: { artifactId: 'failed-output', filename: 'failed.docx', availability: 'failed' } },
+        { id: 'live', type: 'artifact' as const, data: { artifactId: 'live-output', filename: 'retained.docx', storagePath: 'private/live', availability: 'ready' } },
+      ];
+      await db.insert(schema.messages).values({ id: newObjectId(), conversationId, conversationType: 'ai', isComplete: true, isStreaming: false, components });
+      await db.insert(schema.messages).values({ id: newObjectId(), conversationId, conversationType: 'ai', isComplete: true, isStreaming: false, components: [components[1]] });
+      const rows = await messages.listRecentArtifactMessages(actor, 12);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].components).toEqual([components[4]]);
+      const recent = await t.service.listRecent(actor, 6);
+      expect(recent.map(file => file.filename)).toEqual(['retained.docx']);
+      expect(JSON.stringify(recent)).not.toContain('deleted-');
+      expect(JSON.stringify(recent)).not.toContain('private/live');
+      expect(await messages.listRecentArtifactMessages(newObjectId(), 12)).toEqual([]);
+    } finally { await db.delete(schema.conversations).where(eq(schema.conversations.id, conversationId)); }
   });
 });

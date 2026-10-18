@@ -49,12 +49,22 @@ The auth stack establishes user sessions and OAuth sign-in/linking, then applies
 ## Constraints and limitations
 
 - Auth README documents HttpOnly refresh cookies and session-backed token revocation; do not move credentials into browser storage.
-- Permission and provider route details are linked, not duplicated. Frontend auth tests and exact route mappings were not inspected.
+- Cross-tab refresh now hands off a rotated access token through the existing
+  transient same-origin BroadcastChannel before SSE reconnect. This fixes stale
+  tabs repeatedly rotating the shared cookie and revoking each other's session.
+  Current-principal/freshness/auth-generation checks and HMR cleanup apply; no
+  token is persisted. Server JWT verification, rotation and revocation are
+  unchanged. See proposed [ADR-0029](../decisions/ADR-0029-cross-tab-access-token-handoff.md).
+- Permission and provider route details are linked, not duplicated. The phase 4
+  client refresh/recovery boundary has 22 passing tests across four focused suites
+  plus frontend typecheck; broader provider routes are outside that change.
 - No historical rationale beyond reviewed decisions is inferred; check [baseline gaps](../architecture/baseline-gaps.md) for unresolved rationale.
 
 ## Focused verification
 
-No tests were executed. Commands are package entry points; filter to the affected behavior and locate exact tests in source.
+The earlier baseline did not execute provider/backend suites. Phase 4 refresh
+client results are recorded above; commands below are package entry points for
+other auth changes, not claims that their broader suites passed.
 
 | Area | Command, working directory and evidence/gap |
 | --- | --- |

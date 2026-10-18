@@ -8,6 +8,15 @@ Read only the sections relevant to the task. Paths such as `src/` are relative t
 
 **Endpoint registry:** all URLs in `src/lib/api/config.ts` as `API_ENDPOINTS`. **No** hardcoded paths in module code. Parameterised routes are functions: `byId: (id) => \`/playbooks/${id}\``.
 
+Cross-tab refresh reuses the existing Web Lock and in-memory BroadcastChannel.
+After rotation, current-principal peers adopt the fresh access token before SSE
+reconnect; reconnecting with the predecessor session token caused repeated
+rotation/revocation and reload sign-outs. No credentials are persisted in browser
+storage or logs. Cold bootstrap accepts a peer only while restoring its cookie in
+the current auth generation. Stale/foreign/expired/post-logout messages are ignored;
+the backend remains the JWT verifier. See proposed [ADR-0029](../decisions/ADR-0029-cross-tab-access-token-handoff.md)
+and `client.crossTabRefresh.test.ts` for the two-client regression.
+
 **Module `api.ts`:** thin typed wrappers returning `res.data.data` (unwrapping `ApiResponse`). No business logic, no toasts, no retries.
 
 **`useApiAction`** (`src/lib/use-api-action.ts`) is the canonical way to call an API from a component:

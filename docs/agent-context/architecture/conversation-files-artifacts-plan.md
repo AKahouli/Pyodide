@@ -1,6 +1,6 @@
 # Conversation Files & artifacts implementation plan
 
-Status: **phases 1–3 implemented and qualified; phase 4 proposed**. Assessed
+Status: **phases 1–4 qualified for the scoped Files & artifacts flow; extra-tab capacity limitation recorded below**. Assessed
 2026-10-18 for the classic conversation route. User requested a scoped plan with
 agent access, deletion, reload, two-user tests and separate implementation commits.
 
@@ -16,6 +16,68 @@ agent access, deletion, reload, two-user tests and separate implementation commi
    tied to the requesting actor's saved view. Unsupported exports remain explicit.
 5. Two users and simultaneous operations cannot mix listings, bytes, drafts,
    sandbox inputs, outputs, caches or privileges.
+
+## Phase 4 end-to-end checkpoint (2026-10-18)
+
+The user authorized final two-user uploads, reuse, deletion, reload/download
+qualification and a separate commit. ADR-0017/0018 preserve current-actor access;
+ADR-0025 preserves private drafts. Existing owners remain in use; no new table,
+module, service or runtime. The screenshot's type dropdown/help paragraph were
+removed; Use/Utiliser now adds a removable filename chip instead of encoded text.
+Eight transient actor/conversation-scoped selections deduplicate by exact ref.
+Submission serializes the existing selector text contract; failed sends preserve
+chips and successful sends clear only captured nonces. Selection does not grant
+access and does not persist through reload. Existing sent-message selector text
+is not rewritten.
+
+Two signed-in Chrome profiles uploaded different 154-byte `phase4-input.txt` files
+simultaneously through the native composer. Exact refs and ALPHA-417/BETA-683
+contents differed; six real foreign inspect/read/prepare operations were denied.
+After reload both agents selected/prepared their own files and used the existing
+`code-interpreort-aga` connector to create DOCX and editable PPTX concurrently.
+All four outputs downloaded after another reload. Local Office inspection verified
+project/budget/marker content, absence of the foreign marker, native PowerPoint
+chart XML and embedded editable chart workbooks. Further turns prepared the saved
+DOCX files and read actual paragraphs through MCP: Orchid/417/ALPHA-417 and
+Juniper/683/BETA-683. Both real agent foreign-reference reads were denied.
+
+On explicit browser confirmation, only both new inputs and both Phase4 DOCX files
+were deleted, with concurrent operations across users. PPTX outputs, Phase2 files
+and local downloads remain. Current checks show 24 own/foreign deleted-ref denials,
+complete byte cleanup and exact refunds: A 147433 → 108968 bytes; B 146379 → 109409
+bytes; document counts five → three. Both retained PPTX files downloaded after
+deletion and reload, with SHA-256 hashes identical to their original downloads.
+
+Two confirmed regressions were fixed: home Recent files included deleted canonical
+documents whose old message card lacked a deletion marker; both SQL eligibility
+and projection now exclude unavailable/tombstoned sources. Fresh sessions also
+entered a cross-tab rotation/revocation loop because peers reconnected with stale
+access tokens. The existing in-memory channel now hands off fresh same-principal
+tokens before reconnect; no credential persistence or backend-policy relaxation.
+See proposed [ADR-0029](../decisions/ADR-0029-cross-tab-access-token-handoff.md).
+Both profiles subsequently restored on reload without another sign-in.
+
+An extra Home tab then exposed 30-second API timeouts consistent with HTTP/1.1
+connection starvation from idle notification pipes. Existing notification owners now pause
+hidden-tab EventSource/timers and refetch the durable list/unread count on return;
+agent streams/execution remain active. Eleven focused tests, full frontend
+typecheck and independent visibility/catch-up review passed. The extra Home check
+passed for A but timed out for B. Closing only our temporary Home tabs restored
+both conversation panels. Source review confirms classic SSE remains global for
+group messages, externally started runs and copilot; limiting it to the current
+route could drop those events. Sharing those connections needs a separately scoped
+ownership design. Multiple visible windows can still exhaust HTTP/1.1 capacity;
+the hidden notification pause does not resolve that case. No speculative classic
+stream change was applied. The existing ten-minute bearer-URL window is unchanged.
+
+Passed evidence so far: backend 52 focused tests including 11 real PostgreSQL
+cases, backend build, frontend chip 21 tests, panel 12 tests, auth/recovery 22 tests
+and frontend typecheck. Independent reviews accept the panel/chip, home query and
+auth and notification boundaries. The scoped two-user flow is complete; the extra
+visible-tab limitation remains explicit. Prior unchanged export/image/draft evidence
+remains as recorded in earlier phases; it is not represented as a fresh rerun.
+Repository observability policy check fails on eight existing print-diagnostic
+sites in Outlook/SharePoint/Team MCP files outside this phase's changed paths.
 
 ## Phase 3 implementation checkpoint (2026-10-18)
 

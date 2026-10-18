@@ -66,6 +66,8 @@ interface InputProps {
   disabled?: boolean;
   submitDisabled?: boolean;
   requireContent?: boolean;
+  /** Existing, scoped context selections can submit without draft text or uploads. */
+  hasSelectedContext?: boolean;
   placeholder?: string;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
@@ -96,7 +98,7 @@ interface InputProps {
   autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, hasSelectedContext = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -489,7 +491,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
       const hasText = Boolean(message.text);
       const hasAttachments = Boolean(message.files?.length);
 
-      if (!(hasText || hasAttachments)) {
+      if (!(hasText || hasAttachments || hasSelectedContext)) {
         return false;
       }
 
@@ -527,7 +529,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, preserveWorkspaceSelectionOnSubmit, resetSelectedWorkspaceIds, selectedConnectorRepo],
+    [submitDisabled, derivedStatus, hasSelectedContext, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, preserveWorkspaceSelectionOnSubmit, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
