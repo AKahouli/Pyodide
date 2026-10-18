@@ -5,6 +5,7 @@
 ## Authority and context
 
 - Current user decisions govern intent. Source, schemas, protos and tests establish behavior; reviewed branch docs establish approved constraints. Hindsight is fallible experience.
+- Use recalled memory for reusable causes, fixes, decisions and stable preferences. Historical task status, session/page IDs and old QA results do not establish current state; reconcile task progress with checkpoints and verify technical lessons against current source/ADRs. Capture concise cause -> remedy -> evidence lessons; avoid retaining progress narration as knowledge.
 - Conversation means `http://localhost:5173/#/conversation`, unless v2 is requested. LLM inference uses a dedicated YellowStorm ADK agent configurable in the library.
 - Route through [the context index](docs/agent-context/README.md), read matching feature/architecture records and scoped package instructions, then verify existing implementations before edits. Load only relevant sections; another branch's unmerged docs are provisional.
 - Before the first code edit, consult the [platform ADR index](docs/agent-context/decisions/README.md), or the [harness ADR index](tools/opencode-harness/docs/decisions/README.md) for tooling work. Read applicable current records and record IDs plus concrete constraints in the inline plan/checkpoint decisions; briefly state when none apply. Reuse current evidence for unchanged scope, pass the selection to workers, and check it during review. Proposed/superseded records do not override approved current decisions. This adds no edit gate.
@@ -43,6 +44,7 @@
 
 ## Human replies
 
+- When a necessary question requires a user decision, use simple words, explain why the choice matters, and give a short concrete example. Offer 2–3 clear choices when useful and recommend a default with a brief reason. Avoid unexplained technical terms. Reuse settled decisions and reversible defaults; this adds no questions or step-by-step approvals for routine work.
 - Every bug-fix delivery explains the verified root cause, how it produced the symptom, how the change addresses it, and the relevant verification result. Briefly identify decisive evidence. If the cause is uncertain or the change is a workaround, say so explicitly. Keep the explanation concise and understandable to the user.
 - Lead with status/route, checks and pending work; routine delivery stays under 12 lines. Internal specialists return compact evidence, not human completion reports.
 - End every human reply with **Follow-up:** actor, next action/location and expected result. For background work, state what runs and that the user can keep messaging; no routine approval request. Notify on material findings/failures or promised completion without restarting the workflow.

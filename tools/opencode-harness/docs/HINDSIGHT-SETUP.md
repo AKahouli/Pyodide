@@ -6,6 +6,51 @@ to a developer-owned WSL daemon on `http://127.0.0.1:9077`. The daemon performs
 memory extraction; the native Coding Agents plugin captures/injects conversations.
 Neither replaces the reviewed Git documentation or local task checkpoints.
 
+## Experience quality and recovery
+
+The client example requests up to 1,500 tokens of relevant lessons, using
+`memory:durable-v1` with strict tag matching. New conversations retain that tag
+and consolidate within the same scope. Historical records remain stored but are
+excluded from automatic injection. For an explicit historical investigation,
+use the recall API with the relevant query and without the default tag filter;
+verify any result against source and current checkpoints.
+
+`defaultBankConfig` defines durable extraction/consolidation missions. The
+installer's `memory-policy` stage applies those missions to the bank and its
+conversation strategy, preserves unrelated options, backs up prior settings
+privately, and verifies the result. To reconcile an already installed client,
+first merge the intended client settings, then run from the checkout root:
+
+```powershell
+node tools/opencode-harness/setup-config.mjs memory-policy "$env:USERPROFILE/.config/opencode" "$PWD" "$env:USERPROFILE/.hindsight/backups/policy-update"
+```
+
+Restart OpenCode hosts to reload client settings and instructions. Bank policy
+changes take effect on subsequent extraction without restarting the daemon.
+Every interaction remains captured; temporary progress need not become a fact.
+The tested service is API 1.0.0, matching the pinned bootstrap. The policy stage
+checks the service's advertised recall score-filter support before changing bank
+settings. An older incompatible service produces an advisory upgrade message;
+coding continues with source, Git documentation and checkpoints.
+
+The current local RRF ranker orders candidates without confidence scores.
+Semantic/keyword cutoffs (0.84/0.4) and disabled graph/temporal expansion make
+irrelevant prompts return no lesson. These are calibrated for the current
+embedding setup and can miss weak paraphrases; reevaluate after model changes.
+The 1,500-token setting budgets retrieved content, not all plugin guide text.
+
+Inspect `/operations?status=failed` and each operation's `error_message` before
+retrying. Use `POST /operations/{id}/retry` for failed/cancelled operations, and
+`POST /consolidation/recover` for permanently failed consolidation. A deferred
+pending job can be cancelled and retried to clear obsolete provider backoff only
+after confirming its provider is usable and that it is still pending. Never
+reset an active worker or replay an old source snapshot over a newer document.
+Do not delete memories or failed records merely to clear a dashboard.
+Pending jobs can be healthy when parallel coding sessions keep sending updates.
+
+See [the measured evaluation](HINDSIGHT-EVALUATION.md) and the proposed
+[decision record](decisions/HADR-0002-durable-experience-recall.md).
+
 ## A. Install uv inside WSL
 
 Open your Ubuntu distribution, finish its user setup, then run **inside WSL**:
@@ -15,7 +60,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ~/.local/bin/uv --version
 ```
 
-The following commands use the verified `hindsight-embed==0.10.3` release.
+The following commands use the verified `hindsight-embed==1.0.0` release.
 First startup can download embedded database/runtime/model dependencies.
 
 ## B. Choose one daemon authentication route — manual
@@ -25,12 +70,12 @@ First startup can download embedded database/runtime/model dependencies.
 Run **inside WSL**:
 
 ```bash
-~/.local/bin/uvx --from hindsight-embed==0.10.3 hindsight-embed configure -p coding-agent --port 9077
+~/.local/bin/uvx --from hindsight-embed==1.0.0 hindsight-embed configure -p coding-agent --port 9077
 ```
 
 Follow the interactive provider/model prompts and enter your own approved key
 in the masked credential prompt. `configure` is deprecated upstream but remains
-supported in the pinned 0.10.3 CLI. This route avoids putting a literal key in
+supported in the pinned 1.0.0 CLI. This route avoids putting a literal key in
 the shared instructions or shell history. Use the provider/model your team has
 approved; access and billing belong to that account.
 
@@ -81,7 +126,7 @@ method if file storage is prohibited.
 Configure Hindsight to use that exact auth home:
 
 ```bash
-~/.local/bin/uvx --from hindsight-embed==0.10.3 hindsight-embed profile create coding-agent --port 9077 \
+~/.local/bin/uvx --from hindsight-embed==1.0.0 hindsight-embed profile create coding-agent --port 9077 \
   --env HINDSIGHT_API_LLM_PROVIDER=openai-codex \
   --env HINDSIGHT_API_LLM_CODEX_HOME="$HOME/.hindsight/codex-auth"
 ```
@@ -97,8 +142,8 @@ write/read check below. Do not copy or share another developer's auth cache.
 **WSL:**
 
 ```bash
-~/.local/bin/uvx --from hindsight-embed==0.10.3 hindsight-embed -p coding-agent daemon start
-~/.local/bin/uvx --from hindsight-embed==0.10.3 hindsight-embed -p coding-agent daemon status
+~/.local/bin/uvx --from hindsight-embed==1.0.0 hindsight-embed -p coding-agent daemon start
+~/.local/bin/uvx --from hindsight-embed==1.0.0 hindsight-embed -p coding-agent daemon status
 ```
 
 **Windows PowerShell:**
@@ -224,7 +269,7 @@ Ubuntu/profile. Trigger: **At log on**. Do not start multiple concurrent instanc
 - Arguments (replace distribution/profile if different):
 
 ```text
--d Ubuntu-22.04 -- bash -lc "~/.local/bin/uvx --from hindsight-embed==0.10.3 hindsight-embed -p coding-agent daemon start"
+-d Ubuntu-22.04 -- bash -lc "~/.local/bin/uvx --from hindsight-embed==1.0.0 hindsight-embed -p coding-agent daemon start"
 ```
 
 Use the full WSL `uvx` path via `~/.local/bin/uvx`; logon tasks may not inherit
@@ -252,5 +297,6 @@ database files without the service's proper backup procedure.
 - [Official OpenAI authentication documentation](https://developers.openai.com/codex/auth/).
 - [uv installation](https://docs.astral.sh/uv/getting-started/installation/).
 
-Profile CLI commands and bank request schema were checked against local 0.10.3;
-the optional Codex CLI login flow follows its current official documentation.
+Profile/daemon CLI help and bank request schema were checked against local 1.0.0.
+A fresh interactive login was not repeated on this configured machine; follow
+the installed CLI help for the optional Codex login flow.

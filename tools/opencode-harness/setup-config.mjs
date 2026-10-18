@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { resolveMemoryTarget } from './runtime/lib/memory-settings.mjs';
@@ -78,11 +79,62 @@ try {
       else next.optInPaths = enrolled;
     }
     write(memoryPath, text, value, next);
-  } else if (action === 'memory-info' || action === 'memory-check') {
+  } else if (action === 'memory-info' || action === 'memory-check' || action === 'memory-policy') {
     const { cfg, bankId } = resolveMemoryTarget(read(memoryPath).value, repoRoot);
     const base = cfg.apiUrl?.replace(/\/?$/, '/');
     const headers = cfg.apiToken ? { Authorization: 'Bearer ' + cfg.apiToken } : {};
     const request = async (route, options = {}) => fetch(new URL(route, base), { ...options, headers: { ...headers, ...options.headers }, signal: AbortSignal.timeout(10000) });
+    if (action === 'memory-policy') {
+      const unsupported = 'Memory policy requires recall score-filter support; upgrade the Hindsight service before retrying.';
+      try {
+        if (cfg.disabled || cfg.retainSessions === false || !bankId) throw Error();
+        const desired = cfg.defaultBankConfig;
+        if (!object(desired) || !['retain_mission', 'observations_mission'].every(key => typeof desired[key] === 'string' && desired[key].trim()) || !['retain_chunk_size', 'recall_max_tokens'].every(key => Number.isSafeInteger(desired[key]) && desired[key] > 0) || !['enable_graph_retrieval', 'enable_temporal_retrieval'].every(key => typeof desired[key] === 'boolean')) throw Error();
+        let schema;
+        try {
+          const response = await request('openapi.json');
+          if (response.ok) schema = await response.json();
+        } catch { /* Unsupported or unavailable schema is reported without response details. */ }
+        const schemas = schema?.components?.schemas;
+        const recall = schemas?.RecallRequest?.properties;
+        const scoreProperty = recall?.min_scores;
+        const references = [scoreProperty?.$ref, ...(Array.isArray(scoreProperty?.anyOf) ? scoreProperty.anyOf.map(item => item?.$ref) : [])];
+        const scoreSupported = references.some(reference => typeof reference === 'string' && reference.startsWith('#/components/schemas/') && ['semantic', 'keyword'].every(key => Object.hasOwn(schemas?.[reference.slice('#/components/schemas/'.length)]?.properties ?? {}, key)));
+        if (!scoreSupported || !['prefer_observations', 'tags', 'tags_match'].every(key => Object.hasOwn(recall ?? {}, key))) throw Error(unsupported);
+        const route = 'v1/default/banks/' + encodeURIComponent(bankId);
+        let response = await request(route + '/config');
+        if (response.status === 404) {
+          const created = await request(route, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          if (!created.ok) throw Error();
+          response = await request(route + '/config');
+        }
+        if (!response.ok) throw Error();
+        const before = await response.json();
+        if (!object(before) || !object(before.config) || !object(before.overrides)) throw Error();
+        const current = before.config;
+        if (!['enable_graph_retrieval', 'enable_temporal_retrieval'].every(key => typeof current[key] === 'boolean')) throw Error(unsupported);
+        const strategy = { ...(object(current.retain_strategies?.conversation) ? current.retain_strategies.conversation : {}), ...(object(before.overrides.retain_strategies?.conversation) ? before.overrides.retain_strategies.conversation : {}) };
+        const desiredStrategy = { ...strategy, retain_mission: desired.retain_mission, retain_extraction_mode: 'concise', retain_chunk_size: desired.retain_chunk_size };
+        const updates = {};
+        for (const key of ['retain_mission', 'observations_mission', 'retain_chunk_size', 'recall_max_tokens', 'enable_graph_retrieval', 'enable_temporal_retrieval']) if (current[key] !== desired[key]) updates[key] = desired[key];
+        if (Object.entries(desiredStrategy).some(([key, value]) => strategy[key] !== value)) {
+          updates.retain_strategies = { ...(object(current.retain_strategies) ? current.retain_strategies : {}), ...(object(before.overrides.retain_strategies) ? before.overrides.retain_strategies : {}), conversation: desiredStrategy };
+        }
+        if (Object.keys(updates).length) {
+          fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+          const safeBank = bankId.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60) || 'bank';
+          const backup = path.join(backupDir, `hindsight-bank-${safeBank}-${Date.now()}-${randomUUID().slice(0, 8)}.json`);
+          fs.writeFileSync(backup, JSON.stringify({ bankId, config: before.config, overrides: before.overrides }, null, 2), { flag: 'wx', mode: 0o600 });
+          const patched = await request(route + '/config', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }) });
+          if (!patched.ok) throw Error();
+        }
+        const verified = await request(route + '/config');
+        if (!verified.ok) throw Error();
+        const result = (await verified.json()).config;
+        if (!object(result) || ['retain_mission', 'observations_mission', 'retain_chunk_size', 'recall_max_tokens', 'enable_graph_retrieval', 'enable_temporal_retrieval'].some(key => result[key] !== desired[key]) || !object(result.retain_strategies?.conversation) || ['retain_mission', 'retain_extraction_mode', 'retain_chunk_size'].some(key => result.retain_strategies.conversation[key] !== desiredStrategy[key])) throw Error();
+        console.log('Memory policy verified.');
+      } catch (error) { throw Error(error.message === unsupported ? unsupported : 'Memory policy setup or verification failed; inspect the private backup and bank configuration.'); }
+    } else {
     let healthy = false;
     try {
       const response = await request('health');
@@ -103,6 +155,7 @@ try {
       const value = stats.ok ? await stats.json() : {};
       if (!stats.ok || !object(value) || value.error || value.detail || value.status === 'error') throw Error('Memory bank verification failed.');
       console.log('Memory API and repository bank verified. Extraction/capture still need onboarding.');
+    }
     }
   } else throw Error('Unknown setup configuration action.');
 } catch (error) {

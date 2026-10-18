@@ -8,7 +8,25 @@
   "retainSessions": true,
   "autoInject": "recall",
   "injectTimeoutMs": 2000,
-  "recallOptions": { "budget": "low", "max_tokens": 1000, "types": ["world", "experience"] },
+  "recallOptions": {
+    "budget": "low",
+    "max_tokens": 1500,
+    "types": ["world", "experience", "observation"],
+    "prefer_observations": true,
+    "min_scores": { "semantic": 0.84, "keyword": 0.4 },
+    "tags": ["memory:durable-v1"],
+    "tags_match": "all_strict"
+  },
+  "retainTags": ["memory:durable-v1"],
+  "observationScopes": [["memory:durable-v1"]],
+  "defaultBankConfig": {
+    "retain_mission": "Extract only durable engineering lessons, explicit settled decisions and stable user preferences. For a fix preserve the symptom, evidenced root cause, smallest successful remedy, applicable source paths or identifiers, and verification limits. Attribute unverified assistant claims as claims. Preserve exact approved values and source REF-ID markers. Keep only the latest settled rule when the conversation revises itself; distinguish approved decisions from proposals. Emit the fewest facts needed, not one per action. Omit task/session/job/page IDs, temporary progress, pending reviews, waiting-for-login notes, test-count reports and delivery announcements unless they establish a reusable cause-and-remedy lesson. Never store credentials, tokens, cookies or other secrets. Return zero facts when there is no durable lesson.",
+    "observations_mission": "Consolidate reusable engineering lessons and stable preferences supported by source evidence. Favor concise symptom -> cause -> remedy -> verification/applicability guidance with exact source references. Merge duplicate lessons; update superseded rules instead of presenting conflicting rules as current. Keep unverified claims and proposed designs explicitly qualified. Do not synthesize task status, pending work, authentication blockers, session/page/job IDs or test-count summaries into observations. A historical success is not proof that the current code or environment passes. Do not invent a lesson when evidence contains only progress narration.",
+    "retain_chunk_size": 12000,
+    "recall_max_tokens": 1500,
+    "enable_graph_retrieval": false,
+    "enable_temporal_retrieval": false
+  },
   "autoSeed": false,
   "codebaseSurvey": false,
   "autoUpdate": false

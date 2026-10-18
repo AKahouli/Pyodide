@@ -116,7 +116,7 @@ latest releases. Upgrade deliberately and repeat onboarding checks.
 | Code graph, core package | `code-review-graph==2.3.9` |
 | Chrome MCP | `chrome-devtools-mcp@1.10.1` |
 | Hindsight Coding Agents plugin | `@vectorize-io/hindsight-coding-agents@0.8.1` |
-| Hindsight local service | `hindsight-embed==0.10.3` |
+| Hindsight local service | `hindsight-embed==1.0.0` |
 
 Use a normal developer PowerShell terminal for the remaining Windows commands:
 
@@ -190,6 +190,18 @@ Do not create a competing config file or blindly replace the existing one.
 
 The template configures graph MCP, Chrome MCP with `--isolated --page-id-routing`,
 Context7, specialist permissions, subagent depth and context compaction/pruning.
+For the shipped GPT-6 models and their listed speed variants, the template caps
+the input budget at 460,000 tokens with a 60,000-token compaction reserve:
+automatic compaction starts at 400,000 reported context tokens. The actual model
+context capacity remains 1,050,000; this is a configured working budget. OpenCode
+1.19.3 checks usage between steps, so a large response can cross the threshold
+before compaction starts. This counts current context usage, including cached
+tokens, rather than cumulative tokens spent across the session. Recent context
+retention is configured at 20,000 tokens. Smaller models retain their native
+earlier thresholds; never increase their advertised capacity to reach 400,000.
+Other large models need an equivalent input-budget override based on verified
+model limits. Existing personal model/buffer overrides survive installer merges
+and must be reconciled to obtain the same threshold. Restart hosts after changes.
 The SDLC plugin is discovered from `plugins/sdlc.js`; do not also register it in
 the `plugin` array. Hindsight uses its native plugin, not a second MCP server.
 

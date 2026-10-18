@@ -16,6 +16,7 @@ Yellowmind product architecture use the
 | Startup, integrations and permissions | [ADR-0008](ADR-0008-session-integration-health.md), [ADR-0009](ADR-0009-native-startup-readiness.md), [ADR-0010](ADR-0010-native-shell-permissions.md), [ADR-0011](ADR-0011-advisory-integrations-and-native-policy.md), [ADR-0014](ADR-0014-advisory-checkpoints-without-edit-locks.md) | Native permissions and advisory health/checkpoints; ADR-0014 supersedes old ownership enforcement |
 | Background delivery | [ADR-0013](ADR-0013-background-handoff-and-scoped-instructions.md), [ADR-0016](ADR-0016-maintainer-capability-fallback.md) | ADR-0016 permits primary direct maintenance or supported foreground work when background is unavailable |
 | Decision separation and lookup | [HADR-0001](HADR-0001-separate-decision-context.md) | Distinct platform/harness indexes and visible applicable-ADR selection |
+| Durable experience recall | [HADR-0002](HADR-0002-durable-experience-recall.md) | Proposed record of the user-requested lesson scope, 1,500-token budget, native precision settings and evaluation limits |
 
 Legacy IDs are preserved for stable references. Allocate new harness decisions as
 `HADR-NNNN-topic.md`, separately from platform ADR numbering. Preserve accepted

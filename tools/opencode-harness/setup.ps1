@@ -80,9 +80,9 @@ if [ ! -x "$HOME/.local/bin/uvx" ]; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 if [ ! -f "$HOME/.hindsight/profiles/coding-agent.env" ]; then
-  "$HOME/.local/bin/uvx" --from hindsight-embed==0.10.3 hindsight-embed configure -p coding-agent --port 9077
+  "$HOME/.local/bin/uvx" --from hindsight-embed==1.0.0 hindsight-embed configure -p coding-agent --port 9077
 fi
-"$HOME/.local/bin/uvx" --from hindsight-embed==0.10.3 hindsight-embed -p coding-agent daemon start
+"$HOME/.local/bin/uvx" --from hindsight-embed==1.0.0 hindsight-embed -p coding-agent daemon start
 '@
     # A file avoids Windows PowerShell's native embedded-quote conversion while
     # leaving stdin available for the masked interactive provider wizard.
@@ -162,6 +162,7 @@ function Start-HarnessSetup([string]$Root, [string]$MemoryChoice, [string]$Distr
                 Invoke-SetupNative node.exe @($configHelper,'memory-registration',$configDirectory,$Root,$setupBackup) | Out-Host
                 $memoryState = Invoke-SetupNative node.exe @($configHelper,'memory-info',$configDirectory,$Root,$setupBackup) | ConvertFrom-Json
                 if (-not $memoryState.reachable -and $memoryState.localBootstrap) { Install-SetupWslMemory $Distribution }
+                Invoke-SetupNative node.exe @($configHelper,'memory-policy',$configDirectory,$Root,$setupBackup) | Out-Host
                 Invoke-SetupNative node.exe @($configHelper,'memory-check',$configDirectory,$Root,$setupBackup) | Out-Host
             } catch {
                 $pending += 'Hindsight setup is pending. Finish WSL initialization/provider configuration or inspect HINDSIGHT-SETUP.md, then rerun Y.'
