@@ -3,6 +3,37 @@
 // Usage: npm run start:dev 2>&1 | node scripts/observability/pretty.mjs
 // Non-JSON lines pass through untouched, so framework output stays visible.
 import readline from 'node:readline';
+import { readFileSync } from 'node:fs';
+
+// Display-only severity allowlist — never touches the wire format or remote sinks.
+// Set LOG_DISPLAY_LEVELS to a pipe/comma/space list, e.g. LOG_DISPLAY_LEVELS=ERROR|WARN.
+// Unset/empty -> show every level. Values are case-insensitive and accept the legacy
+// aliases from contracts/observability/severity.v1.json (warning->WARN, critical->FATAL, ...).
+const LEVELS = new Set(['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']);
+const ALIASES = {
+  warning: 'WARN', warn: 'WARN', error: 'ERROR', critical: 'FATAL', fatal: 'FATAL',
+  info: 'INFO', debug: 'DEBUG', trace: 'TRACE', verbose: 'TRACE',
+};
+
+// An already-exported variable wins; otherwise read the key from <cwd>/.env so a plain
+// `python main.py | node .../pretty.mjs` honours the project's .env without --env-file.
+function readEnvFile(key, file = '.env') {
+  try {
+    const line = readFileSync(file, 'utf8').split(/\r?\n/).find((l) => l.trim().startsWith(`${key}=`));
+    return line ? line.slice(line.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '') : undefined;
+  } catch { return undefined; }
+}
+
+function resolveLevelFilter() {
+  const raw = process.env.LOG_DISPLAY_LEVELS ?? readEnvFile('LOG_DISPLAY_LEVELS');
+  if (!raw) return null;
+  const picked = String(raw).split(/[|,\s]+/).map((t) => t.trim().toLowerCase()).filter(Boolean)
+    .map((t) => ALIASES[t] ?? t.toUpperCase()).filter((l) => LEVELS.has(l));
+  return picked.length ? new Set(picked) : null;
+}
+
+const levelFilter = resolveLevelFilter();
+if (levelFilter) process.stderr.write(`[pretty] showing only: ${[...levelFilter].join(', ')}\n`);
 
 const C = process.stdout.isTTY ? {
   FATAL: '\x1b[1;31m', ERROR: '\x1b[31m', WARN: '\x1b[33m', INFO: '\x1b[32m',
@@ -40,7 +71,10 @@ rl.on('line', (line) => {
   if (line.charCodeAt(0) === 123) { // '{' — cheap pre-filter before JSON.parse
     try {
       const e = JSON.parse(line);
-      if (e && e.event_name && e.severity_text) return void console.log(render(e));
+      if (e && e.event_name && e.severity_text) {
+        if (levelFilter && !levelFilter.has(String(e.severity_text).toUpperCase())) return;
+        return void console.log(render(e));
+      }
     } catch { /* not an envelope */ }
   }
   console.log(line);

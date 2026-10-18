@@ -804,6 +804,13 @@ Do not render charts for single values or non-numeric content.
                 install_background_action_guard(agent, session_service)
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            # Keep the factory's volatile timestamp behind all stable capability
+            # instructions so those instructions remain a reusable prompt prefix.
+            timestamp_suffix = "\n\n the current timestamp is {time}. \n"
+            move_timestamp = (not worker_role and isinstance(agent.instruction, str)
+                              and agent.instruction.endswith(timestamp_suffix))
+            if move_timestamp:
+                agent.instruction = agent.instruction[:-len(timestamp_suffix)]
             if not worker_role:
                 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
                 original_model = agent.model
@@ -869,6 +876,8 @@ Do not render charts for single values or non-numeric content.
             if not worker_role:
                 from src.smart_rag.tools.utilities.connector_tools import install_deferred_connector_tools
                 install_deferred_connector_tools(agent)
+            if move_timestamp:
+                agent.instruction += timestamp_suffix
 
             # Start MCP connect + tools/list now so it overlaps session and runner
             # setup instead of running lazily at the first model request.

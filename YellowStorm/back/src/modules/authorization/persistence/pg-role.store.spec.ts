@@ -1,13 +1,14 @@
 import { inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { newObjectId } from '@common/postgres';
+import { withTransaction } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import { PgUserStore } from '@modules/user/persistence/pg-user.store';
 import { describeIntegration, makeTestDb } from '../../postgres/testing/pg-integration';
 import { PgRoleStore } from './pg-role.store';
 
 describeIntegration('PgRoleStore (integration)', () => {
-  const { db, close } = makeTestDb();
+  const { db, pool, close } = makeTestDb();
   const typedDb = db as NodePgDatabase<typeof schema>;
   const roles = new PgRoleStore(typedDb);
   const users = new PgUserStore(typedDb);
@@ -53,6 +54,51 @@ describeIntegration('PgRoleStore (integration)', () => {
     expect(updated).toMatchObject({ description: 'changed', isActive: false });
     expect((await roles.findAllActive()).some((r) => r.id === role.id)).toBe(false);
     expect(await roles.update(newObjectId(), { description: 'x' })).toBeNull();
+  });
+
+  it('reads current active membership in one query and preserves membership ordering', async () => {
+    const user = await mkUser();
+    const first = await mkRole('ordered-first');
+    const inactive = await mkRole('ordered-inactive');
+    const last = await mkRole('ordered-last');
+    await roles.update(first.id, { priority: -5 });
+    await roles.update(last.id, { priority: 99 });
+    await users.addRole(user.id, first.id);
+    await users.addRole(user.id, inactive.id);
+    await users.addRole(user.id, last.id);
+    await roles.update(inactive.id, { isActive: false });
+    const query = jest.spyOn(pool, 'query');
+    try {
+      expect((await roles.findActiveForUser(user.id)).map((role) => role.id)).toEqual([first.id, last.id]);
+      expect(query).toHaveBeenCalledTimes(1);
+      query.mockClear();
+      expect(await roles.findActiveForUser('invalid')).toEqual([]);
+      expect(query).not.toHaveBeenCalled();
+      expect(await roles.findActiveForUser(newObjectId())).toEqual([]);
+      expect(query).toHaveBeenCalledTimes(1);
+    } finally {
+      query.mockRestore();
+    }
+    await users.removeRoleAndBump(user.id, first.id);
+    expect((await roles.findActiveForUser(user.id)).map((role) => role.id)).toEqual([last.id]);
+    await roles.update(last.id, { isActive: false });
+    expect(await roles.findActiveForUser(user.id)).toEqual([]);
+    await roles.update(last.id, { isActive: true, permissions: ['spec.changed'] });
+    expect(await roles.findActiveForUser(user.id)).toEqual([expect.objectContaining({ id: last.id, permissions: ['spec.changed'] })]);
+    await db.delete(schema.identityUsers).where(inArray(schema.identityUsers.id, [user.id]));
+    expect(await roles.findActiveForUser(user.id)).toEqual([]);
+  });
+
+  it('uses the caller transaction for fresh memberships and honors rollback', async () => {
+    const user = await mkUser();
+    const role = await mkRole('transaction-role');
+    const rollback = new Error('rollback membership');
+    await expect(withTransaction(typedDb, async () => {
+      await users.addRole(user.id, role.id);
+      expect((await roles.findActiveForUser(user.id)).map((record) => record.id)).toEqual([role.id]);
+      throw rollback;
+    })).rejects.toBe(rollback);
+    expect(await roles.findActiveForUser(user.id)).toEqual([]);
   });
 
   it('addRoleAndBump / removeRoleAndBump change membership and bump permissions_version atomically', async () => {
@@ -112,5 +158,13 @@ describeIntegration('PgRoleStore (integration)', () => {
     const found = (await roles.findAll()).filter((r) => r.name === name);
     expect(found).toHaveLength(1);
     roleIds.push(found[0].id);
+  });
+});
+
+describe('PgRoleStore current roles input validation', () => {
+  it('does not query for an invalid user id', async () => {
+    const db = { select: jest.fn() };
+    expect(await new PgRoleStore(db as never).findActiveForUser('invalid')).toEqual([]);
+    expect(db.select).not.toHaveBeenCalled();
   });
 });

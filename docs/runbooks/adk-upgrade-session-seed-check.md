@@ -4,16 +4,35 @@
 transcript in one transaction through private `DatabaseSessionService` hooks
 (`_get_schema_classes`, `_rollback_on_exception_session`, `_uses_naive_datetime`,
 `StorageSession`, `StorageEvent.from_event`), verified on google-adk 2.11.0.
+The exact PostgreSQL `DatabaseSessionService` path also uses `StorageAppState`
+and `StorageUserState`: session creation, missing shared-state initialization and
+all transcript events now commit atomically together. Conflict-safe inserts never
+overwrite existing app/user state. A duplicate target is accepted only when its
+same-app/user/session seed key matches; conflicting keys fail. Other dialects and
+custom/fenced services retain public creation and the existing history append path.
 If a hook disappears the code falls back to the slow per-event `append_event`
 path (correct, but seeding cost grows by ~200 ms per message again).
 
 Automatic guard: `conda run -n meta pytest yellowstorm-adk/tests/test_conversation_session_seed.py -q`
 must pass after every bump of `google-adk` in `requirements.txt`.
 
+Imported events share one `branch-seed-*` invocation ID per import, while retaining
+unique event IDs and the complete ordered transcript. Requalify installed ADK's
+interval compaction counting and content conversion: 20 imported messages plus one
+real invocation must not trigger interval-10 compaction; genuine invocations must
+still trigger it, and the token threshold must still trigger against imported
+content. The import counts as one session-local invocation; isolated successor
+sessions do not inherit the prior session's interval counter. Never skip draining
+the Runner or remove durable finalization to avoid post-invocation compaction.
+
 Also verify source-history loading: ordinary database sessions read only their
 same-app/user/session state and timestamp/ID-ordered events; custom/fenced session
-services must use their public guarded lookup. The seed-target update must remain
-in the event-insertion transaction and affect exactly one scoped target row.
+services must use their public guarded lookup. PostgreSQL target insertion and
+event insertion must share one commit, with no partially visible session on event
+or commit failure. The fallback seed-target update must remain in its event-insertion
+transaction and affect exactly one scoped target row. Verify concurrent same-key
+and conflicting-key attempts, fresh app/user initialization, unchanged shared state,
+full ordered history and a successful subsequent normal Runner event append.
 The metadata-only bootstrap lookup uses public `GetSessionConfig(num_recent_events=0)`;
 confirm it skips event SQL while the Runner's full lookup and resume retain all
 history. Query-count and ownership regressions cover these assumptions.

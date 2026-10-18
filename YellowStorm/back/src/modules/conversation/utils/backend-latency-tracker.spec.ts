@@ -1,4 +1,7 @@
-import { BackendPreAdkTracker } from './backend-latency-tracker';
+import { BackendPreAdkTracker, activateBackendPreAdkTracker, measureBackendPreparation } from './backend-latency-tracker';
+import { logDomainEvent } from '@modules/logger';
+
+jest.mock('@modules/logger', () => ({ logDomainEvent: jest.fn() }));
 
 /** Pin `process.hrtime.bigint()` to a deterministic sequence of ns values. */
 function mockHrtimeSequence(sequenceNs: bigint[]): { restore: () => void } {
@@ -8,6 +11,28 @@ function mockHrtimeSequence(sequenceNs: bigint[]): { restore: () => void } {
     .mockImplementation(() => sequenceNs[Math.min(index++, sequenceNs.length - 1)]);
   return { restore: () => { spy.mockRestore(); } };
 }
+
+describe('preparation diagnostics', () => {
+  it('does not emit diagnostics without the Admin tracker', async () => {
+    expect(await measureBackendPreparation('agent.roster', async () => 'result')).toBe('result');
+    expect(logDomainEvent).not.toHaveBeenCalled();
+  });
+
+  it('preserves results and failures while logging only numeric duration and stage', async () => {
+    activateBackendPreAdkTracker(true);
+    const privateValue = { credential: 'private-test-value' };
+    expect(await measureBackendPreparation('agent.roster', async () => privateValue)).toBe(privateValue);
+    const failure = new Error('private failure');
+    await expect(measureBackendPreparation('agent.configuration', async () => { throw failure; })).rejects.toBe(failure);
+    expect(logDomainEvent).toHaveBeenCalledWith('info', 'conversation.preparation.completed', {
+      operation: 'agent.roster', duration_ms: expect.any(Number), outcome: 'success',
+    });
+    expect(logDomainEvent).toHaveBeenCalledWith('info', 'conversation.preparation.completed', {
+      operation: 'agent.configuration', duration_ms: expect.any(Number), outcome: 'failed',
+    });
+    expect(JSON.stringify((logDomainEvent as jest.Mock).mock.calls)).not.toContain('private');
+  });
+});
 
 describe('BackendPreAdkTracker', () => {
   it('computes monotonic stage durations from begin/end pairs', () => {

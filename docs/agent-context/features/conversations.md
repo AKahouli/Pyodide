@@ -55,6 +55,271 @@ Host draft revisions mark changed inputs stale; cancellation/failure/interruptio
 remain distinct from successful completion. No new table or service is introduced.
 See the [phase 4 contract and qualification](../architecture/openui-mini-apps-plan.md#phase-4-implementation-and-qualification).
 
+Activity reading follow-up (2026-10-17): the existing desktop activity pane follows
+new rows and growing summaries while the reader remains at the bottom. Scrolling
+away pauses following; returning within 40 px of the bottom resumes it. Pointer,
+keyboard, focus and wheel interaction prevent the completion timer from hiding
+activity, and waiting for clarification no longer hides a reader's open panel.
+Untouched replies retain their delayed auto-collapse and historical replies start
+collapsed. Manual collapse/expand remains available.
+
+Reading preferences are ephemeral, message-keyed objects owned by ConversationContent,
+shared by both streaming paths and the saved bubble. This preserves the open/closed
+choice and paused scroll position through live-to-saved replacement; changing
+conversation or reloading discards the preferences. They are not transcript,
+reasoning replay or provider history, and do not change backend streaming, tools,
+permissions or durable writes. Focused regressions cover both handoffs, conversation
+isolation, paused/resumed following, same-row growth and interaction-safe collapse.
+Verification: 121 focused UI tests and independent review passed. In Luna thread
+`045eb674f2e97560bff7a145`, the refreshed UI retained a keyboard-interacted panel
+after completion while a subsequent untouched greeting collapsed normally; native
+summary Markdown and pane scrolling remained usable. The 390 px mobile timeline
+opened without horizontal page overflow. Vite has HMR disabled locally, so browser
+QA requires a reload after source edits. Global TypeScript checking remains blocked
+by unrelated semantic-model localization diagnostics.
+
+Fleet-admission follow-up (2026-10-17): conflict detection and quota-checked
+insertion now share one CTE decision statement, reducing successful admission
+from five to four database statements including BEGIN/COMMIT. The transaction's
+global advisory lock remains a separate preceding statement: READ COMMITTED must
+take a fresh decision snapshot after any prior holder commits. Busy-before-capacity
+precedence, legacy/native-session exclusion, user/fleet quotas, expired-row rules,
+identity-conflict classification and synchronous commit before success are
+unchanged. No authorization, history, model, tool or durable-write ordering changes.
+Admin-latency-gated numeric preparation events separate `fleet.lock_acquisition`
+(database round trip plus any lock wait) from `fleet.decision`; the surrounding
+bootstrap admission duration also includes transaction begin/commit and overhead.
+These durations do not isolate pure server queueing.
+
+Two Luna greetings before and two after backend deployment measured admission
+106/118 → 84/82 ms (median 112 → 83 ms, 26%). The after samples measured lock
+acquisition 19/19 ms and decision 26/25 ms; the remaining approximately 39 ms covers
+transaction begin/commit and overhead. No large acquisition spike appeared in
+these samples, but pure server lock wait is not separately measured. Bootstrap
+median was 239 → 221 ms. Overall backend preparation remained about 1.84 s;
+variation in other stages offset the admission saving, so no overall provider or
+backend speedup is claimed from this small sample.
+The second browser timing envelope flagged clock skew. Admission and bootstrap
+comparisons use backend monotonic durations and are unaffected; no cross-clock
+end-to-end improvement is claimed.
+
+Both new replies completed durably with valid question links, 17,023 cached input
+tokens each, reasoning usage and all expected 16/18 seeded history events plus
+private Responses state; all eight prior replies remained present. Verification:
+73 focused PostgreSQL/admission/cancellation/stream/timing tests, build, independent
+review, browser timings and all backend readiness checks passed. Regressions
+include a blocked second connection seeing the preceding holder's commit,
+parallel quotas, busy-before-capacity precedence, expired rows, duplicate identity,
+commit failure and cancellation with durable partial content. The logging policy
+still reports the same eight unrelated MCP print violations. No migration or
+gateway restart was required.
+
+Root-agent bootstrap follow-up (2026-10-17): the stream's early root-agent lookup
+now reads only ID, name, owner, default flag and root execution policy. The previous
+full response also hydrated eight relationship collections and the agent type,
+although bootstrap only consumed the name and policy presence. The new repository
+projection and service preserve fresh default/owner/share-grant authorization,
+not-found/forbidden errors, trimmed IDs, absent-policy mapping and existing inactive
+agent behavior. No agent/policy/share cache is introduced. Full agent execution
+and root delegation continue using their complete authorized definitions. Lease,
+Stop, history, capacity and durable-write ordering are unchanged. Eight alternating
+read-only pairs returned identical bootstrap values and measured medians
+90.41 → 19.27 ms, with 11 → one database queries.
+
+On the currently open Luna thread, two greetings before and two after deployment
+measured root-agent lookup 184/128 → 19/19 ms (median 156 → 19 ms), bootstrap
+348 → 249 ms median and full backend preparation 1,960 → 1,834 ms median. The
+small live sample includes other-stage variation and does not establish a provider
+speedup. Both new replies completed durably with valid question links, 17,023
+cached input tokens each, reasoning usage and their expected six/eight seeded
+history events plus private Responses state. All three earlier replies remained
+present. Verification: 76 agent/service/PostgreSQL tests and 77 stream/cleanup/root
+context tests passed, build, independent review, live timing panel and all backend
+readiness checks passed. Denied bootstrap access is tested before history,
+stream-start broadcast and model dispatch, while retaining lease cleanup and
+error notification. No migration or gateway restart was required.
+
+Stream-bootstrap follow-up (2026-10-17): numeric, Admin-latency-gated preparation
+events now separate lease claim, context loading, root-agent lookup, history,
+fleet admission and stream-start broadcast. Two baseline Luna turns placed context
+loading at 138–157 ms, fleet admission at 99–107 ms, root-agent lookup at 83–101 ms,
+history at 66–68 ms, lease claim at 26 ms and broadcast below 1 ms.
+
+Recipient resolution formerly built a full conversation response, loading user
+display profiles and the root agent's junctions only to discard them. It now uses
+`ConversationService.getBroadcastMemberIds`, the same fresh default-filtered store
+lookup, returning owner-first deduplicated group IDs. It does not reuse a stale
+controller snapshot or cache membership. Non-group behavior, not-found handling
+and the stream's warning/empty-recipient fallback remain unchanged. Existing
+authorization, lease/Stop fencing, admission ordering, full history and synchronous
+durable writes are untouched. Eight alternating read-only pairs returned identical
+recipients and measured medians 125.81 → 27.28 ms, with 12 → one database queries.
+
+Two greetings before and two after deployment measured median context loading
+147 → 46 ms and bootstrap 438 → 357 ms (18%). Full backend preparation measured
+2,255 → 1,996 ms; other stages also varied, so that larger change is not attributed
+entirely to recipient resolution. Both after turns completed durably with valid
+question links, 17,021 cached input tokens each, reasoning usage and all expected
+40 imported events plus private Responses history. Verification: 115 focused
+conversation/stream/cleanup/concurrency/timing tests passed (the cleanup suite was
+rerun after updating its old DTO mock), build, independent review, live browser
+timings and all backend readiness checks passed. The logging policy remains
+blocked by the same eight unrelated MCP print-policy violations.
+
+Backend database follow-up (2026-10-17): profiling placed connector authorization
+at 530–607 ms, the largest measured child of workspace/agent preparation. Each
+current-role check previously hydrated the user, memberships and role names before
+fetching full roles: four serial queries. `AuthorizationService.getUserRoles` now
+uses one fresh existing-user/membership/active-role join, preserving membership
+order and transaction context. All account, destination, permission and repeated
+connector authorization checks remain; no current-role cache is introduced.
+History, model configuration, tool catalog and durable writes are unchanged.
+
+Eight alternating read-only pairs using the same pool returned identical role
+records and measured medians 80.67 → 20.92 ms (four → one queries). Two Luna
+greetings before and two after backend deployment measured medians: connector
+authorization 568 → 451 ms, workspace/agent resolution 797 → 697 ms and backend
+preparation 2,378 → 2,241 ms. Warm turns measured backend preparation
+2,216 → 2,025 ms. These small live samples include normal database variation;
+they do not establish a provider speedup. Both after turns completed with durable
+question links, 17,021 cached tokens each, reasoning enabled and all expected
+36/38 imported history events plus private Responses state. Build, 44 focused
+authorization/MCP/actor-guard tests, PostgreSQL revocation and transaction
+regressions, independent review, browser timing inspection and backend readiness
+passed. No migration or gateway restart was needed.
+
+Cached-turn completion follow-up (2026-10-17): imported transcript events now share
+one synthetic bootstrap invocation ID per import. Previously each message received
+a distinct invocation ID, so ADK's interval-10 compactor treated old imported
+messages as new invocations and made a discarded summarizer call after each answer
+in an isolated successor session. All event IDs, full ordered content, timestamps,
+private Responses history and atomic writes remain intact. Interval compaction
+counts session-local invocations (the import counts once); token-threshold
+compaction still evaluates the full transcript. Installed-SDK regressions verify
+prompt conversion parity, interval triggering and token triggering.
+
+A cached Luna greeting measured provider-terminal-to-agent-completion at 2,946 ms
+before and 153 ms after, with the extra nano call absent after deployment. Both
+read 17,021 cached tokens; the latter retained reasoning and all 26 imported events.
+This removes post-answer latency, not provider queueing or reasoning time.
+
+Prompt-cache follow-up (2026-10-17): Luna's zero cached-token counts were genuine
+provider-reported zeros, not a loss in the pinned ADK/LiteLLM/gRPC usage mapping.
+Azure's newer-model implicit cache boundary is the latest message; a changing
+timestamp before that boundary prevented reuse of the otherwise stable prefix.
+A controlled six-call gateway probe held model, key, reasoning and tools constant:
+unmarked changing-timestamp requests read zero cached tokens, while warm requests
+with an explicit stable-content breakpoint read 3,576 of 3,597 tokens.
+
+For canonical GPT-5.6-and-later application-managed Responses requests, the adapter
+now conservatively recognizes the exact factory-generated timestamp and represents
+the complete existing instructions as one developer message with two text blocks.
+The stable block receives `prompt_cache_breakpoint`; the second retains the timestamp
+and every following ADK identity/schema instruction. Concatenated instruction text
+is unchanged. The transformation happens after private replay preparation, so
+history signatures, stored input items, reasoning and tool order are unchanged.
+Ambiguous/custom instructions, unknown model aliases, older models, Chat Completions
+and provider-managed Responses keep their original request path. No new cache key,
+credentials, response cache, TTL setting or gateway restart is introduced. The
+breakpoint support is qualified against the current Luna Standard deployment;
+provider cache reads remain measured outcomes rather than guaranteed hits.
+
+Runtime qualification: the first post-deployment Luna turn read zero cached tokens;
+the next two read 17,021 of 18,452 and 17,021 of 18,633 input tokens without a
+`prompt_cache_key`. The third turn correctly recalled the original `hi` message
+and used 26 reasoning tokens; the UI showed 34,042 cumulative cached input tokens.
+Provider TTFT was 5.96 s cold and 2.29/4.63 s warm in these small samples, so cache
+reuse is verified without claiming a fixed latency improvement. The
+controlled probe's key was held constant across its baseline and breakpoint cases;
+the live result separately establishes keyless reuse. The native/history suite
+passed 77 tests, including actual SDK streaming JSON, cached-usage propagation and
+ordered encrypted-reasoning/function-call/tool-result replay. All seven prior
+assistant messages remained present and all three new question/answer links
+completed durably. The three successor sessions retained their expected 14/16/18
+seeded history events and private Responses state.
+
+Timing/prompt audit (2026-10-17): the timing panel and copied report now include
+existing root delegation, execution admission, native-state write and session-seed
+durations. Background readiness is explicitly overlapping work. The reported
+2,118 ms backend example omitted 665 ms of these exclusive root stages in the UI;
+its stored metrics already contained them. Legacy first-chunk, first-text and
+completion timers begin at ADK dispatch, after backend preparation; their labels
+now state that scope. First chunk may be setup/activity, while first token requires
+text. Provider TTFT can precede text when reasoning summaries stream first.
+
+The Smart Agent greeting used 17,202 input tokens with zero cached tokens; two
+further greetings used 17,370/17,544 with zero cached tokens. Its configured base
+instruction is 12,470 characters, with four connector bindings and no directly
+assigned skills. These counts point to capability/configuration context as a major
+contributor, not a long initial transcript; they are not an exact token breakdown.
+The single-agent parent now moves only the exact
+factory-generated timestamp suffix after root capability instructions and
+deferred-tool installation,
+making those unchanged capability blocks part of the stable cacheable prefix.
+Custom instructions and leaf workers retain their layout. No instructions, tools,
+reasoning settings, authorization checks or durable writes are removed. Existing
+Responses compatibility checks may rebase native replay once after this instruction
+layout change, retaining the application transcript. Cache availability and provider
+latency remain measured outcomes, not guarantees.
+
+Root session-seeding follow-up: exact PostgreSQL `DatabaseSessionService` instances
+create the new session, initialize absent app/user rows without overwriting existing
+shared state, and write the complete ordered transcript in one transaction. A retry
+checks the same scoped seed key; conflicting keys fail. Source private-history
+validation still precedes the write. Other dialects and custom/fenced services keep
+the public fallback. This removes redundant reads, the target update and a separate
+commit while preventing partial seeded sessions. Focused tests cover rollback at
+event insertion and commit, ownership, state preservation and idempotency; the
+configured isolated `agentstore_test` PostgreSQL qualification also checks concurrent
+same/different keys and a subsequent SDK append. No authorization or history checks
+are skipped; see the [upgrade checks](../../runbooks/adk-upgrade-session-seed-check.md).
+
+Qualification: five alternating same-engine PostgreSQL pairs with the same ten-entry
+transcript measured seed-write medians 309.59 → 177.06 ms (42.8%), six → four SQL
+statements and two → one commits, with every transcript verified and test fixtures
+cleaned from `agentstore_test`. Two live Luna turns before/after atomic seeding
+measured full seed medians 701.04 → 587.53 ms and backend preparation medians
+2,518.95 → 2,418.18 ms; the warm turns were 448.34 → 337.84 ms for seeding.
+These small live samples include unchanged source loading and network variation;
+they do not establish a provider speedup. Post-layout-change requests still reported
+zero cached input tokens, so no cache-hit improvement is claimed. Verification:
+134 ADK tests, 21 frontend timing tests, isolated PostgreSQL rollback/concurrency
+and controlled benchmark, independent review, live panel and durable message links
+passed. Full frontend TypeScript remains blocked by unrelated semantic-model
+localization errors; the logging policy reports the same eight existing MCP print
+violations outside this change.
+
+Backend preparation follow-up (2026-10-17): numeric, Admin-latency-gated
+`conversation.preparation.completed` events now separate agent roster,
+configuration, skills, connector authorization and tool-token preparation.
+No prompts, connector credentials or history enter these events. The Luna
+greeting baseline placed 593–625 ms in connector authorization, 180–210 ms
+in roster reads, 63–64 ms in configuration and about 23 ms in skills.
+The public workspace/agent bucket therefore includes connector authorization,
+not only workspace document loading.
+
+Fresh account and role reads within each MCP authorization check now overlap;
+`Promise.allSettled` preserves account-read/missing-account/approval denial
+priority over role-read failure. Destination validation still precedes both,
+and permissions/signing remain dependent on successful checks. Every call
+re-reads the account and roles; this change adds no authorization cache. Existing
+role-permission caching is unchanged. Skills load alongside
+connector authorization and must succeed before agent assembly. Token minting,
+durable writes and history ownership retain their existing boundaries, consistent
+with accepted [ADR-0017](../decisions/ADR-0017-mcp-security-and-authentication-baseline.md)
+and [ADR-0018](../decisions/ADR-0018-connector-managed-mcp-security.md).
+
+Two Luna `Hi!` turns before and two after the deployed change measured median
+workspace/agent resolution **894 → 732 ms** (18%) and backend preparation
+**1,461 → 1,313 ms** (10%). Connector authorization measured **609 → 503 ms**;
+skills no longer add a serial wait. These small live samples include ordinary
+database variation and do not establish a universal latency guarantee. Provider
+TTFT remained variable; no provider/reasoning/tool/history settings were changed.
+Both after turns completed and remained durable. Verification: 135 focused
+backend tests, build, 19 TypeScript SDK tests, 15 Python SDK tests, independent
+review, backend readiness and browser latency-panel inspection. The aggregate
+logging gate remains blocked by eight pre-existing MCP print-policy violations.
+
 The composition/theme upgrade adds MiniRow, MiniColumn, MiniGrid, MiniPanel and
 MiniText, with optional width/button/output presentation props. They retain the
 existing MiniApp form, private autosave and document task/result identity. Names

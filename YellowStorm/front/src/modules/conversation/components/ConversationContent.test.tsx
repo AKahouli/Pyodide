@@ -1,10 +1,11 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from '@/modules/agent/store';
 import type { Message, MessageComponent } from '../types';
 import { useConversationUiStore } from '../uiStore';
 import { ConversationContent } from './ConversationContent';
+import type { LiveAnswer } from '../live-streams';
 
 const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
 vi.mock('../api', () => ({
@@ -50,6 +51,7 @@ const storeState = {
   fetchBranches: vi.fn(),
   branchCache: new Map(),
   messages: [] as Message[],
+  liveAnswers: {} as Record<string, LiveAnswer>,
 };
 
 let isAwaitingFirstChunk = false;
@@ -82,10 +84,45 @@ describe('ConversationContent', () => {
     storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
     storeState.messages = [];
+    storeState.liveAnswers = {};
+    storeState.currentConversationId = 'conv-1';
     useConversationUiStore.setState({ autoReliabilityEnabled: false });
     // Shared Zustand agent directory — reset so parallel bubble/identity suites cannot
     // leave a stale directory that blanks the answer-producer header.
     useAgentStore.setState({ agents: [], isInitialized: true, isLoading: false, error: null });
+  });
+
+  it.each(['live-answer', 'fallback'])('preserves reading preferences through the %s handoff and resets them across conversations', (mode) => {
+    vi.useFakeTimers();
+    try {
+      const components: LiveAnswer['components'] = [{ id: 'summary', type: 'agentActivity', data: {
+        activityKind: 'reasoning_summary', summary: 'Inspect the supplied evidence carefully', status: 'completed',
+      } }];
+      displayMessages = [{ id: 'question', conversationId: 'conv-1', conversationType: 'user', content: 'Check this evidence', createdAt: '2026-10-17T09:59:00Z' }];
+      storeState.streamingComponents = components;
+      storeState.liveAnswers = mode === 'fallback' ? {} : { answer: { conversationId: 'conv-1', messageId: 'answer', components, createdAt: '2026-10-17T10:00:00Z', revision: 1 } };
+      storeState.isStreaming = true;
+      storeState.streamingMessageId = 'answer';
+      storeState.streamingConversationId = 'conv-1';
+      const { container, rerender } = render(<ConversationContent />);
+      const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+      Object.defineProperties(pane, { scrollHeight: { value: 800 }, clientHeight: { value: 200 } });
+      pane.scrollTop = 120;
+      fireEvent.scroll(pane);
+      storeState.liveAnswers = {};
+      storeState.isStreaming = false;
+      storeState.streamingConversationId = null;
+      displayMessages = [{ id: 'answer', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-10-17T10:00:00Z', components }];
+      rerender(<ConversationContent />);
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+      expect((container.querySelector('[data-activity-pane]') as HTMLElement).scrollTop).toBe(120);
+
+      storeState.currentConversationId = 'conv-2';
+      displayMessages = [{ ...displayMessages[0], id: 'another-answer', conversationId: 'conv-2' }];
+      rerender(<ConversationContent />);
+      expect(container.querySelector('[data-activity-pane-shell]')).toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
   });
 
   it('renders empty state when there are no messages', () => {

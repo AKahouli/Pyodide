@@ -48,7 +48,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
     };
     const conversationService = {
       // resolveMemberIds tolerates lookup failures.
-      findById: jest.fn().mockResolvedValue({ createdBy: 'owner-1' }),
+      getBroadcastMemberIds: jest.fn().mockResolvedValue(['owner-1']),
       getConversationDocument: jest.fn().mockResolvedValue({}),
     };
     const executionStore = {
@@ -138,7 +138,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
     ).rejects.toThrow('request build failed');
 
     expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
-    expect(conversationService.findById).toHaveBeenCalledWith(conversationId);
+    expect(conversationService.getBroadcastMemberIds).toHaveBeenCalledWith(conversationId);
     expect(messageService.findById).toHaveBeenCalledWith(messageId);
   });
 

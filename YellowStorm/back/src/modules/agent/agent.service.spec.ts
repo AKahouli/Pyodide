@@ -89,6 +89,7 @@ describe('AgentService connector skill inheritance', () => {
     const agentRepository = {
       create: jest.fn(),
       findById: jest.fn().mockResolvedValue(null),
+      findBootstrapById: jest.fn().mockResolvedValue(null),
       findByIdDefault: jest.fn().mockResolvedValue(null),
       listUserAgents: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       listDefaultAgents: jest.fn().mockResolvedValue({ items: [], total: 0 }),
@@ -140,6 +141,7 @@ describe('AgentService connector skill inheritance', () => {
     };
     const connectorService = {
       findByIds: jest.fn(),
+      assertRuntimeDestination: jest.fn().mockResolvedValue(undefined),
       findIdsByCategoryName: jest.fn().mockResolvedValue([]),
       findBySlug: jest.fn().mockResolvedValue(null),
     };
@@ -147,14 +149,18 @@ describe('AgentService connector skill inheritance', () => {
     // with the same mocks the public lookups use. Stored rows always carry a
     // transport, so the runtime lookup injects the remote default when a mock
     // omits it (explicit values win).
+    const runtimeFixture = (row: Record<string, unknown>) => ({
+      mcpTransportType: 'streamable_http', ...row,
+      mcpServerConfig: { ...(row.mcpServerConfig as object ?? {}), headers: { Authorization: 'Bearer unit-test-connector' } },
+    });
     (connectorService as Record<string, jest.Mock>).findRuntimeByIds = jest.fn(async (ids: string[]) => {
       const rows = await connectorService.findByIds(ids);
-      return (rows as Array<Record<string, unknown>>).map((row) => ({ mcpTransportType: 'streamable_http', ...row }));
+      return (rows as Array<Record<string, unknown>>).map(runtimeFixture);
     });
     (connectorService as Record<string, jest.Mock>).findRuntimeBySlug = connectorService.findBySlug;
     (connectorService as Record<string, jest.Mock>).getRuntimeById = jest.fn(async (id: string) => {
       const rows = await connectorService.findByIds([id]);
-      return rows[0] ?? null;
+      return rows[0] ? runtimeFixture(rows[0]) : null;
     });
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -254,6 +260,47 @@ describe('AgentService connector skill inheritance', () => {
     expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
   });
 
+  it.each(['default', 'owner', 'shared'])('authorizes fresh %s bootstrap metadata without hydration', async (access) => {
+    const { service, agentRepository, agentShareService, agentTypeService } = createService();
+    const agent = makeRecord({ isDefault: access === 'default', createdBy: access === 'owner' ? userId : 'other',
+      rootExecutionPolicy: { version: 1 } });
+    agentRepository.findBootstrapById.mockResolvedValue(agent);
+    agentShareService.getShareInfo.mockResolvedValue(access === 'shared' ? { permission: 'read' } : null);
+    expect(await service.findUserAgentBootstrap(userId, agent._id)).toEqual({ name: agent.name, rootExecutionPolicy: agent.rootExecutionPolicy });
+    expect(agentRepository.findBootstrapById).toHaveBeenCalledWith(agent._id);
+    expect(agentShareService.getShareInfo).toHaveBeenCalledTimes(access === 'shared' ? 1 : 0);
+    expect(agentRepository.findById).not.toHaveBeenCalled();
+    expect(agentTypeService.getManyForHydration).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for missing and unshared bootstrap metadata and observes share revocation', async () => {
+    const { service, agentRepository, agentShareService } = createService();
+    await expect(service.findUserAgentBootstrap(userId, 'missing')).rejects.toBeInstanceOf(NotFoundException);
+    const agent = makeRecord({ createdBy: 'other' });
+    agentRepository.findBootstrapById.mockResolvedValue(agent);
+    await expect(service.findUserAgentBootstrap(userId, agent._id)).rejects.toBeInstanceOf(ForbiddenException);
+    agentShareService.getShareInfo.mockResolvedValueOnce({ permission: 'read' });
+    await expect(service.findUserAgentBootstrap(userId, agent._id)).resolves.toEqual({ name: agent.name, rootExecutionPolicy: undefined });
+    await expect(service.findUserAgentBootstrap(userId, agent._id)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(agentRepository.findBootstrapById).toHaveBeenCalledTimes(4);
+    expect(agentShareService.getShareInfo).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses fresh bootstrap policy and propagates repository/share failures', async () => {
+    const { service, agentRepository, agentShareService } = createService();
+    const agent = makeRecord({ createdBy: userId, rootExecutionPolicy: { version: 1 } });
+    agentRepository.findBootstrapById.mockResolvedValueOnce(agent)
+      .mockResolvedValueOnce({ ...agent, name: 'Changed', rootExecutionPolicy: undefined });
+    expect((await service.findUserAgentBootstrap(userId, agent._id)).rootExecutionPolicy).toEqual({ version: 1 });
+    expect(await service.findUserAgentBootstrap(userId, agent._id)).toEqual({ name: 'Changed', rootExecutionPolicy: undefined });
+    const failure = new Error('current lookup failed');
+    agentRepository.findBootstrapById.mockRejectedValueOnce(failure);
+    await expect(service.findUserAgentBootstrap(userId, agent._id)).rejects.toBe(failure);
+    agentRepository.findBootstrapById.mockResolvedValue({ ...agent, createdBy: 'other' });
+    agentShareService.getShareInfo.mockRejectedValueOnce(failure);
+    await expect(service.findUserAgentBootstrap(userId, agent._id)).rejects.toBe(failure);
+  });
+
   it('maps genUiEnabled through create (default ON), update and response contracts', () => {
     const { service } = createService();
     const record = makeRecord({ genUiEnabled: false });
@@ -290,7 +337,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(response.reasoning_effort).toBe('high');
   });
 
-  it('injects connector skills into stream agent runtime', async () => {
+  it.each([false, true])('joins connector skills and authorization (skill failure: %s)', async (skillFailure) => {
     const { service, skillService, connectorService, agentTypeService, modelsService } = createService();
     const streamAgent: IAgentForStream = {
       id: 'agent-1',
@@ -333,12 +380,26 @@ describe('AgentService connector skill inheritance', () => {
         skillIds: ['connector-skill', 'disabled-skill'],
       },
     ]);
-    skillService.findByIds.mockImplementation(async (ids: string[]) =>
-      ids.map((id) => createSkill(id)),
-    );
+    let finishSkills!: () => void;
+    skillService.findByIds.mockImplementation((ids: string[]) => {
+      if (!ids.includes('agent-skill')) return Promise.resolve(ids.map((id) => createSkill(id)));
+      return new Promise((resolve, reject) => {
+        finishSkills = () => skillFailure ? reject(new Error('skill read failed')) : resolve(ids.map((id) => createSkill(id)));
+      });
+    });
+    // Connector checks must start while the independent skill read is pending.
+    connectorService.assertRuntimeDestination.mockImplementation(async () => {
+      expect(finishSkills).toBeDefined();
+      finishSkills();
+    });
     modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: true });
 
-    const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
+    const building = service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
+    if (skillFailure) {
+      await expect(building).rejects.toThrow('skill read failed');
+      return;
+    }
+    const result = await building;
 
     expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalled();
     expect(skillService.findByIds).toHaveBeenCalledWith([
@@ -372,6 +433,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params.temperature).toBe('0');
     expect(result[0].agent_params?.params.conversation_api).toBe('chat_completions');
 
+    skillService.findByIds.mockImplementation(async (ids: string[]) => ids.map(createSkill));
     connectorService.findIdsByCategoryName.mockResolvedValue(['connector-1']);
     const restricted = await service.buildAgentsForStream(
       userId,
@@ -508,7 +570,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].prompt).not.toContain('[Trusted conversation handoff]');
   });
 
-  it('gives the acting user identity to an admin-created connector only when it points at a trusted internal MCP server', async () => {
+  it('does not grant actor identity from a trusted-looking URL without delegated binding policy', async () => {
     const { service, skillService, connectorService, configService } = createService();
     configService.get.mockImplementation((key: string, fallback?: string) => key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp' : fallback ?? '');
     const agent: IAgentForStream = {
@@ -528,9 +590,7 @@ describe('AgentService connector skill inheritance', () => {
       { conversationId: 'conversation-1', correlationId: 'message-1' });
 
     const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as { connector_slug: string; auth_headers?: Record<string, string> }[];
-    expect(bindings.find((binding) => binding.connector_slug === 'semantic-models')?.auth_headers).toEqual(expect.objectContaining({
-      'X-YellowStorm-User-Id': userId, 'X-YellowStorm-Agent-Id': 'designer-agent', 'X-Correlation-Id': 'message-1',
-    }));
+    expect(bindings.find((binding) => binding.connector_slug === 'semantic-models')?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
     expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
   });
 
@@ -606,10 +666,8 @@ describe('AgentService connector skill inheritance', () => {
       expect(search!.auth_headers).toEqual(expect.objectContaining({
         Authorization: 'Bearer ingress',
         'X-YellowStorm-User-Id': userId,
-        'X-YellowStorm-Agent-Id': 'worker-agent',
-        'X-YellowStorm-Conversation-Id': 'conversation-1',
-        'X-Correlation-Id': 'message-1',
       }));
+      expect(search!.auth_headers).not.toHaveProperty('X-YellowStorm-Agent-Id');
       // The agent's own connector keeps its own action selection.
       expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')!.actions.map((action: { action_key: string }) => action.action_key))
         .toEqual(['search']);
@@ -1161,7 +1219,7 @@ describe('AgentService connector skill inheritance', () => {
       expect(ci.auth_headers['x-user-id']).toBe(userId);
     });
 
-    it('leaves the existing playbook-mcp X-YellowStorm-* headers intact and unscoped', async () => {
+    it('does not inject actor or sandbox identity into an undelegated playbook binding', async () => {
       const { service, agentId } = setup();
 
       const agents = await service.buildGrpcAgentsForPlaybook(userId, [agentId], undefined, 'exec-42', scope);
@@ -1169,7 +1227,7 @@ describe('AgentService connector skill inheritance', () => {
       const pb: any = agents[0].connector_bindings?.find(
         (b: any) => b.connector_slug === 'playbook-mcp',
       );
-      expect(pb.auth_headers['X-YellowStorm-Agent-Id']).toBeDefined();
+      expect(pb.auth_headers['X-YellowStorm-Agent-Id']).toBeUndefined();
       expect(pb.auth_headers['x-sandbox-scope-id']).toBeUndefined();
     });
   });

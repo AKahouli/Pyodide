@@ -19,6 +19,7 @@ from contextlib import aclosing
 from functools import cached_property
 from types import SimpleNamespace
 from typing import Literal
+import re
 
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
@@ -129,6 +130,29 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         from .responses_history import prepare
         pending = prepare(self, llm_request, kwargs)
         object.__setattr__(llm_request, '_responses_pending', pending)
+        # Newer GPT models expose explicit prompt-block caching. Keep the
+        # volatile factory timestamp outside the stable instruction block,
+        # without changing a single instruction byte or private replay item.
+        family = re.fullmatch(r'(?:azure/|openai/)?gpt-(\d+)(?:\.(\d+))?(?:-[a-z0-9-]+)?', self.model)
+        suffix = '\n\n the current timestamp is {time}. \n'
+        template = getattr(llm_request, '_responses_instruction_template', None)
+        timestamp = getattr(llm_request, '_responses_timestamp', None)
+        instructions = kwargs.get('instructions')
+        if (self.history_mode == 'application' and family
+            and (int(family[1]), int(family[2] or 0)) >= (5, 6)
+            and isinstance(template, str) and template.endswith(suffix)
+            and isinstance(timestamp, str) and timestamp
+            and isinstance(instructions, str)):
+            rendered = suffix.replace('{time}', timestamp)
+            if instructions.count(rendered) == 1:
+                stable, _, tail = instructions.partition(rendered)
+                if stable:
+                    kwargs['input'] = [{'type': 'message', 'role': 'developer', 'content': [
+                        {'type': 'input_text', 'text': stable,
+                         'prompt_cache_breakpoint': {'mode': 'explicit'}},
+                        {'type': 'input_text', 'text': rendered + tail},
+                    ]}, *kwargs['input']]
+                    kwargs.pop('instructions')
         if not kwargs.get('tools'):
             kwargs.pop('parallel_tool_calls', None)
             kwargs.pop('tool_choice', None)

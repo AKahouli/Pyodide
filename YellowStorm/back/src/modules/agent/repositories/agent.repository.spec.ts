@@ -77,11 +77,31 @@ function createInput(over: Partial<CreateAgentInput> = {}): CreateAgentInput {
 }
 
 describeIntegration('AgentRepository create/findById (integration)', () => {
-  const { db, close } = makeTestDb();
+  const { db, pool, close } = makeTestDb();
   const repo = new AgentRepository(db as never);
   const created: string[] = [];
   afterEach(async () => { await deleteAgents(db, created.splice(0)); });
   afterAll(async () => { await close(); });
+
+  it('reads fresh bootstrap projection in one query without filtering inactive agents or hydrating junctions', async () => {
+    const input = createInput({ isActive: false, rootExecutionPolicy: { version: 1 } });
+    created.push(input.id);
+    await createAgent(repo, db, input);
+    const query = jest.spyOn(pool, 'query');
+    try {
+      expect(await repo.findBootstrapById(input.id)).toEqual({ _id: input.id, name: input.name,
+        createdBy: input.createdBy, isDefault: input.isDefault, rootExecutionPolicy: input.rootExecutionPolicy });
+      expect(query).toHaveBeenCalledTimes(1);
+      const statement = query.mock.calls[0][0] as unknown as { text: string };
+      expect(statement.text).not.toMatch(/agent_tools|agent_skills|agent_connectors|instruction|is_active/);
+    } finally {
+      query.mockRestore();
+    }
+    await db.execute(sqlTag`UPDATE public.agents SET name = 'Bootstrap changed', root_execution_policy = NULL WHERE id = ${input.id}`);
+    expect(await repo.findBootstrapById(input.id)).toEqual({ _id: input.id, name: 'Bootstrap changed',
+      createdBy: input.createdBy, isDefault: input.isDefault, rootExecutionPolicy: undefined });
+    expect(await repo.findBootstrapById(oid())).toBeNull();
+  });
 
   it('persists a newly created mono-agent background policy rather than displaying unsaved defaults', async () => {
     const policy = { version: 1, background: { enabled: true, maxOutstandingPerConversation: 2 },

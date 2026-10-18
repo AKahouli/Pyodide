@@ -2,6 +2,12 @@
 
 Role-Based Access Control system for YelloStorm. Permissions are stored in JWT tokens for zero-DB-hit authorization checks.
 
+Runtime callers that require current roles use `AuthorizationService.getUserRoles`.
+It reads existing-user membership and active roles in one fresh PostgreSQL join,
+ordered by membership position, using the existing transaction context. This path
+does not cache roles or replace callers' account-approval checks. Permission-cache
+behavior and JWT authorization remain unchanged.
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)

@@ -204,6 +204,13 @@ export interface BackendPreAdkBreakdownV1 {
   streamBootstrapMs?: number;
   conversationContextLoadMs?: number;
   workspaceAgentResolutionMs?: number;
+  rootDelegationResolutionMs?: number;
+  /** Starts early and overlaps other preparation stages; do not add to their total. */
+  rootBackgroundReadinessMs?: number;
+  rootExecutionAdmissionMs?: number;
+  rootNativeStateRecordMs?: number;
+  rootSessionSeedMs?: number;
+
   supplementalContextAssemblyMs?: number;
   grpcPayloadPreparationMs?: number;
   grpcTransitToAdkMs?: number;

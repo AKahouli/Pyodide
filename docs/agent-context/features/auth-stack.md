@@ -13,6 +13,16 @@ feature_id: auth-stack
 
 ## Purpose and workflows
 
+Current-role read optimization (2026-10-17): `AuthorizationService.getUserRoles`
+uses `PgRoleStore.findActiveForUser`, one fresh joined SELECT over existing users,
+ordered memberships and active roles. It replaces four serial hydration queries,
+preserving user existence, membership-position order, full role response mapping
+and the ambient transaction context. This current-role read is not cached. Account
+approval, connector destination checks, permission resolution and repeated MCP
+authorization boundaries remain unchanged. Real PostgreSQL regressions verify
+one-query execution, revocation/reactivation, current permissions, deleted users
+and transaction rollback; service and MCP JWT tests cover the consuming boundary.
+
 The auth stack establishes user sessions and OAuth sign-in/linking, then applies role/permission checks to protected operations. Detailed behavior references are maintained in [auth README](../../../YellowStorm/back/src/modules/auth/README.md), [auth-provider README](../../../YellowStorm/back/src/modules/auth-provider/README.md) and [authorization README](../../../YellowStorm/back/src/modules/authorization/README.md).
 
 | Workflow | Implemented behavior and source |

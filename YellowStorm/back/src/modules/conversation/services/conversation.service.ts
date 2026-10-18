@@ -263,6 +263,13 @@ export class ConversationService {
     return this.mapToResponse(record);
   }
 
+  /** Resolve current broadcast recipients without hydrating display-only DTO fields. */
+  async getBroadcastMemberIds(conversationId: string): Promise<string[]> {
+    const record = await this.conversationStore.findById(conversationId);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return [...new Set([record.createdBy, ...(record.isGroup ? record.members.map((member) => member.userId) : [])])];
+  }
+
   async findAllByUser(
     userId: string,
     params: ConversationQueryParams,

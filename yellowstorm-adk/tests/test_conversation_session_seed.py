@@ -70,6 +70,7 @@ async def test_seed_creates_ordered_user_and_model_events():
     assert authors == ["user", "assistant"]
     assert [content.role for content in contents] == ["user", "model"]
     assert [content.parts[0].text for content in contents] == ["question", "answer"]
+    assert len({event.invocation_id for event in events}) == 1
 
 
 @pytest.mark.asyncio
@@ -279,6 +280,69 @@ async def test_private_source_reads_only_two_scoped_queries_and_keeps_complete_o
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('new_invocations,token_threshold,expected_calls', [
+    (1, None, 0),
+    (9, None, 1),
+    (10, None, 1),
+    (1, 1, 1),
+])
+async def test_seed_import_does_not_inflate_native_adk_compaction_interval(
+    new_invocations, token_threshold, expected_calls,
+):
+    """Exercise installed ADK trigger logic without making a summarizer API call."""
+    from types import SimpleNamespace
+    from google.adk.apps.app import EventsCompactionConfig
+    from google.adk.apps.base_events_summarizer import BaseEventsSummarizer
+    from google.adk.apps.compaction import _run_compaction_for_sliding_window
+    from google.adk.events import Event
+    from google.adk.flows.llm_flows.contents import _get_contents
+    from google.adk.sessions import Session
+    from google.genai import types
+
+    class RecordingSummarizer(BaseEventsSummarizer):
+        def __init__(self):
+            self.inputs = []
+
+        async def maybe_summarize_events(self, *, events):
+            self.inputs.append(events)
+            return None
+
+    history = [('user' if i % 2 == 0 else 'assistant', f'History {i}') for i in range(20)]
+    imported = ConversationSessionSeedService._history_events(history)
+    assert len({event.invocation_id for event in imported}) == 1
+    assert [event.content.parts[0].text for event in imported] == [text for _, text in history]
+    assert [event.content.role for event in imported] == ['user', 'model'] * 10
+    assert all(a.timestamp < b.timestamp for a, b in zip(imported, imported[1:]))
+    # A separate import must never share the bootstrap invocation identity.
+    assert ConversationSessionSeedService._history_events(history)[0].invocation_id != imported[0].invocation_id
+    prior_import = [event.model_copy(update={'invocation_id': f'prior-seed-{i}'})
+                    for i, event in enumerate(imported)]
+    assert _get_contents(None, imported, agent_name='smart_agent') == _get_contents(
+        None, prior_import, agent_name='smart_agent')
+    events = imported + [Event(
+        invocation_id=f'actual-turn-{i}', author='assistant',
+        timestamp=imported[-1].timestamp + (i + 1) * .001,
+        content=types.Content(role='model', parts=[types.Part(text=f'New turn {i}')]),
+        usage_metadata=types.GenerateContentResponseUsageMetadata(prompt_token_count=100),
+    ) for i in range(new_invocations)]
+    summarizer = RecordingSummarizer()
+    config = EventsCompactionConfig(
+        compaction_interval=10, overlap_size=2, summarizer=summarizer,
+        **({'token_threshold': token_threshold, 'event_retention_size': 1}
+           if token_threshold is not None else {}),
+    )
+    app = SimpleNamespace(events_compaction_config=config, root_agent=SimpleNamespace(name='assistant'))
+    session = Session(id='seeded', app_name=APP_NAME, user_id='owner', events=events)
+    assert [event async for event in _run_compaction_for_sliding_window(app, session, AsyncMock())] == []
+    assert len(summarizer.inputs) == expected_calls
+    # Trigger evaluation never drops or rewrites raw history, including the
+    # imported transcript when token-threshold compaction needs to summarize it.
+    assert session.events == events
+    if expected_calls:
+        assert summarizer.inputs[0][:len(imported)] == imported
+
+
+@pytest.mark.asyncio
 async def test_seed_insert_does_not_select_newly_created_target(tmp_path):
     from google.adk.sessions import DatabaseSessionService
     from sqlalchemy import event as sa_event
@@ -344,4 +408,88 @@ async def test_seed_target_disappearing_rolls_back_history(tmp_path):
     schema = storage._get_schema_classes()
     async with storage._rollback_on_exception_session(read_only=True) as transaction:
         assert (await transaction.execute(select(func.count()).select_from(schema.StorageEvent))).scalar_one() == 0
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_atomic_seed_retains_history_private_state_shared_state_and_idempotency(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy import event as sa_event
+    from src.smart_rag.infrastructure.monitoring.responses_history import STATE_KEY
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'atomic.db').as_posix()}")
+    await storage.create_session(app_name=APP_NAME, user_id='owner', session_id='existing',
+                                 state={'app:shared': 'global', 'user:shared': 'personal'})
+    service = ConversationSessionSeedService(storage)
+    statements, commits = [], []
+    sa_event.listen(storage.db_engine.sync_engine, 'before_cursor_execute',
+                    lambda conn, cursor, statement, parameters, context, many: statements.append(statement))
+    sa_event.listen(storage.db_engine.sync_engine, 'commit', lambda conn: commits.append(True))
+    state = {SEED_KEY_STATE: 'request', STATE_KEY: {'response_id': 'opaque', 'items': [{'encrypted_content': 'private'}]}}
+    history = [('user', 'Question [1]'), ('assistant', 'Answer [1]')]
+    # Exercise the exact SQL transaction on SQLite without enabling its
+    # production fast path (which remains PostgreSQL-only).
+    assert await service._seed_database_atomic('owner', 'target', state, history) is True
+    assert len(commits) == 1
+    assert not any(statement.lstrip().upper().startswith(('SELECT', 'UPDATE')) for statement in statements)
+    loaded = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert [event.content.parts[0].text for event in loaded.events] == ['Question [1]', 'Answer [1]']
+    assert loaded.events[0].timestamp < loaded.events[1].timestamp
+    assert loaded.state == {**state, 'app:shared': 'global', 'user:shared': 'personal'}
+    assert await service._seed_database_atomic('owner', 'target', state, [('user', 'ignored')]) is False
+    with pytest.raises(SessionSeedConflictError):
+        await service._seed_database_atomic('owner', 'target', {SEED_KEY_STATE: 'other'}, history)
+    assert await storage.get_session(app_name=APP_NAME, user_id='other', session_id='target') is None
+    loaded = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert [event.content.parts[0].text for event in loaded.events] == ['Question [1]', 'Answer [1]']
+    await storage.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure_boundary', ['events', 'commit'])
+async def test_atomic_seed_failure_never_leaves_partial_session_or_history(tmp_path, failure_boundary):
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy import event as sa_event, select, func
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'rollback.db').as_posix()}")
+    await storage.prepare_tables()
+    def fail_events(conn, cursor, statement, parameters, context, many):
+        if statement.lstrip().upper().startswith('INSERT INTO EVENTS'):
+            raise RuntimeError('injected event failure')
+    def fail_commit(conn):
+        raise RuntimeError('injected commit failure')
+    event_name, listener = ('before_cursor_execute', fail_events) if failure_boundary == 'events' else ('commit', fail_commit)
+    sa_event.listen(storage.db_engine.sync_engine, event_name, listener)
+    with pytest.raises(RuntimeError, match='injected'):
+        await ConversationSessionSeedService(storage)._seed_database_atomic(
+            'owner', 'target', {SEED_KEY_STATE: 'request'}, [('user', 'Question'), ('assistant', 'Answer')])
+    sa_event.remove(storage.db_engine.sync_engine, event_name, listener)
+    schema = storage._get_schema_classes()
+    async with storage._rollback_on_exception_session(read_only=True) as transaction:
+        for model in (schema.StorageSession, schema.StorageEvent, schema.StorageAppState, schema.StorageUserState):
+            assert (await transaction.execute(select(func.count()).select_from(model))).scalar_one() == 0
+    await storage.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('same_key', [True, False])
+async def test_atomic_seed_concurrent_retry_initializes_state_and_remains_appendable(tmp_path, same_key):
+    import asyncio
+    from google.adk.sessions import DatabaseSessionService
+    from google.adk.events import Event
+    from google.genai import types
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'concurrent.db').as_posix()}")
+    await storage.prepare_tables()
+    service = ConversationSessionSeedService(storage)
+    outcomes = await asyncio.gather(*[
+        service._seed_database_atomic('owner', 'target', {SEED_KEY_STATE: key}, [('user', 'Question')])
+        for key in ['request', 'request' if same_key else 'other']
+    ], return_exceptions=True)
+    assert sum(outcome is True for outcome in outcomes) == 1
+    assert sum(outcome is False for outcome in outcomes) == (1 if same_key else 0)
+    assert sum(isinstance(outcome, SessionSeedConflictError) for outcome in outcomes) == (0 if same_key else 1)
+    loaded = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert [event.content.parts[0].text for event in loaded.events] == ['Question']
+    await storage.append_event(loaded, Event(author='assistant', content=types.Content(
+        role='model', parts=[types.Part(text='Answer [1]')])))
+    loaded = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert [event.content.parts[0].text for event in loaded.events] == ['Question', 'Answer [1]']
     await storage.close()

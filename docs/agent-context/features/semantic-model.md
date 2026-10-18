@@ -16,6 +16,18 @@ Autonomous AI ownership migration: `e9ef1676c` / `baseline/semantic-model-001`, 
 
 ## Purpose and workflows
 
+### Diagnostic and search-index localization
+
+Localization repair (2026-10-17): `runtimeError` and `searchIndexRetry` are module-root
+translation groups in English, French and Arabic, matching the existing component
+lookups. English/French groups were accidentally nested beneath `myJobs`; Arabic
+lacked both groups. Existing English/French copy and other locale entries are
+preserved. The regression checks all diagnostic/retry labels across the three
+languages. All 26 related TypeScript diagnostics are resolved without changing
+components, shared translation typing, conversation code or runtime behavior.
+Verification: frontend `tsc --noEmit -p .` and 66 focused diagnostic, retry and
+editor tests passed; all 243 conversation source files match their pre-fix hashes.
+
 ### Reviewed document/workspace field suggestions
 
 Verified 2026-10-16 against the scoped implementation diff on `security/p0p1-remediation`

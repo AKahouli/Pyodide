@@ -33,6 +33,15 @@ _request_conversation_id: ContextVar[str | None] = ContextVar(
     "_request_conversation_id", default=None
 )
 
+# The acting user's delegated Microsoft Graph token, delivered per request by the
+# connector auth layer in the configured token header (ADR-0017 provider
+# authority). Set and reset by AuthMiddleware; never logged and never forwarded
+# anywhere but Graph. There is deliberately no environment fallback: an ambient
+# tenant token would let an unauthenticated caller inherit tenant authority.
+_delegated_provider_token: ContextVar[str | None] = ContextVar(
+    "_delegated_provider_token", default=None
+)
+
 
 def get_request_user_id() -> str | None:
     return _request_user_id.get()
@@ -40,6 +49,10 @@ def get_request_user_id() -> str | None:
 
 def get_request_conversation_id() -> str | None:
     return _request_conversation_id.get()
+
+
+def get_request_provider_token() -> str | None:
+    return _delegated_provider_token.get()
 
 
 def system_workspace_prefix() -> str:
@@ -173,13 +186,21 @@ DRIVE_ITEM_SELECT = (
 
 
 def get_access_token() -> str:
-    env_token = os.getenv("M365_ACCESS_TOKEN")
-    if env_token:
-        return env_token
-    raise RuntimeError(
-        "No access token available. "
-        "M365_ACCESS_TOKEN must be injected into the server environment."
-    )
+    """The acting user's delegated Graph token for the current request.
+
+    Provider authority is the verified user's own Microsoft connection, resolved
+    by the connector auth layer per call; the MCP holds no tenant-wide Graph
+    credential. Missing/expired user tokens fail closed here rather than falling
+    back to a shared identity.
+    """
+    token = get_request_provider_token()
+    if not token:
+        raise RuntimeError(
+            "No delegated Microsoft Graph token for this request. "
+            "The connector must send the acting user's token in the configured "
+            "provider-token header."
+        )
+    return token
 
 
 def graph_headers() -> dict[str, str]:

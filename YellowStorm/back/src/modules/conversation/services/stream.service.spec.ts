@@ -3,6 +3,23 @@ import type { MessageComponent } from '../interfaces/message.interface';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { EventEmitter } from 'events';
 
+describe('StreamService broadcast recipients', () => {
+  it('uses fresh recipient resolution and preserves the failure fallback', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const failure = new Error('membership unavailable');
+    const getBroadcastMemberIds = jest.fn().mockResolvedValueOnce(['owner', 'member']).mockRejectedValueOnce(failure);
+    const warn = jest.fn();
+    Object.assign(service, { conversationService: { getBroadcastMemberIds }, logger: { warn } });
+    const resolve = (service as unknown as { resolveMemberIds(id: string): Promise<string[]> }).resolveMemberIds.bind(service);
+    expect(await resolve('conversation')).toEqual(['owner', 'member']);
+    expect(await resolve('conversation')).toEqual([]);
+    expect(getBroadcastMemberIds.mock.calls).toEqual([['conversation'], ['conversation']]);
+    expect(warn).toHaveBeenCalledWith('Failed to resolve member ids for broadcast', {
+      conversationId: 'conversation', error: failure.message,
+    });
+  });
+});
+
 describe('StreamService task agentId buffering', () => {
   it('stamps and preserves chunk agentId on task components across updates', () => {
     const service = Object.create(StreamService.prototype) as StreamService;

@@ -43,6 +43,120 @@ def model_with_transport(handler, **kwargs):
     return InstrumentedResponsesLlm(model='gpt-4.1', client=client, **kwargs)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name', ['gpt-6-luna', 'azure/gpt-6-luna', 'openai/gpt-6-luna', 'gpt-5.6', 'gpt-5.6-mini'])
+async def test_explicit_cache_block_preserves_instructions_and_private_history(name):
+    import copy
+    from google.adk.integrations.openai import OpenAIResponsesLlm
+    from src.smart_rag.infrastructure.monitoring.responses_history import prepare
+    model = model_with_transport(lambda req: httpx.Response(500),
+                                 reasoning={'effort': 'high', 'summary': 'auto'},
+                                 reasoning_history='all')
+    model.model = name
+    incoming = request()
+    suffix = '\n\n the current timestamp is {time}. \n'
+    instructions = 'Stable instructions and all capabilities.' + suffix.replace('{time}', 'now') + '\n\nADK identity.'
+    incoming.config.system_instruction = instructions
+    incoming.config.tools = [types.Tool(function_declarations=[
+        types.FunctionDeclaration(name='lookup', description='All tools remain available')])]
+    incoming.contents.insert(0, types.Content(role='model', parts=[types.Part(text='Earlier answer')]))
+    object.__setattr__(incoming, '_responses_instruction_template', 'Stable instructions and all capabilities.' + suffix)
+    object.__setattr__(incoming, '_responses_timestamp', 'now')
+    expected = OpenAIResponsesLlm._get_response_create_kwargs(model, incoming, stream=True)
+    pending = prepare(model, incoming, expected)
+    original_input = copy.deepcopy(expected['input'])
+    try:
+        actual = model._get_response_create_kwargs(incoming, stream=True)
+        block, dynamic = actual['input'][0]['content']
+        assert actual['input'][0]['role'] == 'developer'
+        assert block['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+        assert block['text'] + dynamic['text'] == instructions
+        assert actual['input'][1:] == original_input
+        assert 'instructions' not in actual
+        assert {key: value for key, value in actual.items() if key != 'input'} == {
+            key: value for key, value in expected.items() if key not in ('input', 'instructions')}
+        assert incoming._responses_pending == pending
+        assert incoming.config.system_instruction == instructions
+    finally:
+        await model.client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name,mode,variant', [
+    ('gpt-5.5', 'application', 'normal'), ('gpt-4.1', 'application', 'normal'),
+    ('custom-luna', 'application', 'normal'), ('gpt-6-luna-custom!', 'application', 'normal'),
+    ('vendor/gpt-6-luna', 'application', 'normal'),
+    ('gpt-6-luna', 'provider', 'normal'), ('gpt-6-luna', 'application', 'custom'),
+    ('gpt-6-luna', 'application', 'missing'), ('gpt-6-luna', 'application', 'empty'),
+    ('gpt-6-luna', 'application', 'ambiguous'), ('gpt-6-luna', 'application', 'no_prefix'),
+])
+async def test_explicit_cache_block_leaves_unsupported_or_ambiguous_requests_unchanged(name, mode, variant):
+    from google.adk.integrations.openai import OpenAIResponsesLlm
+    from src.smart_rag.infrastructure.monitoring.responses_history import prepare
+    model = model_with_transport(lambda req: httpx.Response(500), history_mode=mode)
+    model.model = name
+    incoming = request()
+    suffix = '\n\n the current timestamp is {time}. \n'
+    rendered = suffix.replace('{time}', 'now')
+    incoming.config.system_instruction = ('Stable' if variant != 'no_prefix' else '') + rendered + 'ADK identity'
+    if variant == 'ambiguous':
+        incoming.config.system_instruction += rendered
+    if variant != 'missing':
+        object.__setattr__(incoming, '_responses_instruction_template', 'Stable' + (suffix if variant != 'custom' else ' custom {time}'))
+        object.__setattr__(incoming, '_responses_timestamp', '' if variant == 'empty' else 'now')
+    expected = OpenAIResponsesLlm._get_response_create_kwargs(model, incoming, stream=True)
+    pending = prepare(model, incoming, expected)
+    try:
+        assert model._get_response_create_kwargs(incoming, stream=True) == expected
+        assert incoming._responses_pending == pending
+    finally:
+        await model.client.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_cache_wire_preserves_reasoning_and_ordered_tool_loop():
+    seen = []
+    reasoning = {'type': 'reasoning', 'id': 'rs_private', 'summary': [], 'encrypted_content': 'opaque'}
+    call = {'type': 'function_call', 'id': 'fc_lookup', 'call_id': 'call_lookup',
+            'name': 'lookup', 'arguments': '{}', 'status': 'completed'}
+    def handler(req):
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, json=response([reasoning, call]) if len(seen) == 1 else response())
+    model = model_with_transport(handler, reasoning_history='all')
+    model.model = 'gpt-6-luna'
+    template = 'Stable policy\n\n the current timestamp is {time}. \n'
+    def configure(incoming, timestamp):
+        incoming.config.system_instruction = template.replace('{time}', timestamp) + '\n\nADK identity'
+        incoming.config.tools = [types.Tool(function_declarations=[types.FunctionDeclaration(name='lookup')])]
+        object.__setattr__(incoming, '_responses_instruction_template', template)
+        object.__setattr__(incoming, '_responses_timestamp', timestamp)
+    first = request()
+    configure(first, 'first')
+    try:
+        result = [item async for item in model.generate_content_async(first)]
+        saved = result[-1]._responses_commit
+        second = request()
+        second.contents.append(result[-1].content)
+        tool_result = types.Part.from_function_response(name='lookup', response={'value': 7})
+        tool_result.function_response.id = 'call_lookup'
+        second.contents.append(types.Content(role='user', parts=[tool_result]))
+        configure(second, 'second')
+        object.__setattr__(second, '_responses_history', saved)
+        second_result = [item async for item in model.generate_content_async(second)]
+        assert second_result[-1].usage_metadata.cached_content_token_count == 1
+        assert len(seen) == 2
+        assert all('instructions' not in wire for wire in seen)
+        assert seen[0]['input'][0]['content'][0] == seen[1]['input'][0]['content'][0]
+        replay = seen[1]['input'][1:]
+        assert [item.get('type') for item in replay] == ['message', 'reasoning', 'function_call', 'function_call_output']
+        assert replay[1:3] == [reasoning, call]
+        assert replay[3]['call_id'] == 'call_lookup'
+        assert seen[0]['tools'] == seen[1]['tools']
+        assert seen[0].get('reasoning') == seen[1].get('reasoning')
+    finally:
+        await model.client.close()
+
+
 def test_factory_preserves_gateway_alias_and_parameters_and_other_providers():
     old = LiteLlm(model='azure/gpt-5.4-mini', max_completion_tokens=321,
                   temperature=1, reasoning_effort='high', parallel_tool_calls=True,
@@ -96,7 +210,8 @@ async def test_native_request_replays_full_history_without_provider_state():
 
 
 @pytest.mark.asyncio
-async def test_streamed_tool_call_releases_capacity_before_final_call_and_tracks_latency(monkeypatch):
+@pytest.mark.parametrize('cached_instructions', [False, True])
+async def test_streamed_tool_call_releases_capacity_before_final_call_and_tracks_latency(monkeypatch, cached_instructions):
     pool = SimpleNamespace(acquire=AsyncMock(return_value='permit'), transition=AsyncMock())
     monkeypatch.setattr('src.root_runtime.model_capacity.capacity_pool', lambda: pool)
     monkeypatch.setattr('src.config.settings.get_settings', lambda: SimpleNamespace(ROOT_WORK_LLM_CAPACITY_ENABLED=True))
@@ -110,6 +225,14 @@ async def test_streamed_tool_call_releases_capacity_before_final_call_and_tracks
         {'type': 'response.completed', 'response': final},
     ]
     def handler(req):
+        if cached_instructions:
+            wire = json.loads(req.content)
+            assert 'instructions' not in wire
+            assert wire['input'][0] == {'type': 'message', 'role': 'developer', 'content': [
+                {'type': 'input_text', 'text': 'Stable instructions',
+                 'prompt_cache_breakpoint': {'mode': 'explicit'}},
+                {'type': 'input_text', 'text': '\n\n the current timestamp is now. \n\n\nADK identity'},
+            ]}
         return httpx.Response(200, headers={'content-type': 'text/event-stream'},
             text=''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events))
     # Markers are synchronous; verify the actual trace with its public context API.
@@ -117,14 +240,22 @@ async def test_streamed_tool_call_releases_capacity_before_final_call_and_tracks
         start_conversation_latency_trace, get_current_conversation_latency_trace, reset_conversation_latency_trace)
     token = start_conversation_latency_trace('fixture', 'message', None)
     model = model_with_transport(handler)
+    incoming = request()
+    if cached_instructions:
+        model.model = 'azure/gpt-6-luna'
+        template = 'Stable instructions\n\n the current timestamp is {time}. \n'
+        incoming.config.system_instruction = template.replace('{time}', 'now') + '\n\nADK identity'
+        object.__setattr__(incoming, '_responses_instruction_template', template)
+        object.__setattr__(incoming, '_responses_timestamp', 'now')
     try:
         results = []
-        async for item in model.generate_content_async(request(), stream=True):
+        async for item in model.generate_content_async(incoming, stream=True):
             results.append(item)
             if item.content and not item.partial and any(p.function_call for p in item.content.parts):
                 assert pool.transition.await_args.args == ('permit', 'free')
         assert any(p.function_call and p.function_call.id == 'call_test'
                    for item in results if item.content for p in item.content.parts)
+        assert results[-1].usage_metadata.cached_content_token_count == 1
         assert get_current_conversation_latency_trace().llm_request_start_perf_ns is not None
         assert get_current_conversation_latency_trace().llm_first_delta_perf_ns is not None
         assert model.client.max_retries == 2  # Gated copy disables SDK retries.

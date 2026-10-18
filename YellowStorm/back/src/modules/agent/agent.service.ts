@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { measureBackendPreparation } from '@modules/conversation/utils/backend-latency-tracker';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { deriveAgentSlug } from '@common/utils/slugify';
@@ -312,6 +313,16 @@ export class AgentService {
     const response = this.toResponse((await this.hydrateOne(agent))!);
     if (shareInfo) response.shareInfo = shareInfo;
     return response;
+  }
+
+  async findUserAgentBootstrap(userId: string, agentId: string): Promise<Pick<IAgentResponse, 'name' | 'rootExecutionPolicy'>> {
+    const agent = await this.agentRepository.findBootstrapById(agentId);
+    if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+    if (!agent.isDefault && agent.createdBy.toString() !== userId
+      && !(await this.agentShareService.getShareInfo(userId, agentId))) {
+      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    }
+    return { name: agent.name, rootExecutionPolicy: (agent.rootExecutionPolicy as unknown as RootExecutionPolicy) || undefined };
   }
 
   async updatePersonal(userId: string, agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
@@ -634,7 +645,7 @@ export class AgentService {
     // as an unhandledRejection — the backend treats that as fatal. Awaiting
     // the original below still propagates the error to the request.
     monoAgentPromise?.catch(() => undefined);
-    const userAgents = await this.getAgentsForUser(userId);
+    const userAgents = await measureBackendPreparation('agent.roster', () => this.getAgentsForUser(userId));
 
     // Fetch shared agents if any
     let finalUserAgents = [...userAgents];
@@ -799,7 +810,7 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings, semanticSearchConnector] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings, semanticSearchConnector] = await measureBackendPreparation('agent.configuration', () => Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
@@ -811,7 +822,7 @@ export class AgentService {
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
       semanticModel ? this.resolveSemanticModelSearchConnector(semanticModel.id) : Promise.resolve(null),
-    ]);
+    ]));
     for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
     // A selected semantic model binds the configured semantic connector to the answering agent (Yellowmind), restricted
     // to its read tools and pinned to the model's published data.
@@ -859,10 +870,13 @@ export class AgentService {
       ),
     ];
     const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+    const skillsPromise = (async () => {
+      const fetchedSkills = allSkillIds.length > 0
+        ? await measureBackendPreparation('agent.skills', () => this.skillService.findByIds(allSkillIds)) : [];
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
-    }
+    })();
+    // A connector failure can precede the join below; retain rejection ownership.
+    skillsPromise.catch(() => undefined);
 
     const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
@@ -887,7 +901,6 @@ export class AgentService {
         && resolvedModel?.reasoningEfforts.includes(requestedReasoningEffort)
         ? requestedReasoningEffort
         : undefined;
-      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([
           ...(agent.connectorIds || []),
@@ -901,14 +914,16 @@ export class AgentService {
         actionKeysByConnectorId.set(semanticSearchConnector.id,
           semanticModelChatActionKeys(semanticSearchConnector, actionKeysByConnectorId.get(semanticSearchConnector.id)));
       }
-      const connectorBindings = await this.buildConnectorBindings(
+      const connectorBindings = await measureBackendPreparation('agent.connector_authorization', () => this.buildConnectorBindings(
         connectorsMap,
         effectiveConnectorIds,
         userId,
         actionKeysByConnectorId,
         semanticSearchFixedParams,
         agent.id,
-      );
+      ));
+      await skillsPromise;
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const semanticFixedParamKeys = semanticSearchConnectorId
         ? Object.keys(semanticSearchFixedParams?.get(semanticSearchConnectorId) ?? {})
         : [];
@@ -993,7 +1008,7 @@ export class AgentService {
         prompt,
         agent_type: agent.agentTypeSlug,
         save_memory: false,
-        tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        tools: (await measureBackendPreparation('agent.tool_tokens', () => this.buildToolsWithTokens(agentTools, userId))).concat(connectorToolDefs),
         connector_bindings: connectorBindings,
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({

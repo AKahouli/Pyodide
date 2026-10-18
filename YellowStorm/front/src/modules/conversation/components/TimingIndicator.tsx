@@ -70,10 +70,15 @@ const BACKEND_PRE_ADK_CHILD_ROWS = [
     key: 'workspaceAgentResolutionMs',
     labelKey: 'latency.backendBreakdown.workspaceAgentResolution',
   },
+  { key: 'rootDelegationResolutionMs', labelKey: 'latency.backendBreakdown.rootDelegationResolution' },
+  { key: 'rootBackgroundReadinessMs', labelKey: 'latency.backendBreakdown.rootBackgroundReadiness' },
+  { key: 'rootExecutionAdmissionMs', labelKey: 'latency.backendBreakdown.rootExecutionAdmission' },
   {
     key: 'supplementalContextAssemblyMs',
     labelKey: 'latency.backendBreakdown.supplementalContextAssembly',
   },
+  { key: 'rootNativeStateRecordMs', labelKey: 'latency.backendBreakdown.rootNativeStateRecord' },
+  { key: 'rootSessionSeedMs', labelKey: 'latency.backendBreakdown.rootSessionSeed' },
   {
     key: 'grpcPayloadPreparationMs',
     labelKey: 'latency.backendBreakdown.grpcPayloadPreparation',
@@ -243,7 +248,7 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
                   <span>{formatLatencyValue(latencyMetrics[key] as number | undefined)}</span>
                   {key === 'backendPreAdkMs' && backendBreakdown && (
                     <div className="col-span-2 ms-3 border-l border-border ps-2">
-                      {BACKEND_PRE_ADK_CHILD_ROWS.map(({ key: childKey, labelKey: childLabelKey }) => (
+                      {BACKEND_PRE_ADK_CHILD_ROWS.filter(({ key }) => !key.startsWith('root') || backendBreakdown[key] !== undefined).map(({ key: childKey, labelKey: childLabelKey }) => (
                         <div key={childKey} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                           <span className="text-muted-foreground/80">
                             <span aria-hidden="true">↳ </span>

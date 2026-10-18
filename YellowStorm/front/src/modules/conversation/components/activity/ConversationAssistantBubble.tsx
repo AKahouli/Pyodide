@@ -25,6 +25,14 @@ import { OpenUiAnswer } from '../openui/OpenUiAnswer';
 import { preloadOpenUiForAgent } from '../openui/preload';
 import { isOpenUiRenderEnabled, resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
 
+/** Ephemeral reading preferences shared across the live-to-saved bubble handoff. */
+export interface ActivityPaneState {
+  interacted?: boolean;
+  collapsed?: boolean;
+  follow?: boolean;
+  scrollTop?: number;
+}
+
 interface NarrativeProps {
   conversationId: string;
   messageId: string;
@@ -34,6 +42,7 @@ interface NarrativeProps {
   showWorking?: boolean;
   /** True right after this message's stream completed: the pane starts open, then animates closed. */
   justCompleted?: boolean;
+  activityPaneState?: ActivityPaneState;
   requestInputState?: 'waiting' | 'sending' | 'continuing';
   workActivity?: ReactNode;
   workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown' | 'cancellation_requested';
@@ -415,19 +424,35 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     navigate(resolved ? `/agents?edit=${resolved.id}` : '/agents');
   }, [navigate]);
 
-  // The activity pane stays open while the agent works, then collapses once
-  // the final answer is complete — live via `justCompleted`, which mounts the
-  // completed bubble open and animates it shut, and statically for historical
-  // messages, which render collapsed from the start.
-  const [paneCollapsed, setPaneCollapsed] = useState(!props.isStreaming && props.justCompleted !== true);
+  // Untouched activity collapses after completion; an active reader keeps control.
+  // The parent retains these preferences when the saved bubble replaces the live one.
+  const localPaneState = useRef<ActivityPaneState>({});
+  const paneState = props.activityPaneState ?? localPaneState.current;
+  const [paneCollapsed, setPaneCollapsed] = useState(paneState.collapsed ?? (!props.isStreaming && props.justCompleted !== true));
+  const markActivityInteraction = () => {
+    paneState.interacted = true;
+    paneState.collapsed = paneCollapsed;
+  };
+  const toggleActivityPane = () => {
+    paneState.interacted = true;
+    paneState.collapsed = !paneCollapsed;
+    setPaneCollapsed(!paneCollapsed);
+  };
   useEffect(() => {
-    if (props.requestInputState === 'waiting') setPaneCollapsed(true);
-  }, [props.requestInputState]);
+    if (props.requestInputState === 'waiting' && !paneState.interacted) {
+      paneState.collapsed = true;
+      setPaneCollapsed(true);
+    }
+  }, [props.requestInputState, paneState]);
   useEffect(() => {
     if (props.justCompleted !== true) return;
-    const timer = setTimeout(() => setPaneCollapsed(true), PANE_COLLAPSE_DELAY_MS);
+    const timer = setTimeout(() => {
+      if (paneState.interacted) return;
+      paneState.collapsed = true;
+      setPaneCollapsed(true);
+    }, PANE_COLLAPSE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [props.justCompleted]);
+  }, [props.justCompleted, paneState]);
 
   // Document outline: merge headings reported by each rendered answer chunk and
   // publish them keyed by message id; clear on unmount or message swap. The set
@@ -520,8 +545,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   useEffect(() => {
     if (paneCollapsed) return;
     const pane = activityPaneRef.current;
-    if (pane) pane.scrollTop = pane.scrollHeight;
-  }, [activityCount, paneCollapsed]);
+    if (pane) pane.scrollTop = paneState.follow === false ? paneState.scrollTop ?? 0 : pane.scrollHeight;
+  }, [source, paneCollapsed, paneState]);
   let answerBatch: MessageComponent[] = [];
   const partsCacheRef = useRef(new Map<number, MessageContentPart>());
   const flush = () => {
@@ -634,7 +659,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
                 aria-expanded={!paneCollapsed}
                 aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
                 title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
-                onClick={() => setPaneCollapsed((value) => !value)}
+                onClick={toggleActivityPane}
                 className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
               >
                 <ChevronDown className={cn('size-4 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
@@ -648,7 +673,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               aria-expanded={!paneCollapsed}
               aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
-              onClick={() => setPaneCollapsed((value) => !value)}
+              onClick={toggleActivityPane}
               className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-start text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
             >
               <span className='flex size-8 shrink-0 items-center justify-center' aria-hidden='true'><Bot className='size-4' /></span>
@@ -701,6 +726,17 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       {activityNodes.length > 0 && (
         <div
           data-activity-pane-shell
+          onScrollCapture={(event) => {
+            const pane = activityPaneRef.current;
+            if (!pane || event.target !== pane) return;
+            paneState.scrollTop = pane.scrollTop;
+            paneState.follow = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
+            if (!paneState.follow) markActivityInteraction();
+          }}
+          onPointerDownCapture={markActivityInteraction}
+          onKeyDownCapture={markActivityInteraction}
+          onFocusCapture={markActivityInteraction}
+          onWheelCapture={markActivityInteraction}
           data-collapsed={activityPaneCollapsed || undefined}
           className='grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none'
           style={{ gridTemplateRows: activityPaneCollapsed ? '0fr' : '1fr' }}

@@ -131,6 +131,37 @@ describe('ConversationService neutral persistence', () => {
     expect(workspaceDocuments.findByMultipleWorkspaces).not.toHaveBeenCalled();
   });
 
+  it('resolves current group recipients in owner-first order without display hydration', async () => {
+    const group = record({ createdBy: 'owner', isGroup: true, rootAgentId: 'root',
+      members: [{ userId: 'member-2' }, { userId: 'owner' }, { userId: 'member-1' }, { userId: 'member-2' }] });
+    conversationStore.findById.mockResolvedValueOnce(group)
+      .mockResolvedValueOnce({ ...group, members: [{ userId: 'member-1' }] });
+    expect(await service.getBroadcastMemberIds(group.id)).toEqual(['owner', 'member-2', 'member-1']);
+    expect(await service.getBroadcastMemberIds(group.id)).toEqual(['owner', 'member-1']);
+    // Both lookups retain the same default visibility/initialization filters
+    // as findById; no includeInitializing override or recipient cache.
+    expect(conversationStore.findById.mock.calls).toEqual([[group.id], [group.id]]);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
+    expect(agentRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts a non-group conversation only to its owner', async () => {
+    const single = record({ createdBy: 'owner', rootAgentId: 'root', members: [{ userId: 'other' }] });
+    conversationStore.findById.mockResolvedValue(single);
+    expect(await service.getBroadcastMemberIds(single.id)).toEqual(['owner']);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
+    expect(agentRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it('preserves not-found behavior and propagates recipient lookup failures', async () => {
+    conversationStore.findById.mockResolvedValueOnce(null);
+    await expect(service.getBroadcastMemberIds('missing')).rejects.toMatchObject({ response: 'Conversation not found' });
+    const failure = new Error('recipient lookup failed');
+    conversationStore.findById.mockRejectedValueOnce(failure);
+    await expect(service.getBroadcastMemberIds('failed')).rejects.toBe(failure);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
+  });
+
   it('fails closed when workspace authorization is unavailable for a requester', async () => {
     await expect(
       service.filterAccessibleWorkspaceIds('user-1', ['workspace-1']),

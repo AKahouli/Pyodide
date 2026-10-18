@@ -46,7 +46,7 @@ import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { compactAgentActivityUpdate } from '../utils/agent-activity-delta';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
-import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
+import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency, measureBackendPreparation } from '../utils/backend-latency-tracker';
 import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
 import type { ConversationRecord } from '../persistence/conversation-store';
 import { ConversationRootResolverService } from '../root-work/conversation-root-resolver.service';
@@ -733,7 +733,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
     const leaseId = randomUUID();
     const leaseDurationMs = 90_000;
-    const claimed = await this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs);
+    const claimed = await measureBackendPreparation('bootstrap.lease_claim', () => this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs));
     if (!claimed) {
       throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This response is already streaming');
     }
@@ -758,11 +758,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     try {
       // Independent read-only lookups run together; the order-sensitive checks
       // that consume them stay where they were (leases, admission, broadcast).
-      const [conversation, memberIds, assistantMessage] = await Promise.all([
+      const [conversation, memberIds, assistantMessage] = await measureBackendPreparation('bootstrap.context', () => Promise.all([
         preloadedConversation ?? this.conversationService.getConversationDocument(conversationId),
         this.resolveMemberIds(conversationId),
         this.messageService.findById(messageId),
-      ]);
+      ]));
       const resumedState = request.rootContinuation && this.rootWorkService
         ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
           conversation.rootWorkEpoch ?? 0) : undefined;
@@ -774,11 +774,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // Loaded only where the policy check already needed it; it also names
       // the agent in stream_start.
       const rootAgent = rootRoute && conversation.runtimeMode !== 'governed'
-        ? await this.agentService.findUserAgentById(userId, conversation.rootAgentId!) : undefined;
+        ? await measureBackendPreparation('bootstrap.root_agent', () => this.agentService.findUserAgentBootstrap(userId, conversation.rootAgentId!)) : undefined;
       const isolatedRoot = rootRoute && (conversation.runtimeMode === 'governed' || Boolean(rootAgent?.rootExecutionPolicy));
       const nativeSessionId = resumedState?.sessionId ?? (isolatedRoot ? `turn_${messageId}` : conversationId);
       const historyMessages = isolatedRoot && !request.rootContinuation
-        ? await this.messageService.findAllByConversation(conversationId) : undefined;
+        ? await measureBackendPreparation('bootstrap.history', () => this.messageService.findAllByConversation(conversationId)) : undefined;
       const seed = historyMessages ? completedTurnSeed(historyMessages, messageId) : undefined;
       const seedHistory = seed?.history;
       const ongoingRequests = historyMessages ? ongoingRequestContext(historyMessages, messageId, conversationId) : undefined;
@@ -848,7 +848,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // same-conversation exclusivity across actors AND replicas. A missing
       // admission table (migration pending) degrades to process-local limits.
       if (this.fleetAdmissionEnabled) {
-        const admitted = await this.executionStore.admit({
+        const admitted = await measureBackendPreparation('bootstrap.fleet_admission', () => this.executionStore.admit({
           executionId: randomUUID().replaceAll('-', '').slice(0, 24),
           conversationId,
           userId,
@@ -858,7 +858,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           expiresAt: new Date(Date.now() + leaseDurationMs * 2),
           maxActiveRunsPerUser: maxStreams,
           maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
-        });
+        }));
         if (!admitted.admitted) {
           if (admitted.reason === 'capacity') {
             this.logger.warn('Fleet admission rejected: capacity full', { userId, conversationId }, logOpts);
@@ -973,10 +973,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       assertLeaseOwned();
 
       // Send stream_start event to all members
-      await this.streamGateway.broadcastToConversation(memberIds, {
+      await measureBackendPreparation('bootstrap.broadcast', () => this.streamGateway.broadcastToConversation(memberIds, {
         type: 'stream_start',
         data: { conversationId, messageId, ...origin },
-      });
+      }));
       assertLeaseOwned();
 
       endBackendPreAdkStage('streamBootstrapMs');
@@ -2853,18 +2853,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private async resolveMemberIds(conversationId: string): Promise<string[]> {
     try {
-      const conversation = await this.conversationService.findById(conversationId);
-      const userIds: string[] = [conversation.createdBy];
-
-      if (conversation.groupMeta?.isGroup) {
-        conversation.groupMeta.members.forEach((member) => {
-          if (!userIds.includes(member.userId)) {
-            userIds.push(member.userId);
-          }
-        });
-      }
-
-      return userIds;
+      return await this.conversationService.getBroadcastMemberIds(conversationId);
     } catch (err) {
       this.logger.warn('Failed to resolve member ids for broadcast', {
         conversationId,

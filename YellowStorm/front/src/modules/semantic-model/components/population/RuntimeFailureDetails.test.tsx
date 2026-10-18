@@ -15,10 +15,12 @@ const failure: RuntimeErrorDetails = {
 };
 
 describe('RuntimeFailureDetails', () => {
-  it('provides every diagnostic label in English, French and Arabic', () => {
+  it('provides diagnostic and search-index retry labels at their public paths in every language', () => {
     for (const locale of [fr, ar]) {
       expect(Object.keys(locale.runtimeError).sort()).toEqual(Object.keys(en.runtimeError).sort());
       expect(Object.values(locale.runtimeError).every((value) => value.trim().length > 0)).toBe(true);
+      expect(Object.keys(locale.searchIndexRetry).sort()).toEqual(Object.keys(en.searchIndexRetry).sort());
+      expect(Object.values(locale.searchIndexRetry).every((value) => value.trim().length > 0)).toBe(true);
     }
   });
   it('shows the original cause and provides expandable technical context through retry exhaustion', () => {

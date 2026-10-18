@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConversationAssistantBubble } from './ConversationAssistantBubble';
+import { ConversationAssistantBubble, type ActivityPaneState } from './ConversationAssistantBubble';
 import { useAgentStore } from '@/modules/agent/store';
 import { mockNavigate } from '@/test/setup';
 
@@ -277,6 +277,79 @@ describe('ConversationAssistantBubble', () => {
 
     await waitFor(() => expect(pane.scrollTop).toBe(480));
     expect(container.querySelector('[data-tool-sequence]')).not.toBeInTheDocument();
+  });
+
+  it('preserves the reading position as activity grows and resumes following at the bottom', () => {
+    const row = (id: string) => ({ id, type: 'agentActivity' as const, data: { summary: `Review the ${id} evidence carefully`, status: 'running' as const } });
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one')]} />);
+    const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+    Object.defineProperties(pane, {
+      scrollHeight: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    pane.scrollTop = 100;
+    fireEvent.scroll(pane);
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one'), row('two')]} />);
+    expect(pane.scrollTop).toBe(100);
+
+    pane.scrollTop = 600;
+    fireEvent.scroll(pane);
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 900 });
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one'), row('two'), row('three')]} />);
+    expect(pane.scrollTop).toBe(900);
+  });
+
+  it('follows growth within the same streaming summary', () => {
+    const row = (summary: string) => ({ id: 'summary', type: 'agentActivity' as const, data: { summary, status: 'running' as const } });
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('First')]} />);
+    const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 600 });
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('First and second')]} />);
+    expect(pane.scrollTop).toBe(600);
+  });
+
+  it.each(['pointerDown', 'keyDown', 'focus', 'wheel'] as const)('keeps activity open after %s during completion', (event) => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming={false} justCompleted components={[
+        { id: 'summary', type: 'agentActivity', data: { summary: 'Inspect the evidence', detail: 'Read the evidence.', status: 'completed' } },
+      ]} />);
+      fireEvent[event](container.querySelector('[data-agent-summary]')!);
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not hide focused activity when clarification starts waiting', () => {
+    const props = { conversationId: 'c', messageId: 'm', isStreaming: true, components: [
+      { id: 'summary', type: 'agentActivity' as const, data: { summary: 'Inspect the evidence', status: 'completed' as const } },
+    ] };
+    const { container, rerender } = render(<ConversationAssistantBubble {...props} />);
+    fireEvent.focus(container.querySelector('[data-agent-summary]')!);
+    rerender(<ConversationAssistantBubble {...props} requestInputState='waiting' />);
+    expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+  });
+
+  it('retains the open reading position when the saved bubble replaces the live bubble', () => {
+    vi.useFakeTimers();
+    try {
+      const state: ActivityPaneState = {};
+      const props = { conversationId: 'c', messageId: 'm', activityPaneState: state, components: [
+        { id: 'summary', type: 'agentActivity' as const, data: { summary: 'Inspect the evidence', status: 'completed' as const } },
+      ] };
+      const live = render(<ConversationAssistantBubble {...props} isStreaming />);
+      const pane = live.container.querySelector('[data-activity-pane]') as HTMLElement;
+      Object.defineProperties(pane, { scrollHeight: { value: 800 }, clientHeight: { value: 200 } });
+      pane.scrollTop = 120;
+      fireEvent.scroll(pane);
+      live.unmount();
+      const saved = render(<ConversationAssistantBubble {...props} isStreaming={false} justCompleted />);
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(saved.container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+      expect((saved.container.querySelector('[data-activity-pane]') as HTMLElement).scrollTop).toBe(120);
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse activity' }));
+      expect(saved.container.querySelector('[data-activity-pane-shell]')).toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
   });
 
   it('replaces an empty completed preparation row when detailed activity arrives', () => {

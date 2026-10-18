@@ -6,6 +6,7 @@ import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { ServiceUnavailableException, ErrorCode } from '@modules/exceptions';
+import { measureBackendPreparation } from '../../utils/backend-latency-tracker';
 import {
   AdmitExecutionInput,
   AdmitExecutionResult,
@@ -50,15 +51,16 @@ export class PostgresConversationExecutionStore implements ConversationExecution
       // Serialize the admission decision across replicas: quotas count executions,
       // including distinct isolated turns within the same conversation.
       return await this.db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(73124, 1)`);
-        const conflict = await tx.execute(sql`
+        await measureBackendPreparation('fleet.lock_acquisition', () => tx.execute(sql`SELECT pg_advisory_xact_lock(73124, 1)`));
+        // Keep the lock in a separate statement: this decision needs a fresh
+        // READ COMMITTED snapshot after any preceding lock holder commits.
+        const result = await measureBackendPreparation('fleet.decision', () => tx.execute(sql`
+          WITH conflict AS (
           SELECT 1 FROM conversation.conversation_executions
           WHERE conversation_id = ${input.conversationId}::char(24) AND status = 'running'
             AND (native_session_id IS NULL OR ${input.nativeSessionId ?? null}::text IS NULL
               OR native_session_id = ${input.nativeSessionId ?? null}) LIMIT 1
-        `);
-        if (conflict.rowCount) return { admitted: false as const, reason: 'conversation_busy' as const };
-        const result = await tx.execute(sql`
+          ), admitted AS (
           INSERT INTO conversation.conversation_executions
             (id, conversation_id, user_id, message_id, owner_replica_id, native_session_id, status, expires_at)
           SELECT
@@ -66,16 +68,20 @@ export class PostgresConversationExecutionStore implements ConversationExecution
             ${input.userId}::char(24), ${input.messageId}::char(24),
             ${input.ownerReplicaId}, ${input.nativeSessionId ?? null}, 'running',
             ${input.expiresAt.toISOString()}::timestamptz
-          WHERE
+          WHERE NOT EXISTS (SELECT 1 FROM conflict) AND
             (SELECT count(*) FROM conversation.conversation_executions
               WHERE status = 'running' AND expires_at > now()
                 AND user_id = ${input.userId}::char(24)) < ${input.maxActiveRunsPerUser}
             AND (SELECT count(*) FROM conversation.conversation_executions
               WHERE status = 'running' AND expires_at > now()) < ${input.maxActiveRunsFleet}
           RETURNING id
-        `);
-        return result.rowCount === 1 ? { admitted: true as const }
-          : { admitted: false as const, reason: 'capacity' as const };
+          )
+          SELECT CASE WHEN EXISTS (SELECT 1 FROM conflict) THEN 'conversation_busy'
+            WHEN EXISTS (SELECT 1 FROM admitted) THEN 'admitted' ELSE 'capacity' END AS decision
+        `));
+        const decision = (result.rows[0] as { decision: 'admitted' | 'conversation_busy' | 'capacity' }).decision;
+        return decision === 'admitted' ? { admitted: true as const }
+          : { admitted: false as const, reason: decision };
       });
     } catch (error) {
       const conflict = this.classifyConflict(error);

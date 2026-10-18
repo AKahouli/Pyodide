@@ -13,6 +13,7 @@ from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from yellowmind_observability import get_logger
 
@@ -61,6 +62,12 @@ class ConversationSessionSeedService:
             if source is not None:
                 state.update(seed_private_history(source, entries))
 
+        service = self._session_service
+        if (type(service) is DatabaseSessionService
+            and all(hasattr(service, hook) for hook in _DB_SEED_HOOKS)
+            and service.db_engine.dialect.name == 'postgresql'):
+            return await self._seed_database_atomic(user_id, session_id, state, entries)
+
         # Create first: seeds almost always target a new id, and create_session
         # already checks for a duplicate, so the full session read (state plus
         # every event) is only paid on a retry.
@@ -87,6 +94,47 @@ class ConversationSessionSeedService:
             await self._session_service.delete_session(APP_NAME, user_id, session_id)
             raise
 
+        return True
+
+    async def _seed_database_atomic(self, user_id, session_id, state, entries) -> bool:
+        """Publish a new PostgreSQL seed and its complete transcript atomically.
+
+        Seed state is exclusively session-local. Shared app/user state is only
+        initialized when absent, never copied or overwritten. Custom services
+        retain the public create/append path and its ownership checks.
+        """
+        service = self._session_service
+        await service.prepare_tables()
+        schema = service._get_schema_classes()
+        events = self._history_events(entries)
+        now = datetime.now(timezone.utc)
+        updated = datetime.fromtimestamp(events[-1].timestamp, timezone.utc) if events else now
+        if service._uses_naive_datetime():
+            now, updated = now.replace(tzinfo=None), updated.replace(tzinfo=None)
+        async with service._rollback_on_exception_session() as transaction:
+            created = (await transaction.execute(postgres_insert(schema.StorageSession).values(
+                app_name=APP_NAME, user_id=user_id, id=session_id, state=state,
+                create_time=now, update_time=updated,
+            ).on_conflict_do_nothing(index_elements=['app_name', 'user_id', 'id'])
+                .returning(schema.StorageSession.id))).scalar_one_or_none()
+            if created is None:
+                existing = (await transaction.execute(select(schema.StorageSession.state).where(
+                    schema.StorageSession.app_name == APP_NAME,
+                    schema.StorageSession.user_id == user_id,
+                    schema.StorageSession.id == session_id,
+                ))).scalar_one_or_none()
+                if existing and existing.get(SEED_KEY_STATE) == state[SEED_KEY_STATE]:
+                    return False
+                raise SessionSeedConflictError(f'Session {session_id} already exists')
+            for model, values in (
+                (schema.StorageAppState, {'app_name': APP_NAME, 'state': {}}),
+                (schema.StorageUserState, {'app_name': APP_NAME, 'user_id': user_id, 'state': {}}),
+            ):
+                await transaction.execute(postgres_insert(model).values(**values).on_conflict_do_nothing())
+            session = SimpleNamespace(app_name=APP_NAME, user_id=user_id, id=session_id)
+            for event in events:
+                transaction.add(schema.StorageEvent.from_event(session, event))
+            await transaction.commit()
         return True
 
     async def _load_private_source(self, user_id: str, session_id: str):
@@ -118,22 +166,7 @@ class ConversationSessionSeedService:
     async def _append_history(
         self, session, entries: list[tuple[str, str]]
     ) -> None:
-        # Explicit, strictly increasing timestamps keep the transcript order
-        # when all rows are written in one transaction (the default
-        # per-event clock reads can tie on coarse clocks).
-        base = time.time()
-        events = [
-            Event(
-                invocation_id=f"branch-seed-{uuid.uuid4()}",
-                author="user" if role == "user" else "assistant",
-                content=types.Content(
-                    role="user" if role == "user" else "model",
-                    parts=[types.Part(text=text)],
-                ),
-                timestamp=base + index * 0.001,
-            )
-            for index, (role, text) in enumerate(entries)
-        ]
+        events = self._history_events(entries)
         if not events:
             return
         service = self._session_service
@@ -144,6 +177,30 @@ class ConversationSessionSeedService:
             return
         for event in events:
             await service.append_event(session=session, event=event)
+
+    @staticmethod
+    def _history_events(entries: list[tuple[str, str]]) -> list[Event]:
+        # Explicit, strictly increasing timestamps keep the transcript order
+        # when all rows are written in one transaction (the default
+        # per-event clock reads can tie on coarse clocks).
+        base = time.time()
+        # Importing the existing transcript is one bootstrap operation, not a
+        # new ADK invocation for every historical message. Otherwise interval
+        # compaction sees all imported messages as newly completed invocations
+        # and repeats its summarizer call on every isolated successor turn.
+        invocation_id = f"branch-seed-{uuid.uuid4()}"
+        return [
+            Event(
+                invocation_id=invocation_id,
+                author="user" if role == "user" else "assistant",
+                content=types.Content(
+                    role="user" if role == "user" else "model",
+                    parts=[types.Part(text=text)],
+                ),
+                timestamp=base + index * 0.001,
+            )
+            for index, (role, text) in enumerate(entries)
+        ]
 
     @staticmethod
     async def _insert_events_in_one_transaction(
