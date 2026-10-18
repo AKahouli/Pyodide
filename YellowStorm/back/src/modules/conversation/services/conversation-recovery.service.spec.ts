@@ -1,4 +1,6 @@
 import { ConversationRecoveryService } from './conversation-recovery.service';
+import { logDomainEvent } from '../../logger';
+jest.mock('../../logger', () => ({ ...jest.requireActual('../../logger'), logDomainEvent: jest.fn() }));
 
 describe('ConversationRecoveryService (WP06.5)', () => {
   const build = (
@@ -70,6 +72,23 @@ describe('ConversationRecoveryService (WP06.5)', () => {
     );
   });
 
+  it('reclaims expired admissions even when every message is already terminal', async () => {
+    const { service, executionStore, logger } = build([]);
+    executionStore.finalizeExpired.mockResolvedValue(2);
+    expect(await service.runRecoveryPass()).toEqual({ scanned: 0, interrupted: 0 });
+    expect(executionStore.finalizeExpired).toHaveBeenCalledWith(expect.any(Date));
+    expect(logger.warn).toHaveBeenCalledWith('Recovery pass reclaimed stale admissions', { reclaimed: 2 });
+    expect(logDomainEvent).toHaveBeenCalledWith('warn', 'conversation.admission.reclaimed', { operation: 'finalize_expired', outcome: 'reclaimed', count: 2 });
+  });
+
+  it('counts failed admission cleanup without logging driver content', async () => {
+    const { service, executionStore } = build([]);
+    executionStore.finalizeExpired.mockRejectedValue(new Error('SECRET_SQL_DRIVER'));
+    await service.runRecoveryPass();
+    expect(logDomainEvent).toHaveBeenCalledWith('error', 'conversation.admission.store_error', { operation: 'finalize_expired', outcome: 'dependency_unavailable' });
+    expect(JSON.stringify((logDomainEvent as jest.Mock).mock.calls)).not.toContain('SECRET_SQL_DRIVER');
+  });
+
   it('skips attempts already settled by another replica without notifying', async () => {
     const { service, streamGateway } = build(
       [{ id: 'msg-1', conversationId: 'conv-1', executionAttemptId: null, leaseExpiresAt: null }],
@@ -101,8 +120,10 @@ describe('ConversationRecoveryService (WP06.5)', () => {
   });
 
   it('survives a failing scan and keeps the worker alive', async () => {
-    const { service } = build([], { findError: new Error('postgres down') });
+    const { service, executionStore } = build([], { findError: new Error('postgres down') });
     await expect(service.runRecoveryPass()).resolves.toEqual({ scanned: 0, interrupted: 0 });
+    expect(executionStore.finalizeExpired).toHaveBeenCalledWith(expect.any(Date));
+    expect(logDomainEvent).toHaveBeenCalledWith('error', 'conversation.admission.store_error', { operation: 'recovery_scan', outcome: 'dependency_unavailable' });
   });
 
   it('latches a schema-missing error to one actionable log instead of spamming', async () => {

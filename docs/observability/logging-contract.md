@@ -1,6 +1,11 @@
 # Yellowmind logging contract (v1)
 
 Canonical developer contract for the unified logging platform (Grafana + Loki + Alloy).
+Classic conversation admission remediation registers
+`conversation.admission.store_error` (fixed operation/outcome) and
+`conversation.admission.reclaimed` (operation/outcome/count) in the shared event
+registry and SDK mirrors. Count these events by operation to observe dependency
+failures and reclaimed capacity; raw database diagnostics are not event attributes.
 Normative files (source of truth) live in [`contracts/observability/`](../../contracts/observability/):
 
 | File | Purpose |

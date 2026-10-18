@@ -49,7 +49,7 @@ export interface ConversationExecutionStore {
   isCancelRequested(messageId: string): Promise<boolean>;
 
   /** Record a stop request for a running execution; true when one existed. */
-  requestCancel(messageId: string): Promise<boolean>;
+  requestCancel(input: { conversationId: string; messageId: string }): Promise<boolean>;
 
   /**
    * Finalize the running execution row from the message's durable
@@ -59,9 +59,9 @@ export interface ConversationExecutionStore {
   finalizeByMessage(messageId: string): Promise<void>;
 
   /**
-   * Finalize running rows whose expiry passed (owner crashed without
-   * finalizing). Status is taken from the message's durable state when
-   * available, otherwise `interrupted`. Never resurrects or overwrites.
+   * Reclaim a bounded batch of expired admissions after durable message
+   * termination and lease expiry. Message recovery settles orphaned running
+   * messages first; live leases retain fencing. Idempotent across replicas.
    */
   finalizeExpired(now: Date): Promise<number>;
 }

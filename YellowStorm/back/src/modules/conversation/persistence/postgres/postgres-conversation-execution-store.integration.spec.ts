@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
-import { conversations, conversationExecutions } from '../../../postgres/schema';
+import { conversations, conversationExecutions, messages } from '../../../postgres/schema';
 import { PostgresConversationExecutionStore } from './postgres-conversation-execution-store';
 import type { AdmitExecutionInput } from '../conversation-execution-store';
 
@@ -84,6 +84,34 @@ describeIntegration('isolated foreground admission', () => {
     expect(await store.admit({ ...request(), nativeSessionId: expired.nativeSessionId }))
       .toEqual({ admitted: false, reason: 'conversation_busy' });
     expect(await store.admit({ ...request(), maxActiveRunsPerUser: 1 })).toEqual({ admitted: true });
+  });
+
+  it('scopes remote cancellation to both conversation and message and accepts concurrent retries', async () => {
+    const run = request();
+    await store.admit(run);
+    const remote = new PostgresConversationExecutionStore(database.db, { setContext: jest.fn() } as never);
+    expect(await remote.requestCancel({ conversationId: id(), messageId: run.messageId })).toBe(false);
+    expect(await store.isCancelRequested(run.messageId)).toBe(false);
+    expect(await Promise.all([store, remote].map((replica) => replica.requestCancel({ conversationId, messageId: run.messageId }))))
+      .toEqual([true, true]);
+    expect(await store.isCancelRequested(run.messageId)).toBe(true);
+  });
+
+  it('reclaims terminal admissions exactly once across reapers without releasing a live lease', async () => {
+    const terminal = { ...request(), expiresAt: new Date(Date.now() - 60_000) };
+    const healthy = { ...request(), expiresAt: new Date(Date.now() - 60_000) };
+    await database.db.insert(messages).values([
+      { id: terminal.messageId, conversationId, conversationType: 'ai', executionStatus: 'completed', isComplete: true },
+      { id: healthy.messageId, conversationId, conversationType: 'ai', executionStatus: 'completed', isComplete: true,
+        streamExecutionLeaseExpiresAt: new Date(Date.now() + 60_000) },
+    ]);
+    await store.admit(terminal); await store.admit(healthy);
+    const remote = new PostgresConversationExecutionStore(database.db, { setContext: jest.fn() } as never);
+    const counts = await Promise.all([store.finalizeExpired(new Date()), remote.finalizeExpired(new Date())]);
+    expect(counts.reduce((total, count) => total + count, 0)).toBe(1);
+    expect(await store.admit({ ...request(), nativeSessionId: terminal.nativeSessionId })).toEqual({ admitted: true });
+    expect(await store.admit({ ...request(), nativeSessionId: healthy.nativeSessionId }))
+      .toEqual({ admitted: false, reason: 'conversation_busy' });
   });
 
   it('takes a fresh decision snapshot after waiting for another connection to commit', async () => {

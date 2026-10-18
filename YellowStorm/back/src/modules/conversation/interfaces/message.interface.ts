@@ -271,7 +271,7 @@ export interface CreateAIPlaceholderData {
 
 export interface CompleteAIMessageData {
   messageId: string;
-  terminalStatus?: 'completed' | 'cancelled';
+  terminalStatus?: 'completed' | 'cancelled' | 'failed' | 'interrupted';
   streamExecutionLeaseId?: string;
   components: MessageComponent[];
   inputTokens?: number;

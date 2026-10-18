@@ -2,6 +2,8 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { EventEmitter } from 'events';
+import { logDomainEvent } from '../../logger';
+jest.mock('../../logger', () => ({ ...jest.requireActual('../../logger'), logDomainEvent: jest.fn() }));
 
 describe('StreamService broadcast recipients', () => {
   it('uses fresh recipient resolution and preserves the failure fallback', async () => {
@@ -102,6 +104,38 @@ describe('StreamService guardrail metadata buffering', () => {
       markStreamFailed,
     };
   };
+
+  it('rejects a clean transport end that delivered no answer', async () => {
+    const complete = jest.fn().mockResolvedValue(undefined);
+    const { service, call, broadcastToConversation } = createLifecycleHarness(complete);
+    const run = service.startStream('user-1', 'conversation-1', 'message-1', { content: 'question' });
+    void run.catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    call.emit('end');
+    await expect(run).rejects.toThrow('Stream ended without content');
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ terminalStatus: 'failed' }));
+    expect(broadcastToConversation.mock.calls.filter(([, event]) => event.type === 'stream_complete')).toHaveLength(0);
+  });
+
+  it('persists fatal RPC errors once as failed with partial content and token usage', async () => {
+    const complete = jest.fn().mockResolvedValue(undefined);
+    const { service, call, broadcastToConversation, recordUsage } = createLifecycleHarness(complete);
+    const run = service.startStream('user-1', 'conversation-1', 'message-1', { content: 'question' });
+    void run.catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    call.emit('data', { action: 'add', component: { id: 'partial', text: { content: 'Partial answer' } },
+      usage: { input_tokens: 3, output_tokens: 2, model: 'test-model' } });
+    call.emit('error', Object.assign(new Error('execution failed'), { code: 13 }));
+    call.emit('end');
+    await expect(run).rejects.toThrow('execution failed');
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ terminalStatus: 'failed', inputTokens: 3, outputTokens: 2,
+      components: expect.arrayContaining([expect.objectContaining({ id: 'partial' })]) }));
+    expect(broadcastToConversation.mock.calls.filter(([, event]) => event.type === 'stream_complete')).toHaveLength(0);
+    expect(broadcastToConversation.mock.calls.filter(([, event]) => event.type === 'stream_error')).toHaveLength(1);
+    expect(recordUsage).toHaveBeenCalledTimes(1);
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 3, outputTokens: 2, success: false }));
+  });
 
   it('checkpoints partial content during lease renewal without completing the answer', async () => {
     jest.useFakeTimers();
@@ -278,6 +312,9 @@ describe('StreamService guardrail metadata buffering', () => {
 
     expect(completeAIMessage).toHaveBeenCalledWith({
       messageId: 'message-1',
+      streamExecutionLeaseId: undefined,
+      terminalStatus: 'interrupted',
+      inputTokens: undefined, outputTokens: undefined, usageAttribution: undefined,
       components: [
         expect.objectContaining({
           data: expect.objectContaining({
@@ -1521,5 +1558,53 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(await startedResult).toBe(runtimeError);
     expect((service as any).activeStreams.has('user-1')).toBe(false);
     expect(releaseStreamExecution).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('remote stop authorization and dependency failures', () => {
+  const build = () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const findByIdInConversation = jest.fn().mockResolvedValue({ id: 'message', conversationId: 'conversation' });
+    const requestCancel = jest.fn().mockResolvedValue(true);
+    Object.assign(service, { streamTerminalCoordinators: new Map(), activeCalls: new Map(), streamExecutionLeases: new Map(),
+      fleetAdmissionEnabled: true, messageService: { findByIdInConversation }, executionStore: { requestCancel },
+      logger: { debug: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } });
+    return { service, findByIdInConversation, requestCancel };
+  };
+  it('validates the message before recording the scoped cancellation', async () => {
+    const { service, findByIdInConversation, requestCancel } = build();
+    await service.stopStream('member', 'conversation', 'message');
+    expect(findByIdInConversation).toHaveBeenCalledWith('conversation', 'message');
+    expect(requestCancel).toHaveBeenCalledWith({ conversationId: 'conversation', messageId: 'message' });
+    findByIdInConversation.mockRejectedValue(new Error('not found'));
+    await expect(service.stopStream('member', 'conversation', 'foreign')).rejects.toThrow('not found');
+    expect(requestCancel).toHaveBeenCalledTimes(1);
+  });
+  it('does not acknowledge an unrecorded stop when PostgreSQL fails', async () => {
+    const { service, requestCancel } = build();
+    requestCancel.mockRejectedValue(new Error('database offline'));
+    await expect(service.stopStream('member', 'conversation', 'message')).rejects.toMatchObject({ status: 503 });
+    expect(logDomainEvent).toHaveBeenCalledWith('error', 'conversation.admission.store_error', { operation: 'request_cancel', outcome: 'dependency_unavailable' });
+    expect(JSON.stringify((logDomainEvent as jest.Mock).mock.calls)).not.toContain('database offline');
+  });
+});
+
+
+describe('single agent fatal settlement', () => {
+  it('retains partial components once when error and end race', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
+    const completeAIMessage = jest.fn().mockResolvedValue(undefined);
+    Object.assign(service, { chatbotClient: { RunSingleAgent: jest.fn().mockReturnValue(call) },
+      configService: { get: jest.fn() }, messageService: { completeAIMessage },
+      logger: { error: jest.fn() } });
+    const execute = (service as any).executeSingleAgentGrpcStream('message', {}, 60_000);
+    call.emit('data', { action: 'add', component: { id: 'partial', text: { content: 'Partial' } } });
+    call.emit('error', new Error('failed')); call.emit('end');
+    await expect(execute).rejects.toThrow('failed');
+    expect(completeAIMessage).toHaveBeenCalledTimes(1);
+    expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({ terminalStatus: 'failed',
+      components: expect.arrayContaining([expect.objectContaining({ id: 'partial' })]) }));
   });
 });

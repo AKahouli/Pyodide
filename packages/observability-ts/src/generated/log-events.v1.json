@@ -22,6 +22,8 @@
     "rpc.call.completed":         { "message": "gRPC call completed", "attributes": ["method", "status", "duration_ms", "direction"] },
     "rpc.call.failed":            { "message": "gRPC call failed", "attributes": ["method", "status", "duration_ms", "direction"] },
 
+    "conversation.admission.store_error": { "message": "Conversation admission dependency failed", "attributes": ["operation", "outcome"] },
+    "conversation.admission.reclaimed": { "message": "Expired conversation admissions reclaimed", "attributes": ["operation", "outcome", "count"] },
     "conversation.execution.completed": { "message": "Conversation execution completed", "attributes": ["duration_ms", "outcome"] },
     "conversation.preparation.completed": { "message": "Conversation preparation stage completed", "attributes": ["operation", "duration_ms", "outcome"] },
     "conversation.execution.failed":    { "message": "Conversation execution failed", "attributes": ["duration_ms", "outcome"] },

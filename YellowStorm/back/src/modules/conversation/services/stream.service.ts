@@ -11,7 +11,7 @@ import { ConversationService } from './conversation.service';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import { getComponentType as sharedGetComponentType, extractComponentData as sharedExtractComponentData, mapTaskStatus as sharedMapTaskStatus } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
-import { LoggerService, LogOptions } from '../../logger';
+import { LoggerService, LogOptions, logDomainEvent } from '../../logger';
 import { ServiceUnavailableException, ConflictException, BadRequestException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -247,6 +247,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           });
           await this.messageService.completeAIMessage({
             messageId,
+            streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
+            terminalStatus: 'interrupted',
+            inputTokens: this.streamUsage.get(streamKey)?.inputTokens,
+            outputTokens: this.streamUsage.get(streamKey)?.outputTokens,
+            usageAttribution: this.buildUsageAttribution(streamKey, this.streamExecutionLeases.get(streamKey)),
             components: Array.from(buffer.values()),
           });
         } catch (err) {
@@ -846,7 +851,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       // Fleet admission (WP07): shared per-user/global capacity plus durable
       // same-conversation exclusivity across actors AND replicas. A missing
-      // admission table (migration pending) degrades to process-local limits.
+      // admission dependency fails closed; local limits cannot replace fleet control.
       if (this.fleetAdmissionEnabled) {
         const admitted = await measureBackendPreparation('bootstrap.fleet_admission', () => this.executionStore.admit({
           executionId: randomUUID().replaceAll('-', '').slice(0, 24),
@@ -858,7 +863,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           expiresAt: new Date(Date.now() + leaseDurationMs * 2),
           maxActiveRunsPerUser: maxStreams,
           maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
-        }));
+        })).catch(() => {
+          logDomainEvent('error', 'conversation.admission.store_error', { operation: 'admit', outcome: 'dependency_unavailable' });
+          this.logger.error('Fleet admission unavailable', { conversationId, messageId, requestId }, logOpts);
+          throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Execution admission is unavailable');
+        });
         if (!admitted.admitted) {
           if (admitted.reason === 'capacity') {
             this.logger.warn('Fleet admission rejected: capacity full', { userId, conversationId }, logOpts);
@@ -932,7 +941,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 void this.stopStream(userId, conversationId, messageId).catch(() => undefined);
               }
             })
-            .catch(() => undefined);
+            .catch((error: unknown) => {
+              leaseLost = true;
+              this.activeCalls.get(streamKey)?.cancel();
+              logDomainEvent('error', 'conversation.admission.store_error', { operation: 'heartbeat', outcome: 'dependency_unavailable' });
+              this.logger.error('Fleet execution heartbeat failed', {
+                conversationId, messageId, requestId,
+                error: error instanceof Error ? error.message : String(error),
+              }, logOpts);
+            });
         }
       }, 30_000);
       leaseHeartbeat.unref?.();
@@ -1754,7 +1771,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Cross-replica stop (WP07): record the control intent on the shared
         // execution row so the owning replica observes and settles it.
         if (this.fleetAdmissionEnabled) {
-          const requested = await this.executionStore.requestCancel(messageId).catch(() => false);
+          await this.messageService.findByIdInConversation(conversationId, messageId);
+          const requested = await this.executionStore.requestCancel({ conversationId, messageId }).catch(() => {
+            logDomainEvent('error', 'conversation.admission.store_error', { operation: 'request_cancel', outcome: 'dependency_unavailable' });
+            this.logger.error('Remote stop unavailable', { conversationId, messageId });
+            throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Execution cancellation is unavailable');
+          });
           if (requested) {
             this.logger.log('Stop requested for remotely owned execution', {
               userId,
@@ -2193,10 +2215,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       call.on('end', async () => {
         await nativeWrites;
-        if (nativeWriteError) {
+        if (nativeWriteError || chunkCount === 0) {
           this.beginStreamTerminal(streamKey, () => this.handleStreamError(
             userId, conversationId, messageId, streamKey, ErrorCode.CHAT_STREAM_FAILED, requestId,
-          ), nativeWriteError);
+          ), nativeWriteError ?? new Error('Stream ended without content'));
           return;
         }
         if (terminal.started) return;
@@ -2435,6 +2457,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         messageId,
         streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
+        terminalStatus: 'failed',
         inputTokens: usageData?.inputTokens,
         outputTokens: usageData?.outputTokens,
         latencyMetrics,
@@ -2978,7 +3001,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const buffer = new Map<string, MessageComponent>();
       const startTime = Date.now();
       let chunkCount = 0;
+      let terminal = false;
       let timeoutHandle: NodeJS.Timeout | null = null;
+
+      const fail = (error: Error) => {
+        if (terminal) return;
+        terminal = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        void this.messageService.completeAIMessage({ messageId, components: Array.from(buffer.values()), terminalStatus: 'failed' })
+          .then(() => reject(error), reject);
+      };
 
       const resetIdleTimeout = () => {
         if (timeoutHandle) {
@@ -2991,22 +3023,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             timeoutMs,
             requestId: logOpts?.requestId,
           });
+          fail(new Error('RunSingleAgent idle timeout'));
           call.cancel();
-          void this.messageService.markStreamFailed(messageId).catch((err) => {
-            this.logger.error('Failed to mark single-agent stream as failed', {
-              messageId,
-              error: (err as Error).message,
-            });
-          });
-          reject(new Error('RunSingleAgent idle timeout'));
         }, timeoutMs);
       };
 
       resetIdleTimeout();
 
       call.on('data', (chunk: { action?: string; component?: Record<string, unknown>; metadata?: { agent_id?: string } }) => {
+        if (terminal || chunk.action === 'heartbeat') return;
         resetIdleTimeout();
-        if (chunk.action === 'heartbeat') return;
         chunkCount++;
 
         const action = chunk.action;
@@ -3033,16 +3059,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           chunkCount,
           requestId: logOpts?.requestId,
         });
-        void this.messageService.markStreamFailed(messageId).catch((err) => {
-          this.logger.error('Failed to mark single-agent stream as failed', {
-            messageId,
-            error: (err as Error).message,
-          });
-        });
-        reject(error);
+        fail(error);
       });
 
       call.on('end', () => {
+        if (terminal) return;
+        if (chunkCount === 0) { fail(new Error('Stream ended without content')); return; }
+        terminal = true;
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
