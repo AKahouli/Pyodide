@@ -1,5 +1,24 @@
 # Conversations
 
+## HtmlView artifacts and administrator execution policy
+
+Admin → Conversation → Generative UI selects `generativeUi.htmlMode`. Strict is
+the default and removes generated scripts while retaining rich HTML/CSS/SVG and
+declared data-state/text/show/filter/progress/SVG bindings. Interactive enables
+generated inline scripts with a visible navigation/data-transmission and browser
+resource warning. Existing artifacts use the current policy; a policy change
+remounts the frame after the settings hook refresh. No credentials or privileged
+document/task bridge is passed to HTML. Host document selectors and saved results
+remain separate native components. See [ADR-0028](../decisions/ADR-0028-openui-html-artifact-policy.md).
+
+HtmlView keeps the upstream html/height/title signature with trailing name/value
+binding. Inside MiniApp, typed controls use the existing private draft lifecycle,
+including revision conflicts and reload without inference. The opaque srcdoc frame loads a trusted external bootstrap under the unchanged
+application CSP; strict mode denies eval, while interactive mode evaluates inert
+generated scripts only after initial state arrives. Source, expand, stop and restart are host-owned; restarting
+retains draft values. HtmlView visual export fails explicitly until the capture
+phase, while existing native exports retain their saved-view path.
+
 ## Scope and evidence
 
 - Primary product route: `http://localhost:5173/#/conversation`; existing threads use `#/conversation/:id`.

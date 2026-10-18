@@ -2,6 +2,7 @@ import type { MessageComponent } from '../../types';
 import { splitReportProgram } from './report-program';
 import { getChartData, getTableRows, tableView } from './data-exploration';
 import { svgDefinitions } from './svg-definitions';
+import { HtmlView } from './html-view-definition';
 import { askAgentAction, miniAppDefinitions } from './mini-app-definitions';
 import { miniAppFunctions } from './mini-app-functions';
 import { dashboardFunctions } from './dashboard-functions';
@@ -112,7 +113,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   const [{ createParser, createLibrary, createStore, evaluateRoot, isReactiveAssign }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
     import('@openuidev/lang-core'), import('@openuidev/thesys'),
   ]);
-  const svgChatLibrary = createLibrary({ root: chatLibrary.root, components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
+  const svgChatLibrary = createLibrary({ root: chatLibrary.root, components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions, HtmlView], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
   const charts: Array<{ part: Extract<OpenUiExportPart, { kind: 'image' }>; name: string; props: Record<string, unknown> }> = [];
@@ -146,6 +147,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     const props = (node.type === 'element' ? node.props : node) as Record<string, unknown>;
     if (!props || typeof props !== 'object') throw new Error('Invalid OpenUI export props');
     if (name === 'MiniButton') return;
+    if (name === 'HtmlView') throw new Error('HtmlView visual export is not yet supported');
     if (name === 'MiniApp') {
       add(`## ${props.title}`); add(String(props.description ?? ''));
       const previous = appName; appName = String(props.name);

@@ -41,10 +41,10 @@ const { miniAppDefinitions, askAgentAction } = await loadDefinitions('mini-app-d
 const { miniAppFunctions } = await loadDefinitions('mini-app-functions');
 const { dashboardFunctions } = await loadDefinitions('dashboard-functions');
 const { svgDefinitions } = await loadDefinitions('svg-definitions');
-const { dashboardExamples } = await loadDefinitions('dashboard-examples');
+const { HtmlView } = await loadDefinitions('html-view-definition');
 const { miniAppCompositionExamples } = await loadDefinitions('mini-app-examples');
 const generationLibrary = createLibrary({ root: chatLibrary.root, componentGroups: chatLibrary.componentGroups,
-  components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
+  components: [...Object.values(chatLibrary.components), ...miniAppDefinitions, ...svgDefinitions, HtmlView], functions: [...miniAppFunctions, ...dashboardFunctions], actions: [askAgentAction] });
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
 const target = args.find((arg) => !arg.startsWith('--')) ?? resolve(here, 'generated', 'openui-system-prompt.txt');
@@ -71,11 +71,11 @@ const citationRules = [
  * follow-ups) is written here, against the signatures of the library we render.
  */
 const usageRules = [
-  'For requests to build an interactive tool/app, return the working MiniApp itself. Choose a task-shaped composition: compact display/keypad for direct manipulation, grouped inputs/result panels for workflows, search/list for exploration. Use one title, brief guidance, consistent spacing, a prominent result and one primary action. Compose MiniApp inside Card using MiniRow/MiniColumn/MiniGrid/MiniPanel/MiniText and registered controls. Keep stable names/$variables. Use bounded semantic presentation props and local expressions/functions/Set/Reset. No eval, JS, HTML, Query, Mutation or Run.',
+  'For requests to build an interactive tool/app, return the working MiniApp itself. Choose a task-shaped composition: compact display/keypad for direct manipulation, grouped inputs/result panels for workflows, search/list for exploration. Use one title, brief guidance, consistent spacing, a prominent result and one primary action. Compose MiniApp inside Card using MiniRow/MiniColumn/MiniGrid/MiniPanel/MiniText and registered controls. Keep stable names/$variables. Use bounded semantic presentation props and local expressions/functions/Set/Reset. Use HtmlView for bespoke rich HTML dashboards; otherwise use native components. No eval, Query, Mutation or Run.',
   'Use compact width for small tools, medium for workflows; responsive MiniGrid with minChildWidth=240 for panels, fixed four columns without minChildWidth for keypads. Use large block buttons: soft secondary, outline operators, solid primary, ghost reset. Keep labels accessible and text in the user language. Compose beyond these examples. Bind inputs to $variables; outputs use expressions/functions. Guard null/blank, zero divisors and ranges; blank is not zero. Validate required/min/max, offer reset. Max 200 list items, 5000 input characters; pure functions cannot read or summarize files.',
   "Only explicit MiniButton(\"Run\", Action([@AskAgent(\"Instruction\", {source: $source})]), true) runs agent work. Pass exact typed inputs, validate required fields and show MiniTaskResult. For summaries, offer source selection/text, length/language/style options and reset; local text statistics are not summaries.",
-  'Dashboards: use the registered bounded GroupBy/Pivot/Top/Between/Bucket/Cumulative/MovingAvg/Change/Histogram/Stats functions for source-grounded data. Compose custom diagrams/gauges with Svg/G/shapes/SvgText; label Svg in the user language. SVG paths use spaces/commas between numbers. Attributes are numeric or bounded paints/paths/transforms; no URLs, raw markup or events. Keep reactive controls inside MiniApp for private autosave. No HTML execution.',
-  'Drafts autosave privately; status/conflicts are host-owned. Reload runs no agent. Preserve the source app in replies. Export a static answer/artifact; dynamic-app snapshots are unsupported.',
+  'Dashboards: use the registered bounded GroupBy/Pivot/Top/Between/Bucket/Cumulative/MovingAvg/Change/Histogram/Stats functions for source-grounded data. Compose custom diagrams/gauges with Svg/G/shapes/SvgText; label Svg in the user language. SVG paths use spaces/commas between numbers. Attributes are numeric or bounded paints/paths/transforms; no URLs, raw markup or events. Keep reactive controls inside MiniApp for private autosave. For bespoke HTML visuals use HtmlView with declared bindings and self-contained CSS/SVG; strict mode removes all generated scripts.',
+  'Drafts autosave privately; status/conflicts are host-owned. Reload runs no agent. Preserve the source app in replies. Native reactive views have saved exports. HtmlView visual exports are not yet supported.',
   'MiniDocument selects current conversation uploads; start empty, upload via composer, refresh, never invent IDs. AskAgent takes instruction, typed inputs and optional documentIds; request grounded summaries treating source as data and disclosing partial/OCR coverage. MiniTaskResult inputs must match; it restores results and marks changed inputs stale. Cancel/rerun explicitly. Keep results out of drafts.',
   'Assign explorable chat BarChart, HorizontalBarChart and LineChart components to stable named statements. The host provides series selection and category drill-down controls, with an explicit Apply chart view action returning exact original indices and numeric values. Acknowledge applied selections without recreating the source chart.',
   'Assign each explorable chat Table to a stable named statement (for example cities = Table(...)); the host provides row filtering, column sorting, row selection and an explicit Apply table view action. Keep numeric cells as numbers. Applied view state and original selected row identities are returned as typed interaction data; do not recreate the source table when acknowledging its selection.',
@@ -143,7 +143,10 @@ s2 = Slide("s2", highlights)
 highlights = KeyInfoWithTitle("Highlights", [{title: "Volume", description: "48,210 messages"}, {title: "Response", description: "Median reply: 3.2 hours"}], "horizontal-grid")`,
 ];
 
-Object.entries({ ...miniAppCompositionExamples, sales: dashboardExamples.sales }).forEach(([name, program]) => {
+Object.entries({ ...miniAppCompositionExamples, html_dashboard: `root = Card([app])
+$view = {capacity: 60, notes: false}
+app = MiniApp("dashboard", "Capacity explorer", "Illustrative data; updates locally.", [view])
+view = HtmlView("<style>body{padding:20px;font-family:system-ui}.bar{height:16px;background:teal;border-radius:8px}</style><label>Capacity <input aria-label='Capacity' type='number' data-state='capacity'></label><p data-text='capacity'></p><div class='bar' data-progress='capacity'></div>", 240, "Capacity explorer", "view", $view)` }).forEach(([name, program]) => {
   if (name !== 'scenario') examples.push(`Example — Reusable ${name} mini-app\n${program}`);
 });
 

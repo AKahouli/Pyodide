@@ -34,7 +34,12 @@ export interface AttachmentIntelligenceSettings {
   maxIndexedTabularRows: number;
 }
 
+export interface GenerativeUiSettings {
+  htmlMode: 'strict' | 'interactive';
+}
+
 export interface ConversationSettingsValue {
+  generativeUi: GenerativeUiSettings;
   composerSuggestions: ComposerSuggestionSettings;
   conversationName: ConversationNameSettings;
   redactSensitiveText: boolean;
@@ -57,6 +62,7 @@ export interface ConversationSettingsAgentOption {
 }
 
 export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettingsValue = {
+  generativeUi: { htmlMode: 'strict' },
   redactSensitiveText: true,
   latencyInstrumentationEnabled: true,
   compaction: {

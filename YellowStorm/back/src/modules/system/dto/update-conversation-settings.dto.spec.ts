@@ -3,6 +3,16 @@ import { validate } from 'class-validator';
 import { UpdateConversationSettingsDto, UpdateSensitiveTextRedactionDto } from './update-conversation-settings.dto';
 
 describe('UpdateConversationSettingsDto', () => {
+  it('accepts only supported HTML modes and keeps the setting optional', async () => {
+    const base = { composerSuggestions: { enabled: true, agentId: null, debounceMs: 400, minimumDraftLength: 3, requestsPerMinute: 60, maxOutputTokens: 256 } };
+    for (const htmlMode of ['strict', 'interactive']) {
+      await expect(validate(plainToInstance(UpdateConversationSettingsDto, { ...base, generativeUi: { htmlMode } }))).resolves.toEqual([]);
+    }
+    for (const generativeUi of [{ htmlMode: 'unsafe' }, { htmlMode: true }, {}, 'interactive']) {
+      await expect(validate(plainToInstance(UpdateConversationSettingsDto, { ...base, generativeUi }))).resolves.not.toEqual([]);
+    }
+    await expect(validate(plainToInstance(UpdateConversationSettingsDto, base))).resolves.toEqual([]);
+  });
   it('rejects a missing composerSuggestions object', async () => {
     const errors = await validate(plainToInstance(UpdateConversationSettingsDto, {}));
 

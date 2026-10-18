@@ -102,6 +102,7 @@ export interface AttachmentIntelligenceSettings {
 }
 
 export interface ConversationSettings {
+  generativeUi?: { htmlMode: 'strict' | 'interactive' };
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
   /** Runtime source of truth for the classic Conversation latency UI. */

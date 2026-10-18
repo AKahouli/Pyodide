@@ -1912,8 +1912,8 @@ export interface ComposerSuggestionSettings {
 export interface ConversationNameSettings { modelId: string | null; }
 export interface CompactionSettings { enabled: boolean; compactionInterval: number; overlapSize: number; tokenFraction: number; eventRetentionSize: number; summarizerModel: string; }
 export interface AttachmentIntelligenceSettings { enabled: boolean; maxIndexedTabularRows: number; }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings };
+export interface ConversationSettingsResponse { generativeUi?: { htmlMode: 'strict' | 'interactive' }; composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { generativeUi?: { htmlMode: 'strict' | 'interactive' }; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings };
 export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 

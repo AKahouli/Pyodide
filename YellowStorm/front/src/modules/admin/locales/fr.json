@@ -1,4 +1,11 @@
 {
+  "conversationSettings.generativeUi.title": "Interface gÃ©nÃ©rative",
+  "conversationSettings.generativeUi.description": "Choisissez le fonctionnement des artefacts HTML pour les agents dont lâ€™interface gÃ©nÃ©rative est activÃ©e. Sâ€™applique aux artefacts existants et futurs.",
+  "conversationSettings.generativeUi.mode": "Mode des artefacts HTML",
+  "conversationSettings.generativeUi.strict": "Isolation stricte (recommandÃ©e)",
+  "conversationSettings.generativeUi.interactive": "Autoriser le JavaScript gÃ©nÃ©rÃ©",
+  "conversationSettings.generativeUi.strictDescription": "Le mode strict prend en charge HTML, CSS, SVG et les contrÃ´les dÃ©clarÃ©s avec sauvegarde privÃ©e. Les scripts gÃ©nÃ©rÃ©s sont supprimÃ©s. Les ressources externes et les liens de navigation sont bloquÃ©s.",
+  "conversationSettings.generativeUi.warning": "Le JavaScript gÃ©nÃ©rÃ© peut naviguer vers un site externe et lui transmettre les donnÃ©es dÃ©clarÃ©es du tableau de bord. Il peut aussi bloquer lâ€™onglet. Les requÃªtes fetch et les ressources externes sont bloquÃ©es, mais ce mode ne garantit pas lâ€™absence de requÃªtes rÃ©seau. Ne transmettez jamais dâ€™identifiants ni de contenu de document aux artefacts HTML.",
   "playbookSettings.execution.title": "Exécution des playbooks",
   "playbookSettings.execution.description": "Configurez la capacité, la concurrence, la file, la récursion et les limites de Dynamic Reasoning Workflow. La capacité est un plafond configuré, pas une mesure en temps réel.",
   "playbookSettings.execution.newExecutionsOnly": "Les modifications s'appliquent uniquement aux nouvelles exécutions.",

@@ -1,5 +1,41 @@
 # OpenUI render mode
 
+## Rich HTML artifacts
+
+`HtmlView(html, height?, title?, name?, value?)` adapts the upstream primitive.
+Place it inside MiniApp and bind `value` to an object `$variable` for private
+autosave. Strict mode (the default under Admin → Conversation → Generative UI)
+supports self-contained CSS/SVG and declared controls: data-state, data-text,
+data-show, data-filter/data-filter-value, data-progress and numeric SVG
+data-attr-width/height/x/y. Generated scripts, URLs, events and nested documents
+are removed. Only trusted bridge code executes. Interactive mode allows inline
+scripts through yellowmind.ready/state/setState/subscribe, with explicit warnings:
+scripts can self-navigate and transmit declared state, and can stall the tab.
+Neither iframe mode supplies hard CPU/memory containment.
+
+The srcdoc document loads only `/openui-html.js`, a trusted external bridge,
+under the unchanged parent CSP. Strict mode denies inline scripts and eval.
+Interactive mode stores generated scripts as inert data and evaluates them after
+initial state arrives; use one script because each has a separate function scope.
+Instance-only
+MessagePorts carry bounded declared state and height; actor/program changes close
+them. Credentials, document bodies and host tools are never bridge capabilities.
+Keep MiniDocument, AskAgent and MiniTaskResult outside the HTML frame. Existing
+drafts restore without inference. HtmlView capture/export is not supported yet
+and fails explicitly. See html-view-examples.ts for different reusable dashboards.
+
+### Qualification (2026-10-18)
+
+Two saved HTML dashboards in conversation `c66d50ba8780ea080b2c52d5` restored
+without Restart or agent inference after reload: sales North/75/"Saved North"
+and operations Night/0/empty name/overtime false. The stored answer and usage
+(28K tokens, $0.005) remained unchanged. Browser checks passed for two independent
+strict/interactive views, script removal/execution, parent/storage denial and
+mode remount retaining typed values. Administrator settings show strict by default.
+The normal-URL shell's startup navigation stalled at about:blank; srcdoc plus the
+trusted external loader removes that dependency. The precise browser cause of
+the cancelled navigation was not established. No application CSP relaxation.
+
 An agent can answer in [OpenUI Lang](https://www.openui.com/docs) instead of markdown. OpenUI Lang is plain text in the usual
 `text` component of the NestJS SSE stream (the Python ADK runtime is unchanged), rendered here.
 

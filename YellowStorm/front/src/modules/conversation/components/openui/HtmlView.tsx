@@ -1,0 +1,94 @@
+// Adapted from upstream HtmlView iframe/theme/height lifecycle (MIT). See MINI-APP-NOTICE.txt.
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { useModuleTranslation } from '@/modules/localization';
+import { htmlDocument, htmlState, type HtmlMode } from './html-sandbox';
+
+export function HtmlViewContent({ html, height, title, value, onChange, writable = false, streaming = false, scheme = 'light', mode = 'strict' }: {
+  html: string; height?: number; title?: string; value?: unknown; onChange: (state: Record<string, unknown>) => void;
+  writable?: boolean; streaming?: boolean; scheme?: 'light' | 'dark'; mode?: HtmlMode;
+}) {
+  const { t } = useModuleTranslation('conversation');
+  const frame = useRef<HTMLIFrameElement>(null);
+  const port = useRef<MessagePort>();
+  const current = useRef({ value, onChange, writable });
+  current.current = { value, onChange, writable };
+  const [restart, setRestart] = useState(0);
+  const [stopped, setStopped] = useState(false);
+  const [error, setError] = useState(false);
+  const [measured, setMeasured] = useState(360);
+  const [expanded, setExpanded] = useState(false);
+  const [source, setSource] = useState(false);
+  const [connectedDocument, setConnectedDocument] = useState<string | null>(null);
+  const token = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [html, scheme, restart, mode]);
+  const doc = useMemo(() => {
+    try { return htmlDocument(html, scheme, token, mode); }
+    catch { return null; }
+  }, [html, scheme, mode, token]);
+  useEffect(() => setError(false), [doc]);
+  const lifecycle = useMemo(() => ({ ready: false, port: undefined as MessagePort | undefined, timer: undefined as ReturnType<typeof setTimeout> | undefined }), [doc, stopped, streaming]);
+  const sync = () => {
+    try { port.current?.postMessage({ type: 'state', state: htmlState(current.current.value ?? {}), writable: current.current.writable }); }
+    catch { setError(true); }
+  };
+  useEffect(sync, [value, writable]);
+  useEffect(() => {
+    if (doc && !stopped && !streaming) lifecycle.timer = setTimeout(() => {
+      if (!lifecycle.ready) { setError(true); lifecycle.port?.close(); if (port.current === lifecycle.port) port.current = undefined; }
+    }, 30000);
+    return () => { clearTimeout(lifecycle.timer); lifecycle.port?.close(); if (port.current === lifecycle.port) port.current = undefined; };
+  }, [doc, stopped, streaming, lifecycle]);
+  function connect() {
+    if (!frame.current || stopped || streaming || lifecycle.port) return;
+    port.current?.close();
+    const channel = new MessageChannel(); port.current = channel.port1; lifecycle.port = channel.port1;
+    clearTimeout(lifecycle.timer);
+    lifecycle.timer = setTimeout(() => { if (!lifecycle.ready) { setError(true); channel.port1.close(); } }, 8000);
+    let count = 0, start = Date.now();
+    channel.port1.onmessage = event => {
+      if (port.current !== channel.port1) return;
+      if (Date.now() - start > 1000) { start = Date.now(); count = 0; }
+      if (++count > 60) { setError(true); channel.port1.close(); return; }
+      try {
+        const message: unknown = event.data;
+        if (!message || typeof message !== 'object' || !('type' in message)) throw new Error('Invalid HTML message');
+        if (message.type === 'ready') { lifecycle.ready = true; setConnectedDocument(doc); clearTimeout(lifecycle.timer); sync(); }
+        else if (message.type === 'height' && 'height' in message && typeof message.height === 'number' && Number.isFinite(message.height)) setMeasured(Math.max(80, Math.min(2400, message.height)));
+        else if (message.type === 'state' && 'state' in message) {
+          if (!current.current.writable) return;
+          const next = htmlState(message.state, htmlState(current.current.value ?? {}));
+          current.current.onChange(next);
+        } else throw new Error('HTML execution failed');
+      } catch { setError(true); channel.port1.close(); }
+    };
+    channel.port1.start();
+    frame.current.contentWindow?.postMessage({ type: 'ys-html-init' }, '*', [channel.port2]);
+  }
+  useEffect(() => {
+    if (!doc || stopped || streaming) return;
+    const ready = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow || event.origin !== 'null' || event.data?.type !== 'ys-html-shell-ready' || event.data.token !== token) return;
+      connect();
+    };
+    window.addEventListener('message', ready);
+    frame.current?.contentWindow?.postMessage({ type: 'ys-html-probe', token }, '*');
+    return () => window.removeEventListener('message', ready);
+  }, [doc, token, lifecycle, stopped, streaming]);
+  const unavailable = error || !doc;
+  return <section aria-label={title || t('openui.html.title')} aria-busy={!stopped && !unavailable && connectedDocument !== doc} className='min-w-0 space-y-2 rounded-xl border p-3'>
+    {mode === 'interactive' && <p className='text-xs text-muted-foreground'>{t('openui.html.scriptWarning')}</p>}
+    <div className='flex flex-wrap items-center gap-2'>
+      <span className='mr-auto text-sm font-medium'>{title || t('openui.html.title')}</span>
+      <Button type='button' variant='ghost' size='sm' onClick={() => setSource(v => !v)}>{t('openui.html.source')}</Button>
+      <Button type='button' variant='ghost' size='sm' onClick={() => setExpanded(v => !v)}>{t(expanded ? 'openui.html.collapse' : 'openui.html.expand')}</Button>
+      <Button type='button' variant='outline' size='sm' onClick={() => setStopped(true)}>{t('openui.html.stop')}</Button>
+      <Button type='button' variant='outline' size='sm' onClick={() => { setError(false); setStopped(false); setRestart(v => v + 1); }}>{t('openui.html.restart')}</Button>
+    </div>
+    {source && <pre className='max-h-72 overflow-auto whitespace-pre-wrap text-xs'>{html}</pre>}
+    {!streaming && !stopped && !unavailable && connectedDocument !== doc && <p role='status'>{t('openui.html.preparing')}</p>}
+    {streaming ? <p role='status'>{t('openui.html.preparing')}</p> : unavailable ? <p role='alert'>{t('openui.html.error')}</p> : stopped ? <p role='status'>{t('openui.html.stopped')}</p> :
+      <iframe key={doc} ref={frame} title={title || t('openui.html.title')} sandbox='allow-scripts' {...{ credentialless: '' }} referrerPolicy='no-referrer' srcDoc={doc}
+        onLoad={() => { frame.current?.contentWindow?.postMessage({ type: 'ys-html-probe', token }, '*'); }}
+        className='w-full border-0' style={{ height: expanded ? 1000 : Math.max(80, Math.min(2400, height ?? measured)) }} />}
+  </section>;
+}

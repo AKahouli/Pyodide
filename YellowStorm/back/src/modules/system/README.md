@@ -23,6 +23,14 @@ The system module provides system-wide configuration and maintenance mode contro
 
 The system module provides:
 
+- **Conversation Generative UI**: existing conversation settings store
+  `generativeUi.htmlMode` (`strict` by default, or administrator-selected
+  `interactive`). Older updates preserve it; unknown persisted values fail closed
+  to strict. The authenticated conversation settings GET exposes the policy to
+  viewers. Strict HtmlView removes generated scripts; interactive permits inline
+  JavaScript with documented self-navigation and resource limits. No state table
+  or execution service is added; private autosave remains ADR-0025 scoped.
+
 - **Maintenance Mode**: Enable/disable maintenance with custom messages and estimated end times
 - **Global Guard**: Automatically blocks requests during maintenance (with bypass options)
 - **Path Whitelisting**: Certain paths always bypass maintenance (health checks, status endpoints)

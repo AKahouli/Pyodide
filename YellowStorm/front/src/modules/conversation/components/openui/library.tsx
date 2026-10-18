@@ -1,13 +1,13 @@
 import './devtools-off';
 import { useContext, type ReactNode } from 'react';
-import { createLibrary, useIsStreaming, useFormName, useGetFieldValue, useSetDefaultValue, type DefinedComponent } from '@openuidev/react-lang';
-import { Card as OpenUICard } from '@openuidev/react-ui';
+import { createLibrary, useIsStreaming, useFormName, useGetFieldValue, useSetDefaultValue, useStateField, useSetFieldValue, type DefinedComponent } from '@openuidev/react-lang';
+import { Card as OpenUICard, useTheme } from '@openuidev/react-ui';
 import { chatLibrary } from '@openuidev/thesys';
 import { cn } from '@/lib/utils';
 import { CitationMarkdown, hasMarker, OpenUiCitationContext, OpenUiTextContent } from './citations';
 import { inlineTextOverrides, withCitedHeader, type StockComponent } from './inline-text';
 import { withDocumentImages } from './document-images';
-import { OpenUiSubmissionContext } from './actions';
+import { OpenUiSubmissionContext, MiniAppWritableContext } from './actions';
 import { useModuleTranslation } from '@/modules/localization';
 import { withDataTable } from './DataTable';
 import { withChartExplorer } from './ChartExplorer';
@@ -16,6 +16,20 @@ import { askAgentAction } from './mini-app-definitions';
 import { miniAppFunctions } from './mini-app-functions';
 import { dashboardFunctions } from './dashboard-functions';
 import { svgComponents } from './svg';
+import { HtmlViewContent } from './HtmlView';
+import { HtmlView } from './html-view-definition';
+import { useConversationSettings } from '../../hooks/useConversationSettings';
+
+const htmlViewComponent = { ...HtmlView, component: function HtmlViewComponent({ props }: Parameters<typeof HtmlView.component>[0]) {
+  const field = useStateField(props.name, props.value);
+  const formName = useFormName();
+  const setFieldValue = useSetFieldValue();
+  const writable = useContext(MiniAppWritableContext);
+  const { mode } = useTheme();
+  const streaming = useIsStreaming();
+  const settings = useConversationSettings();
+  return <HtmlViewContent {...props} value={field.value} onChange={next => field.isReactive ? field.setValue(next) : setFieldValue(formName, 'HtmlView', props.name, next)} writable={writable && props.value !== undefined} streaming={streaming} scheme={mode === 'dark' ? 'dark' : 'light'} mode={settings?.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict'} />;
+} };
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -112,7 +126,7 @@ export const openUiLibrary = createLibrary({
     let component = override ? override(definition.component as StockComponent) : definition.component as StockComponent;
     if (IMAGE_COMPONENTS.has(definition.name)) component = withDocumentImages(component, definition.name);
     return { ...definition, component } as DefinedComponent;
-  }), ...miniAppComponents, ...svgComponents],
+  }), ...miniAppComponents, ...svgComponents, htmlViewComponent],
   functions: [...miniAppFunctions, ...dashboardFunctions],
   actions: [askAgentAction],
 });

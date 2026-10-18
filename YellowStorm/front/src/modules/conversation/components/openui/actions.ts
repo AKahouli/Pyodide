@@ -4,6 +4,7 @@ import type { ArtifactActivityData, OpenUiSubmission } from '../../types';
 
 export const OpenUiSubmissionContext = createContext<Record<string, 'submitting' | 'submitted' | 'error'>>({});
 export const MiniAppAutosaveContext = createContext(false);
+export const MiniAppWritableContext = createContext(false);
 export const submissionKey = (submission: Pick<OpenUiSubmission, 'formName' | 'label'>): string => submission.formName ?? submission.label ?? '';
 export function submissionSignature(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(submissionSignature).join(',')}]`;

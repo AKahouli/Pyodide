@@ -1,6 +1,6 @@
 # OpenUI rich dashboard and HTML artifact reuse plan
 
-Status: **phase A qualified; phase B implemented, editable PPTX live qualification blocked; phases C–E proposed**.
+Status: **phase A qualified; phase B implemented, editable PPTX live qualification blocked; phase C implemented with configurable execution; phases D–E proposed**.
 Assessed 2026-10-18. Complements the [mini-app plan](openui-mini-apps-plan.md)
 and [library reuse map](openui-mini-app-library-map.md); completed phases remain
 unchanged. Each implementation phase below has a separate commit and test gate.
@@ -63,6 +63,19 @@ is also not automatically visible to OpenUI autosave.
 
 ## Proposed HTML integration contract
 
+Phase C implementation updates this proposal through [ADR-0028](../decisions/ADR-0028-openui-html-artifact-policy.md):
+the user approved OpenUiHtmlSandbox and then requested two administrator-selectable
+modes after the self-navigation limitation was explained. Strict mode defaults to
+HTML/CSS/SVG with trusted declared controls; generated scripts are removed.
+Interactive mode permits inline scripts and warns about self-navigation/data
+transmission and browser resource limits. The upstream srcdoc surface loads a trusted external bootstrap under the parent's
+unchanged inline-free CSP. Strict mode denies eval; interactive mode evaluates
+inert generated scripts after initial state arrives. Normal-URL shell navigation
+was replaced after saved conversation startup remained at about:blank.
+Private autosave reuses ADR-0025; documents/tasks/results stay host-owned outside
+the frame. HtmlView visual exports fail explicitly until phase D. No arbitrary
+requestTask or capture message is implemented in this phase.
+
 Use upstream `sandbox="allow-scripts"` with an opaque origin, without same-origin,
 forms, popups, parent navigation or direct downloads. Inject policy before generated
 markup; deny general network, nested frames and resource-loading URLs. Cap source,
@@ -100,7 +113,7 @@ HtmlView calls readable; generate persistent variants for interactive requests.
 | --- | --- | --- |
 | A — `feat(openui): reuse SVG and dashboard primitives` | Adapt SVG primitives and the ten data functions with bounded inputs, existing themes, prompt definitions/examples and export projection for SVG. Extend existing components/helpers only. | Function correctness and invalid/empty/zero data, unsafe keys/URL paints/paths/transforms, reactive SVG state, prompt/schema alignment and legacy compatibility. Fresh sales and operations dashboards work at desktop/390 px in light/dark. Typed controls reload without inference; static exports remain valid. |
 | B — `feat(openui): export saved reactive dashboard views` | Implement the already planned phase-5 saved snapshot materialization in existing export utilities. Freeze library/program/draft revision and authorized completed results; support SVG/chart visuals plus native text/tables/data. | Pending writes/conflicts block export until resolved; no queries, tasks or mutations run. Inspect actual HTML/PDF/DOCX and existing-connector editable PPTX after reload. Private drafts cannot leak through whole-conversation export; other users' state is never used. |
-| C — `feat(openui): integrate upstream HtmlView with private state` | After named design approval, adapt upstream iframe/theme/height/streaming behavior and the minimal host channel. Add generation examples, source/preview, expand and existing host download actions. Integrate autosave and explicit task/result access. | Spoofed/stale channel messages, cross-app/user state, malformed/oversized data, storage/network/navigation denial, streaming no-execution, reset/error handling and two-tab conflicts. Different HTML dashboards preserve declared typed controls and saved results after reload; no task auto-runs. |
+| C — `feat(openui): integrate upstream HtmlView with private state` | After named design approval, adapt upstream iframe/theme/height/streaming behavior and the minimal host channel. Add generation examples, source/preview, expand and existing host download actions. Integrate autosave and explicit task/result access. | Spoofed/stale channel messages, cross-app/user state, malformed/oversized data, storage/resource denial, strict navigation denial and the documented interactive self-navigation limit, streaming no-execution, reset/error handling and two-tab conflicts. Different HTML dashboards preserve declared typed controls and saved results after reload; no task auto-runs. |
 | D — `feat(openui): export saved HtmlView artifacts` | Extend B's snapshot to acknowledged HtmlView state and validated capture output. Add self-contained static HTML and optional clearly labelled interactive HTML download; reuse existing PDF/DOCX/MCP PPTX flows. | Actual downloads match saved controls/data/SVG/canvas after reload. Static output contains no executable generated scripts; interactive download has embedded acknowledged state, dependencies/assets and no app credentials/private endpoints. Canvas uses a labelled raster fallback; unsupported structured export is visible, never silently omitted. |
 | E — `test(openui): qualify rich artifacts across users and reload` | End-to-end qualification, docs and only confirmed integration fixes; keep unrelated changes separate. | Test corpus below, two live users, concurrent tabs, revoked/deleted document access, saved results and actual exports. Independent security/correctness review, focused tests, type/build and visible QA pass. Record blocked remote MCP/print checks accurately. |
 

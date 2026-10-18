@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import type { ActionEvent } from '@openuidev/react-lang';
 import { AIMessageContent, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useConversationStore } from '../../store';
-import { MiniAppAutosaveContext, OpenUiSubmissionContext, submissionKey, submissionSignature, toFollowUpMessage } from './actions';
+import { MiniAppAutosaveContext, MiniAppWritableContext, OpenUiSubmissionContext, submissionKey, submissionSignature, toFollowUpMessage } from './actions';
 import { AuthContext } from '@/modules/auth/AuthContext';
 import { useMiniAppState } from './use-mini-app-state';
 import { MiniAppTaskContext } from './mini-app-task-context';
@@ -170,6 +170,7 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
         </div>}
         <OpenUiSubmissionContext.Provider value={statuses}>
           <MiniAppAutosaveContext.Provider value={miniApp}>
+            <MiniAppWritableContext.Provider value={miniApp && ['saved', 'saving', 'unsaved'].includes(draftStatus) && !Object.values(localStatus).includes('submitting')}>
             <MiniAppTaskContext.Provider value={miniApp ? { conversationId, actorId, messageId, componentId: partId ?? '', programDigest: digest?.hash ?? '', running: runningTask,
               stateRevision: draft.stateRevision, dirty: draft.status !== 'saved' && draft.status !== 'readonly',
               cancel: answerId => stopTaskStream(conversationId, answerId) } : null}>
@@ -177,6 +178,7 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
               {miniApp && (!digestReady || !draft.ready) ? null : <OpenUiRenderer key={miniApp ? draft.mountRevision : 'legacy'} content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={renderMarkdown} partId={partId} initialState={miniApp ? draft.initialState : initialState} onStateUpdate={miniApp ? draft.handleStateUpdate : undefined} />}
             </fieldset>
             </MiniAppTaskContext.Provider>
+            </MiniAppWritableContext.Provider>
           </MiniAppAutosaveContext.Provider>
           {Object.values(localStatus).includes('error') && <p role='alert' className='mt-2 text-sm text-destructive'>{t('openui.interaction.error')}</p>}
         </OpenUiSubmissionContext.Provider>

@@ -1,4 +1,11 @@
 {
+  "conversationSettings.generativeUi.title": "Generative UI",
+  "conversationSettings.generativeUi.description": "Choose how HTML artifacts run for agents with Generative UI enabled. Applies to existing and new artifacts.",
+  "conversationSettings.generativeUi.mode": "HTML artifact mode",
+  "conversationSettings.generativeUi.strict": "Strict isolation (recommended)",
+  "conversationSettings.generativeUi.interactive": "Allow generated JavaScript",
+  "conversationSettings.generativeUi.strictDescription": "Strict mode supports rich HTML, CSS, SVG and declared controls with private autosave. Generated scripts are removed. External resources and navigation links are blocked.",
+  "conversationSettings.generativeUi.warning": "Generated JavaScript can navigate the preview to an external site and send declared dashboard data there. It can also freeze the browser tab. Fetches and external resources are blocked, but this mode does not guarantee zero network requests. Never pass credentials or document bodies to HTML artifacts.",
   "playbookSettings.execution.title": "Playbook Execution",
   "playbookSettings.execution.description": "Configure capacity, concurrency, queueing, recursion, and Dynamic Reasoning Workflow limits. Capacity is a configured ceiling, not a live availability metric.",
   "playbookSettings.execution.newExecutionsOnly": "Changes apply to new executions only.",

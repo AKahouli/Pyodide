@@ -2,7 +2,8 @@ Mini-app composition and theme adapt layout algorithms and visual hierarchy from
 https://github.com/thesysdev/open-intelligent-ui
 Revision: 03213439358bf3408ad61a46ec9e3230c5572e48
 Adapted files: mini-app-composition.tsx, mini-app.css, svg.tsx, svg-definitions.ts,
-dashboard-functions.ts (SVG primitives and dashboard aggregation algorithms).
+dashboard-functions.ts (SVG primitives and dashboard aggregation algorithms),
+HtmlView.tsx and html-view-definition.ts (iframe lifecycle, theme, size and component contract).
 
 The MIT License (MIT)
 

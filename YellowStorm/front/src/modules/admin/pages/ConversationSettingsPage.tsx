@@ -57,6 +57,7 @@ const LIMITS = {
 export function ConversationSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [settings, setSettings] = useState<ComposerSuggestionSettings>(DEFAULTS);
+  const [htmlMode, setHtmlMode] = useState<'strict' | 'interactive'>('strict');
   const [latencyInstrumentationEnabled, setLatencyInstrumentationEnabled] = useState(LATENCY_DEFAULT);
   const [compaction, setCompaction] = useState<CompactionSettings>(COMPACTION_DEFAULTS);
   const [attachmentIntelligence, setAttachmentIntelligence] = useState<AttachmentIntelligenceSettings>(ATTACHMENT_DEFAULTS);
@@ -73,6 +74,7 @@ export function ConversationSettingsPage() {
       .then(([result, agentOptions, modelList]) => {
         if (cancelled) return;
         setSettings(result.composerSuggestions);
+        setHtmlMode(result.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict');
         setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
         setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
         setAttachmentIntelligence(result.attachmentIntelligence ?? ATTACHMENT_DEFAULTS);
@@ -113,6 +115,7 @@ export function ConversationSettingsPage() {
     setSaving(true);
     try {
       const result = await updateAdminConversationSettings({
+        generativeUi: { htmlMode },
         composerSuggestions: settings,
         conversationName: { modelId: nameModelId },
         latencyInstrumentationEnabled,
@@ -120,6 +123,7 @@ export function ConversationSettingsPage() {
         attachmentIntelligence,
       });
       setSettings(result.composerSuggestions);
+      setHtmlMode(result.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict');
       setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
       setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
       setAttachmentIntelligence(result.attachmentIntelligence ?? ATTACHMENT_DEFAULTS);
@@ -141,6 +145,22 @@ export function ConversationSettingsPage() {
         </h1>
         <p className="text-sm text-muted-foreground">{t('conversationSettings.description')}</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2'><Sparkles className='h-4 w-4' />{t('conversationSettings.generativeUi.title')}</CardTitle>
+          <CardDescription>{t('conversationSettings.generativeUi.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-3'>
+          <Label htmlFor='html-mode'>{t('conversationSettings.generativeUi.mode')}</Label>
+          <Select value={htmlMode} onValueChange={value => setHtmlMode(value === 'interactive' ? 'interactive' : 'strict')} disabled={loading || saving}>
+            <SelectTrigger id='html-mode'><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value='strict'>{t('conversationSettings.generativeUi.strict')}</SelectItem><SelectItem value='interactive'>{t('conversationSettings.generativeUi.interactive')}</SelectItem></SelectContent>
+          </Select>
+          <p className='text-sm text-muted-foreground'>{t('conversationSettings.generativeUi.strictDescription')}</p>
+          {htmlMode === 'interactive' && <Alert variant='destructive'><AlertDescription>{t('conversationSettings.generativeUi.warning')}</AlertDescription></Alert>}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
