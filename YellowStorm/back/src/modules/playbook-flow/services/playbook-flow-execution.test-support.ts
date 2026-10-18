@@ -9,6 +9,7 @@ import { PlaybookFlowPublicReasoningParserService } from './observability/playbo
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
+import { publicPlaybookTaskResult } from '../utils/playbook-artifact';
 
 /** ExecutionRepository double: every guarded write holds, reads find a minimal run of owner-1. */
 export function createExecutionRepositoryMock(overrides: Record<string, any> = {}) {
@@ -269,6 +270,13 @@ export function createExecutionServiceForTests(overrides?: {
     overrides?.executionSettingsResolver as any,
   );
 
+  // Domain orchestration fixtures do not exercise cryptography. Dedicated
+  // authority integration tests use the real signer and canonical stores.
+  Object.assign(service, { artifactService: {
+    issuePublicationAuthority: jest.fn().mockResolvedValue('test-dispatch-authority'),
+    projectPublicTaskResult: (result: Record<string, unknown>, owner: string, execution: string, redact: boolean) =>
+      publicPlaybookTaskResult(result, owner, execution, new Set(), redact),
+  } });
   return {
     service,
     executionRepository,

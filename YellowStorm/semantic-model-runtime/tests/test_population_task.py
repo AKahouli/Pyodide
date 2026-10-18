@@ -625,7 +625,9 @@ async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: p
     from app.persistence.postgres_jobs import PostgresJobRepository
 
     lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
-                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc),
+                  asset_capability="a" * 64)
+    lease.payload["payload"]["assetAdmission"] = "signed-test-admission"
     calls: dict[str, int] = {"checks": 0, "cancel": 0, "complete": 0, "requeue": 0, "persist": 0}
 
     class Pool:
@@ -733,7 +735,9 @@ async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPa
     from app.persistence.postgres_jobs import PostgresJobRepository
 
     lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
-                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc),
+                  asset_capability="a" * 64)
+    lease.payload["payload"]["assetAdmission"] = "signed-test-admission"
     calls = {"persist": 0, "finalize": 0}
     completed: dict = {}
 

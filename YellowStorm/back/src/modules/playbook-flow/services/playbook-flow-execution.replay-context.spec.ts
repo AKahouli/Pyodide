@@ -46,7 +46,8 @@ describe('callGrpcRun replay context and contracts', () => {
       __playbook_workspace_ids: ['workspace-1'],
       __playbook_default_workspace_id: 'workspace-1',
     }) as { fields: Record<string, unknown> }).fields;
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       input_context: expect.objectContaining({
         fields: expect.objectContaining({
           brief: expectedFields.brief,

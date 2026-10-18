@@ -35,7 +35,7 @@ and a missing acting user raise MCP tool errors.
   time claims must satisfy `0 < exp - iat <= 300` seconds. Connector and ADK calls renew it. Agent
   ownership and shares are checked by the backend on each operation.
 - **Egress (this server → backend)**: every call to
-  `/api/v1/internal/agent-crud/*` carries `X-Internal-Token: $YELLOWSTORM_INTERNAL_SERVICE_TOKEN`
+  `/api/v1/internal/agent-crud/*` carries `X-YellowStorm-Service-Principal: mcp-agent` and `X-YellowStorm-Service-Token: $AGENT_MCP_BACKEND_SERVICE_TOKEN`
   plus the identity headers above and, in JWT mode, `X-YellowStorm-Mcp-Assertion`.
   The backend authenticates the scoped service principal and its shared
   `DelegatedActorGuard` derives the user from that signed assertion, never a naked
@@ -65,7 +65,7 @@ Copy `.env.example` to `.env` (auto-loaded; real environment variables win):
 | Variable | Default | Purpose |
 |---|---|---|
 | `YELLOWSTORM_BACKEND_URL` | `http://localhost:3000` | NestJS backend base URL |
-| `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` | — (required) | Scoped internal principal credential accepted by the backend |
+| `AGENT_MCP_BACKEND_SERVICE_TOKEN` | — (required) | Unique `mcp-agent` machine principal credential (distinct from connector slug `agent-mcp`); no shared-secret fallback; minimum 32 characters in production; signed actor audience must be `mcp-agent` |
 | `AGENT_MCP_INGRESS_TOKEN` | — (Bearer mode) | Static ingress token when JWT is disabled |
 | `AGENT_MCP_AUTH_MODE` | `Bearer` | Set `JWT` for signed per-user tokens |
 | `AGENT_MCP_JWT_PUBLIC_KEY_FILE` | — | Public PEM path when JWT is enabled |

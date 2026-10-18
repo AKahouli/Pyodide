@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { SemanticAssetGrantService } from './semantic-asset-grant.service';
 import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import {
@@ -947,6 +948,7 @@ export class SemanticRuntimeClientService {
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
+    @Optional() @Inject(forwardRef(() => SemanticAssetGrantService)) private readonly assetGrants?: SemanticAssetGrantService,
   ) { }
 
   async getAiExtractionIdentity(): Promise<AiExtractionIdentity> {
@@ -1265,9 +1267,20 @@ export class SemanticRuntimeClientService {
     command: RuntimePopulationRunCommand,
     idempotencyKey: string,
   ): Promise<RuntimeAcceptedJob> {
-    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', command, {
+    const admitted = await this.admitAssets(command, 'population', idempotencyKey);
+    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', admitted, {
       'Idempotency-Key': idempotencyKey,
     });
+  }
+
+  private async admitAssets(command: RuntimePopulationRunCommand, purpose: 'discovery' | 'population', key: string): Promise<RuntimePopulationRunCommand> {
+    if (!this.assetGrants) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic asset admission is not configured');
+    const entries = purpose === 'discovery' ? [{ source: command.payload.source }] : command.payload.sources;
+    if (!Array.isArray(entries)) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Missing admitted sources');
+    const refs = entries.map((entry: { source?: { workspaceId: string; assetId: string } }) => entry.source)
+      .filter((source): source is { workspaceId: string; assetId: string } => !!source);
+    const assetAdmission = await this.assetGrants.admit(command.actorUserId, command.modelId, purpose, refs, key, command as unknown as Record<string, unknown>);
+    return { ...command, payload: { ...command.payload, assetAdmission, assetCommand: JSON.stringify(command) } };
   }
 
   /** Clear a model's built data (records, links, review items, finished builds); its settings stay. */
@@ -1389,7 +1402,8 @@ export class SemanticRuntimeClientService {
     command: RuntimeDiscoveryCommand,
     idempotencyKey: string,
   ): Promise<RuntimeAcceptedJob> {
-    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-datasource/discoveries', command, {
+    const admitted = await this.admitAssets(command, 'discovery', idempotencyKey);
+    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-datasource/discoveries', admitted, {
       'Idempotency-Key': idempotencyKey,
     });
   }

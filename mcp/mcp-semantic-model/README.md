@@ -4,7 +4,7 @@ FastMCP server (Streamable HTTP, `/mcp`, port 8027) that lets a Yellowmind agent
 natural language: "I need a model to handle billing and contract management".
 
 It is a thin client of the YellowStorm backend. Every tool calls
-`/api/v1/internal/semantic-model-assistant/*` with `X-Internal-Token` and the identity of the person the agent
+`/api/v1/internal/semantic-model-assistant/*` with fixed `X-YellowStorm-Service-Principal: semantic-model-mcp`, `X-YellowStorm-Service-Token`, and the identity of the person the agent
 acts for; the backend applies that person's permissions and model roles, through the same services as the
 model editor. Nothing here touches a database.
 
@@ -124,7 +124,7 @@ pip install -r requirements.txt
 python server.py
 ```
 
-- `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` must equal the backend's `INTERNAL_SERVICE_SECRET`.
+- `SEMANTIC_MODEL_MCP_SERVICE_TOKEN` must match the backend's dedicated semantic principal credential, differ from every other machine credential, and be at least 32 characters in production. No generic credential is read or forwarded. The signed actor assertion must have route-fixed audience `mcp-semantic-model`.
 - `SEMANTIC_MODEL_MCP_SERVICE_TOKEN` must match the backend setting of the same name;
   it authenticates the `semantic-model-mcp` service principal and is required in both modes.
 - `SEMANTIC_MODEL_MCP_INGRESS_TOKEN` authenticates incoming requests in Bearer mode;

@@ -4,6 +4,17 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from src.smart_rag.tools.utilities.conversation_assets import create_conversation_asset_tools
+from src.root_runtime import delegate_resolver
+
+
+@pytest.fixture(autouse=True)
+def private_dispatch_authority(monkeypatch):
+    monkeypatch.setattr(delegate_resolver, 'get_settings', lambda: SimpleNamespace(ADK_ROOT_RUNTIME_SERVICE_TOKEN='root-test-machine'))
+    binding = delegate_resolver._root_authority.set(delegate_resolver._RootAuthority('asset-execution', 'private-dispatch-proof'))
+    try:
+        yield
+    finally:
+        delegate_resolver._root_authority.reset(binding)
 CTX = dict(platform_api_url="http://backend/api", platform_api_token="test-token", user_id="actor-a", conversation_id="conversation-a")
 
 def tools():
@@ -22,6 +33,9 @@ async def test_authority_and_same_names(monkeypatch):
     assert calls[0][0] == "http://backend/api/v1/internal/root-work/assets/list"
     assert calls[0][1]["json"]["userId"] == "actor-a"
     assert calls[0][1]["json"]["conversationId"] == "conversation-a"
+    assert calls[0][1]['headers']['X-YellowStorm-Execution-Authority'] == 'private-dispatch-proof'
+    assert calls[0][1]['headers']['X-YellowStorm-Service-Principal'] == 'adk-root-runtime'
+    assert 'X-Internal-Token' not in calls[0][1]['headers']
     assert "userId" not in inspect.signature(tool).parameters
     assert "conversationId" not in inspect.signature(tool).parameters
     assert create_conversation_asset_tools({}) == []

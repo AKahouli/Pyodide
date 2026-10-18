@@ -13,6 +13,7 @@ from src.config.settings import get_settings
 from src.grpc_generated import chatbot_pb2
 from src.root_runtime.background_host import BackgroundInvocationHost
 from src.root_runtime.background_sessions import BackgroundOwnershipError, BackgroundResumeRequired
+from src.root_runtime.delegate_resolver import _RootAuthority, _root_authority, _root_heartbeat, _post
 
 
 class BackgroundRpc:
@@ -30,7 +31,7 @@ class BackgroundRpc:
             native_sdk_version=sdk, python_version=platform.python_version())
         if not (settings.ROOT_WORK_BACKGROUND_ENABLED and settings.ROOT_WORK_DATABASE_URL
             and getattr(settings, 'ROOT_WORK_LLM_CAPACITY_ENABLED', False)
-            and settings.INTERNAL_SERVICE_SECRET and settings.GRPC_API_KEY and sdk == '2.11.0'
+            and settings.ADK_ROOT_RUNTIME_SERVICE_TOKEN and settings.GRPC_API_KEY and sdk == '2.11.0'
             and platform.python_version_tuple()[:2] == ('3', '12')):
             return response
         async with self._lock:
@@ -70,7 +71,24 @@ class BackgroundRpc:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, 'Background control database does not match')
             return
         try:
-            handle = await self.host.start(request)
+            proofs = [value for key, value in context.invocation_metadata() if key.lower() == 'x-yellowstorm-root-authority']
+            if len(proofs) != 1 or not isinstance(proofs[0], str) or not proofs[0] or ',' in proofs[0]:
+                raise ValueError('Authenticated background authority is required')
+            authority = _RootAuthority(request.execution_id, proofs[0])
+            binding = _root_authority.set(authority)
+            try:
+                # Verify at the canonical backend before claim_native_owner can
+                # write anything using the caller's owner/fence selectors.
+                refreshed = await _post(authority, 'authority/renew', {})
+                authority.token = refreshed['token']
+                handle = await self.host.start(request)
+                if handle.execution_authority is None:
+                    handle.execution_authority = authority
+                    heartbeat = asyncio.create_task(_root_heartbeat(authority))
+                    handle.authority_renewal_task = heartbeat
+                    handle.task.add_done_callback(lambda _task: heartbeat.cancel())
+            finally:
+                _root_authority.reset(binding)
             while not handle.task.done():
                 yield chatbot_pb2.RootBackgroundInvocationUpdate(execution_id=request.execution_id, status='running')
                 await asyncio.wait({handle.task}, timeout=5)

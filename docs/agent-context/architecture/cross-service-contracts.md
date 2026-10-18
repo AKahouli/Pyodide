@@ -17,12 +17,15 @@ their owning source and verification below.
 - Error parity: backend domain exceptions carry registered codes; frontend keeps
   enum parity + EN/FR messages (`YellowStorm/front/src/lib/error-codes.ts`).
   Adding a code requires both sides + localized message.
-- MCP→NestJS: Playbook MCP calls internal Playbook-assistant REST via
-  `clients/yellowstorm_playbook_client.py:28-52`; sends `X-Internal-Token`
-  (`YELLOWSTORM_INTERNAL_SERVICE_TOKEN`) plus user envelope
-  (`X-YellowStorm-User-Id`, optional tenant/agent/conversation/correlation).
-  JWT mode: 5-min RS256, `sub` is the actor, headers cannot override
-  (`mcp/mcp-playbook/README.md:7-19`). Health: `GET /health/live`, `/health/ready`.
+- MCP→NestJS: Agent, Playbook and Semantic clients send their distinct machine
+  principal/token plus `X-YellowStorm-Mcp-Assertion`. Controller-owned audiences
+  fence each domain; the verified signed subject owns attribution and a supplied
+  user header may not disagree. Generic `X-Internal-Token` authorization and the
+  Semantic client's redundant generic-key dependency are removed. Internal JWT
+  assertions are RS256, bounded to 300 seconds; current account, connector policy,
+  revision and resource rights are rechecked. Other MCP profiles remain valid.
+  See the [principal matrix](../../security/internal-principal-inventory.md).
+  Health remains `GET /health/live`, `/health/ready`.
 
 ### Semantic-model My jobs (browser ↔ NestJS ↔ semantic runtime)
 
@@ -94,6 +97,19 @@ Focused API/transport/grounding/worker/fingerprint checks passed; required revie
 found no critical/major issues. Live provider/deployment verification is separate.
 
 ## gRPC (NestJS ↔ ADK)
+
+P1 native-tool authority is separate from the channel API key and MCP assertions.
+Backend dispatch carries private `x-yellowstorm-root-authority`,
+`x-yellowstorm-native-authority` or `x-yellowstorm-artifact-authority` metadata,
+bound to canonical actor/execution/message/job and the live dispatch generation.
+ADK keeps it request/task-local and forwards `X-YellowStorm-Execution-Authority`
+with the matching dedicated machine principal on native backend calls. Never put
+these proofs in protobuf Struct/model parameters, definitions, public events or
+logs. Root controls and delegated-child native authority must remain separate;
+foreground children need their own canonical proof anchored to the parent's live
+stream lease, not a copied parent token. Background renewal follows the owned
+task rather than an RPC observer. This boundary is under required review; see the
+[ADK runtime record](adk-runtime.md#private-native-execution-authority-p1).
 
 Conversation `AgentActivityComponent` optionally carries `activity_kind` (field 9).
 Only explicit native Responses summary output/events produce `reasoning_summary`;

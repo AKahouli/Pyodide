@@ -1,8 +1,10 @@
-import { Body, Controller, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Param, Post, Req, Res, UseGuards, Injectable, CanActivate, ExecutionContext, Optional } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
+import { AdkRootRuntimeServiceGuard } from '../../auth/guards/internal-service-principal.guard';
+import { RootWorkService } from '../root-work/root-work.service';
+import { ErrorCode, UnauthorizedException } from '../../exceptions';
 import { ResolveRootDelegateDto } from '../dto/resolve-root-delegate.dto';
 import { SettleRootDelegateDto } from '../dto/settle-root-delegate.dto';
 import { RootDelegateDefinitionService } from '../root-work/root-delegate-definition.service';
@@ -23,16 +25,58 @@ import { InternalConversationAssetDto, PrepareConversationAssetDto, RegisterConv
 import { GenerateConversationImageDto } from '../dto/generate-conversation-image.dto';
 import { RateLimit } from '../../rate-limiter/decorators/rate-limit.decorator';
 
+@Injectable()
+export class RootExecutionAuthorityGuard implements CanActivate {
+  constructor(private readonly work: RootWorkService, private readonly definitions: RootDelegateDefinitionService) {}
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<Request>();
+    const header = request.headers['x-yellowstorm-execution-authority'];
+    const nativeAllowed = /\/(?:assets\/|images\/|native-authority\/renew)/.test(request.route.path);
+    const claims = await (nativeAllowed ? this.work.assertAssetAuthority(typeof header === 'string' ? header : undefined)
+      : this.work.assertRootAuthority(typeof header === 'string' ? header : undefined));
+    if (claims.parentExecutionId && !nativeAllowed && !request.route.path.endsWith('/:executionId/authority/renew')) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Child authority cannot control Root execution');
+    }
+    if (request.params.executionId !== undefined && request.params.executionId !== claims.executionId) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Foreign root execution');
+    }
+    for (const name of ['userId', 'actorId', 'ownerId', 'conversationId', 'owner', 'fence'] as const) {
+      const expected = name === 'conversationId' ? claims.conversationId : name === 'owner' ? claims.owner
+        : name === 'fence' ? claims.fence : claims.sub;
+      if (request.body?.[name] !== undefined && request.body[name] !== expected) {
+        throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Root authority selector mismatch');
+      }
+    }
+    await this.work.assertAuthorityWorkspace(claims, request.body?.workspaceId);
+    if (claims.purpose === 'root-work') await this.definitions.assertCurrentAuthorityRights(claims.executionId);
+    return true;
+  }
+}
+
 @ApiTags('Root work internal')
 @Public()
-@UseGuards(InternalServiceGuard)
+@UseGuards(AdkRootRuntimeServiceGuard, RootExecutionAuthorityGuard)
 @Controller('internal/root-work')
 export class RootDelegateInternalController {
   constructor(private readonly definitions: RootDelegateDefinitionService,
     private readonly temporary: RootTemporaryDefinitionService, private readonly fanout: RootFanoutService,
     private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService,
     private readonly conversationReplies: RootConversationReplyService,
-    private readonly artifacts: ConversationArtifactService) {}
+    private readonly artifacts: ConversationArtifactService, @Optional() private readonly authorityWork?: RootWorkService) {}
+
+  @Post(':executionId/authority/renew')
+  renewAuthority(@Req() request: Request) {
+    const token = request.headers['x-yellowstorm-execution-authority'];
+    if (!this.authorityWork) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Root authority unavailable');
+    return this.authorityWork.renewRootAuthority(typeof token === 'string' ? token : undefined);
+  }
+
+  @Post('native-authority/renew')
+  renewNativeAuthority(@Req() request: Request) {
+    const token = request.headers['x-yellowstorm-execution-authority'];
+    if (!this.authorityWork) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Native authority unavailable');
+    return this.authorityWork.renewNativeConversationAuthority(typeof token === 'string' ? token : undefined);
+  }
 
   @Post('assets/list')
   @RateLimit({ limit: 60, windowMs: 60_000, keyPrefix: 'conversation-assets' })
@@ -170,8 +214,11 @@ export class RootDelegateInternalController {
 
   @Post(':executionId/temporary-definition')
   @ApiOperation({ summary: 'Resolve and reserve one root-derived temporary worker' })
-  resolveTemporary(@Param('executionId') executionId: string, @Body() request: ResolveRootTemporaryDto) {
-    return this.temporary.resolve(executionId, request);
+  async resolveTemporary(@Param('executionId') executionId: string, @Body() request: ResolveRootTemporaryDto,
+    @Req() incoming: Request, @Res({ passthrough: true }) response: Response) {
+    const result = await this.temporary.resolve(executionId, request);
+    await this.attachChildAuthority(result, incoming, response);
+    return result;
   }
 
   @Post(':executionId/background-synthesis-results/:producerId')
@@ -182,8 +229,21 @@ export class RootDelegateInternalController {
 
   @Post(':executionId/delegate-definition')
   @ApiOperation({ summary: 'Resolve and admit one authorized native delegate call' })
-  resolve(@Param('executionId') executionId: string, @Body() request: ResolveRootDelegateDto) {
-    return this.definitions.resolve(executionId, request);
+  async resolve(@Param('executionId') executionId: string, @Body() request: ResolveRootDelegateDto,
+    @Req() incoming: Request, @Res({ passthrough: true }) response: Response) {
+    const result = await this.definitions.resolve(executionId, request);
+    await this.attachChildAuthority(result, incoming, response);
+    return result;
+  }
+
+  private async attachChildAuthority(result: { executionId: string; result?: unknown }, incoming: Request, response: Response): Promise<void> {
+    if ('result' in result) return; // Cached terminal results are not native executions.
+    if (!this.authorityWork) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Child authority unavailable');
+    const proof = incoming.headers['x-yellowstorm-execution-authority'];
+    await this.definitions.assertCurrentAuthorityRights(result.executionId);
+    const token = await this.authorityWork.issueForegroundChildAuthority(typeof proof === 'string' ? proof : undefined, result.executionId);
+    // Transport-only channel: never put credentials in definition/Struct/results.
+    response.setHeader('X-YellowStorm-Child-Authority', token);
   }
 
   @Post(':executionId/children/:childId/lifecycle')

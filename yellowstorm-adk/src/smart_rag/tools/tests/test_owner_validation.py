@@ -23,14 +23,31 @@ class _FakeResponse:
         return self._body
 
 
+@pytest.fixture
+def private_dispatch(monkeypatch):
+    from src.root_runtime import delegate_resolver as resolver
+    import src.config.settings as settings_module
+    settings = SimpleNamespace(API_URL="http://localhost:3000/api",
+        ADK_ROOT_RUNTIME_SERVICE_TOKEN="root-test-machine-token", INTERNAL_SERVICE_SECRET="unused-legacy")
+    monkeypatch.setattr(settings_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(resolver, "get_settings", lambda: settings)
+    binding = resolver._root_authority.set(resolver._RootAuthority("message", "private-signed-proof", "native-conversation"))
+    try:
+        yield settings
+    finally:
+        resolver._root_authority.reset(binding)
+
+
 @pytest.mark.asyncio
-async def test_tool_returns_pending_payload(monkeypatch):
+@pytest.mark.parametrize("status_code", [200, 201])
+async def test_tool_returns_pending_payload(monkeypatch, private_dispatch, status_code):
     calls = {}
 
     async def fake_post(self, url, *, json=None, headers=None):
         calls["url"] = url
         calls["json"] = json
-        return _FakeResponse(200, {
+        calls["headers"] = headers
+        return _FakeResponse(status_code, {
             "validationId": "v1",
             "question": "Coffee Tuesday 15:00?",
             "choices": ["Yes", "No"],
@@ -39,13 +56,6 @@ async def test_tool_returns_pending_payload(monkeypatch):
     import httpx as httpx_module
     monkeypatch.setattr(httpx_module.AsyncClient, "post", fake_post, raising=True)
 
-    settings = SimpleNamespace(
-        API_URL="http://localhost:3000/api",
-        INTERNAL_SERVICE_SECRET="secret",
-    )
-    import src.config.settings as settings_module
-    monkeypatch.setattr(settings_module, "get_settings", lambda: settings, raising=True)
-
     tool = create_request_owner_validation_tool({
         "telegram_validation_integration_id": "int-1",
         "telegram_validation_conversation_id": "conv-1",
@@ -53,6 +63,9 @@ async def test_tool_returns_pending_payload(monkeypatch):
     result = await tool("Coffee Tuesday 15:00?", ["Yes", "No"])
 
     assert calls["url"] == "http://localhost:3000/api/v1/telegram/internal/validations"
+    assert calls["headers"]["X-YellowStorm-Service-Principal"] == "adk-root-runtime"
+    assert calls["headers"]["X-YellowStorm-Execution-Authority"] == "private-signed-proof"
+    assert "X-Internal-Token" not in calls["headers"]
     assert calls["json"] == {
         "integration_id": "int-1",
         "conversation_id": "conv-1",
@@ -65,17 +78,30 @@ async def test_tool_returns_pending_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_reports_error_status(monkeypatch):
+async def test_tool_reports_error_status(monkeypatch, private_dispatch):
     async def fake_post(self, url, **kwargs):
         return _FakeResponse(502, {"message": "boom"})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post, raising=True)
-    settings = SimpleNamespace(API_URL="http://localhost:3000/api", INTERNAL_SERVICE_SECRET="s")
-    import src.config.settings as settings_module
-    monkeypatch.setattr(settings_module, "get_settings", lambda: settings, raising=True)
-
     result = await create_request_owner_validation_tool({})("q", ["a"])
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_legacy_machine_key_without_private_dispatch_never_sends(monkeypatch, private_dispatch):
+    from src.root_runtime import delegate_resolver as resolver
+    calls = []
+    async def fake_post(self, *args, **kwargs):
+        calls.append(kwargs)
+        raise AssertionError("A legacy credential cannot authorize a validation")
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    binding = resolver._root_authority.set(None)
+    try:
+        result = await create_request_owner_validation_tool({})("q")
+    finally:
+        resolver._root_authority.reset(binding)
+    assert result["status"] == "unavailable"
+    assert calls == []
 
 
 def test_native_registry_resolves_tool():

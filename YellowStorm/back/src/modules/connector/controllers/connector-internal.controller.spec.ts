@@ -17,12 +17,12 @@ describe('ConnectorInternalController', () => {
     const controller = new ConnectorInternalController(transferService as never);
 
     await controller.importFromConnector({
-      userId: 'user-1',
+      userId: 'untrusted-body-user',
       connectorId: 'connector-1',
       workspaceId: 'workspace-1',
       mode: 'file',
       itemRef: { fileId: 'file-1' },
-    });
+    }, { nativeActor: { sub: 'user-1' } } as never);
 
     expect(transferService.importToWorkspace).toHaveBeenCalledWith(
       'user-1',

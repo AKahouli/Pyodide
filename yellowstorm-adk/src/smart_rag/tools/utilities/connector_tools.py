@@ -1,4 +1,5 @@
 import inspect
+from src.root_runtime.delegate_resolver import native_actor_headers
 import json
 import mimetypes
 import re
@@ -1473,7 +1474,7 @@ def create_connector_tools(
                         file_name = publication.get("filename") or str(publication.get("path") or source).replace("\\", "/").rsplit("/", 1)[-1]
                         async with httpx.AsyncClient(timeout=90.0) as client:
                             response = await client.post(f"{api_url}/internal/root-work/assets/register",
-                                headers={"X-Internal-Token": context.platform_api_token},
+                                headers=await native_actor_headers(),
                                 json={"userId": owner, "conversationId": _session_id, "invocationId": invocation_id,
                                     "sourcePath": source, "fileName": file_name,
                                     "mimeType": publication.get("mime_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"})
@@ -1571,7 +1572,7 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                     endpoint,
                     json=body,
                     headers={
-                        "X-Internal-Token": platform_api_token,
+                        **await native_actor_headers(),
                         "Content-Type": "application/json",
                     },
                 )

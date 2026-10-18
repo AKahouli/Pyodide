@@ -9,7 +9,7 @@ import {
   THEMATIC_RETRIEVE_TOOL,
 } from './voice-concierge.config';
 import { ConnectorService } from '../../connector/connector.service';
-import { sanitizeEndpointUrl } from '../../connector/utils/remote-mcp-transport.util';
+import { assertNoUrlCredentials, sanitizeEndpointUrl, sanitizeMcpPublicMetadata } from '../../connector/utils/remote-mcp-transport.util';
 
 export interface VoiceSessionEnvelope {
   wsUrl: string;
@@ -73,6 +73,16 @@ export class GeminiTokenService implements OnModuleInit {
   ): Promise<VoiceSessionEnvelope> {
     if (!this.apiKey) throw new Error('Gemini voice is not configured (WORKY_VOICE_API_KEY missing)');
 
+    const connectors = (
+      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findRuntimeBySlug(s)))
+    ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
+    if (!connectors.length) throw new Error(
+      `Voice concierge tools unavailable: none of [${WORKY_CONCIERGE_CONNECTOR_SLUGS.join(', ')}] is active with actions`,
+    );
+    // Browser relay cannot safely consume an operational query credential. Deny
+    // before minting a provider session rather than silently changing endpoints.
+    for (const connector of connectors) assertNoUrlCredentials(connector.mcpServerUrl);
+
     const now = Date.now();
     const expireMs = now + this.tokenTtlSec * 1000;
     const client = new GoogleGenAI({ apiKey: this.apiKey, httpOptions: { apiVersion: 'v1alpha' } });
@@ -97,17 +107,6 @@ export class GeminiTokenService implements OnModuleInit {
     // The concierge's tools are the MCP connectors' actions — the connectors are
     // the source of truth, no hardcoded tool list. Each connector's tools route
     // to that connector's MCP (toolEndpoints), which the browser relay honors.
-    const connectors = (
-      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findRuntimeBySlug(s)))
-    ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
-
-    if (!connectors.length) {
-      throw new Error(
-        `voice concierge tools unavailable: none of [${WORKY_CONCIERGE_CONNECTOR_SLUGS.join(', ')}] ` +
-          'is an active connector with actions',
-      );
-    }
-
     const functionDeclarations: FunctionDeclaration[] = [];
     const toolEndpoints: Record<string, string> = {};
     const streamIdTools: string[] = [];
@@ -121,7 +120,7 @@ export class GeminiTokenService implements OnModuleInit {
           | undefined;
         if (props && 'streamId' in props) streamIdTools.push(action.key);
       }
-      for (const decl of connectorActionsToFunctionDeclarations(c.actions)) {
+      for (const decl of connectorActionsToFunctionDeclarations(sanitizeMcpPublicMetadata(c.actions, c.mcpServerUrl))) {
         functionDeclarations.push(decl);
         if (decl.name) toolEndpoints[decl.name] = url;
       }

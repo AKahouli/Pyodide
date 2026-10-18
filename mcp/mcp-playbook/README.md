@@ -5,7 +5,7 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 ## Configuration
 
 - `YELLOWSTORM_BACKEND_URL`: NestJS origin, default `http://localhost:3000`.
-- `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: value sent as `X-Internal-Token` to NestJS.
+- `PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN`: unique backend credential sent as `X-YellowStorm-Service-Token` with fixed machine principal `mcp-playbook` (not connector slug `playbook-mcp`). No shared-secret fallback; minimum 32 characters in production. Backend routes require signed actor audience `mcp-playbook`.
 - `PLAYBOOK_MCP_AUTH_MODE`: `Bearer` (default) or `JWT`.
 - `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret in Bearer mode.
 - `PLAYBOOK_MCP_JWT_PUBLIC_KEY_FILE`, `PLAYBOOK_MCP_JWT_ISSUER`, `PLAYBOOK_MCP_JWT_AUDIENCE`: public PEM, issuer, and audience (`mcp-playbook`) in JWT mode.

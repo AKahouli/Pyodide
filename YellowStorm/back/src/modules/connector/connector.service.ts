@@ -19,9 +19,10 @@ import {
   assertNoUrlCredentials,
   isRemoteInspectableMcpTransport,
   sanitizeEndpointUrl,
+  sanitizeMcpPublicMetadata,
 } from './utils/remote-mcp-transport.util';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError, McpDestinationPolicyOptions } from './utils/mcp-destination-policy.util';
-import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
+import { ConnectorAction, ConnectorActionSafety, ConnectorActionExecutionKind, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
   type ConnectorRow,
 } from './persistence/connector.store';
@@ -36,6 +37,10 @@ import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.co
 import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { PgConnectorStore } from './persistence/pg-connector.store';
 import { McpJwtService } from './services/mcp-jwt.service';
+import { CryptoService } from '@common/services/crypto.service';
+import { Permissions, hasPermission } from '@modules/authorization/constants/permissions';
+import { ForbiddenException } from '@modules/exceptions';
+import { ENCRYPTED_CONNECTOR_HEADERS, PORTABLE_CONNECTOR_HEADERS, assertConnectorHeaderName, openConnectorHeaders, sealConnectorHeaders, type QueryHeaderMigrationPlan } from './connector-auth.service';
 
 /**
  * What an MCP tool may do, from its annotations: read-only, destructive or another change. A server that
@@ -68,11 +73,13 @@ export class ConnectorService {
     private readonly playbookBindingSyncService: ConnectorPlaybookBindingSyncService,
     @Optional() private readonly configService?: ConfigService,
     @Optional() private readonly mcpJwt?: McpJwtService,
+    @Optional() private readonly cryptoService?: CryptoService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
 
   async create(createdBy: string, dto: CreateConnectorDto, permissions: readonly string[] = []): Promise<PublicConnectorDto> {
+    this.rejectEncryptedAuthInput(dto.runtimeAuthConfig);
     const policy = normalizeMcpSecurityPolicy(dto.mcpSecurityPolicy);
     if (dto.mcpSecurityPolicy !== undefined) assertMcpSecurityManager(permissions);
     this.assertPolicyConfiguration(policy, dto);
@@ -167,22 +174,29 @@ export class ConnectorService {
     if (!connector) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
+    this.assertEncryptedDestinationBinding(connector);
     return connector;
   }
 
   /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
   async findRuntimeById(id: string): Promise<RuntimeConnectorDefinition | null> {
-    return this.connectorStore.findById(id);
+    const connector = await this.connectorStore.findById(id);
+    if (connector) this.assertEncryptedDestinationBinding(connector);
+    return connector;
   }
 
   /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
   async findRuntimeBySlug(slug: string): Promise<RuntimeConnectorDefinition | null> {
-    return this.connectorStore.findActiveBySlug(slug);
+    const connector = await this.connectorStore.findActiveBySlug(slug);
+    if (connector) this.assertEncryptedDestinationBinding(connector);
+    return connector;
   }
 
   /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
   async findRuntimeByIds(ids: string[]): Promise<RuntimeConnectorDefinition[]> {
-    return this.connectorStore.findByIds(ids);
+    const connectors = await this.connectorStore.findByIds(ids);
+    for (const connector of connectors) this.assertEncryptedDestinationBinding(connector);
+    return connectors;
   }
 
   async findIdsByCategoryName(ids: string[], categoryName: string): Promise<string[]> {
@@ -253,9 +267,9 @@ export class ConnectorService {
         } catch (err) {
           this.logger.warn('Failed to resolve connector auth for conv-v2 runtime', {
             connector_id: connector.id,
-            error: (err as Error).message,
+            errorKind: err instanceof Error ? 'error' : 'non_error',
           });
-          throw err;
+          throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Connector authentication could not be resolved');
         }
       }
 
@@ -281,7 +295,7 @@ export class ConnectorService {
         } catch (err) {
           this.logger.warn('Failed to resolve connector dynamic headers for conv-v2 runtime', {
             connector_id: connector.id,
-            error: (err as Error).message,
+            errorKind: err instanceof Error ? 'error' : 'non_error',
           });
         }
       }
@@ -338,6 +352,7 @@ export class ConnectorService {
   }
 
   async update(id: string, dto: UpdateConnectorDto, permissions: readonly string[] = []): Promise<PublicConnectorDto> {
+    this.rejectEncryptedAuthInput(dto.runtimeAuthConfig);
     this.assertRemoteMcpTransport(dto.mcpTransportType);
     if (dto.mcpServerUrl) {
       assertNoUrlCredentials(dto.mcpServerUrl);
@@ -345,6 +360,23 @@ export class ConnectorService {
     const existing = await this.connectorStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
+    }
+
+    if (dto.mcpServerUrl !== undefined && existing.mcpServerUrl && existing.mcpServerUrl !== sanitizeEndpointUrl(existing.mcpServerUrl)
+      && dto.mcpServerUrl !== existing.mcpServerUrl) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Legacy endpoint credentials require explicit query-to-header migration');
+    }
+    if (existing.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS) {
+      if (dto.runtimeAuthConfig !== undefined || dto.clearRuntimeAuthConfig === true) assertMcpSecurityManager(permissions);
+      if (dto.dynamicHeaders) {
+        const names = Object.keys(openConnectorHeaders(this.cryptoService, this.configService, existing.id, existing.runtimeAuthConfig).headers).map(name => name.toLowerCase());
+        if (dto.dynamicHeaders.some(header => names.includes(header.headerName.toLowerCase())))
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Dynamic identity cannot overwrite encrypted connector authentication');
+      }
+      if ((dto.mcpServerUrl !== undefined && dto.mcpServerUrl !== existing.mcpServerUrl)
+        || (dto.authSourceType !== undefined && dto.authSourceType !== existing.authSourceType)
+        || (dto.connectedAppKey !== undefined && dto.connectedAppKey !== existing.connectedAppKey))
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Encrypted connector credentials cannot be redirected or reassigned');
     }
 
     if (dto.slug && dto.slug !== existing.slug) {
@@ -412,10 +444,96 @@ export class ConnectorService {
       } catch (err) {
         this.logger.warn('Failed to synchronize playbook connector action bindings after connector update', {
           connectorId: id,
-          error: (err as Error).message,
+          errorKind: err instanceof Error ? 'error' : 'non_error',
         });
       }
     }
+    return this.toPublicResponse(updated);
+  }
+
+  private rejectEncryptedAuthInput(config?: Record<string, unknown>): void {
+    if (config && (config.strategy === ENCRYPTED_CONNECTOR_HEADERS || config.strategy === PORTABLE_CONNECTOR_HEADERS
+      || config.encryptedHeaders !== undefined)) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Use the explicit credential migration or encrypted catalog import');
+  }
+
+  async migrateQueryHeaders(id: string, plan: QueryHeaderMigrationPlan, permissions: readonly string[] = []): Promise<PublicConnectorDto> {
+    assertMcpSecurityManager(permissions);
+    if (!hasPermission([...permissions], Permissions.CONNECTORS_UPDATE)) throw new ForbiddenException(ErrorCode.PERMISSION_DENIED);
+    const row = await this.connectorStore.findById(id);
+    if (!row) throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
+    if (!Number.isSafeInteger(plan.expectedSecurityRevision) || plan.expectedSecurityRevision < 1)
+      throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before migrating');
+    if (!Array.isArray(plan.mappings) || !plan.mappings.length || plan.mappings.length > 32
+      || !Array.isArray(plan.removeQueryKeys) || plan.removeQueryKeys.length > 100) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid explicit query migration');
+    const receipt = { expectedSecurityRevision: plan.expectedSecurityRevision,
+      mappings: plan.mappings, removeQueryKeys: plan.removeQueryKeys };
+    if (row.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS) {
+      const current = openConnectorHeaders(this.cryptoService, this.configService, row.id, row.runtimeAuthConfig);
+      // Only acknowledge the exact original request at its immediate resulting
+      // revision. A later security change must not be mistaken for this retry.
+      if ((row.securityRevision ?? 1) !== plan.expectedSecurityRevision + 1)
+        throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before migrating');
+      if (row.runtimeAuthConfig.destination !== row.mcpServerUrl || JSON.stringify(current.migration) !== JSON.stringify(receipt))
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Credential migration does not match the stored migration');
+      return this.toPublicResponse(row);
+    }
+    if (plan.expectedSecurityRevision !== (row.securityRevision ?? 1))
+      throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before migrating');
+    const policy = normalizeMcpSecurityPolicy(row.mcpSecurityPolicy);
+    if (policy.profile === 'public' || row.authSourceType === 'connected_app' || row.connectedAppKey
+      || (row.authSourceType === 'credential' && row.authType !== 'none')
+      || Object.keys(row.runtimeAuthConfig || {}).length || Object.keys((row.mcpServerConfig?.headers || {}) as object).length)
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Migration cannot replace existing provider or static authentication');
+    this.assertRemoteMcpTransport(row.mcpTransportType);
+    const destination = sanitizeEndpointUrl(row.mcpServerUrl);
+    if (!destination) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Legacy endpoint requires manual reconciliation');
+    const url = new URL(row.mcpServerUrl);
+    if (url.username || url.password || url.hash || !url.searchParams.size)
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Only an explicit query credential migration is supported');
+    const keys = new Set<string>();
+    for (const [key] of url.searchParams) {
+      if (!key || keys.has(key)) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Ambiguous legacy query parameters');
+      keys.add(key);
+    }
+    const handled = new Set<string>();
+    const names = new Set<string>();
+    const headers: Record<string, string> = {};
+    for (const mapping of plan.mappings) {
+      if (!mapping || typeof mapping.queryKey !== 'string' || !keys.has(mapping.queryKey) || handled.has(mapping.queryKey)
+        || typeof mapping.prefix !== 'string' || mapping.prefix.length > 200 || /[\x00-\x1f\x7f]/.test(mapping.prefix))
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid query-to-header mapping');
+      assertConnectorHeaderName(mapping.headerName);
+      const lower = mapping.headerName.toLowerCase();
+      if (names.has(lower) || (policy.profile === 'internal_jwt' && lower === 'authorization')
+        || (row.dynamicHeaders || []).some(header => header.headerName.toLowerCase() === lower))
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The header is reserved or ambiguous');
+      const value = url.searchParams.get(mapping.queryKey)!;
+      if (!value || /[\x00-\x1f\x7f]/.test(value)) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid query credential');
+      headers[mapping.headerName] = mapping.prefix + value;
+      handled.add(mapping.queryKey); names.add(lower);
+    }
+    for (const key of plan.removeQueryKeys) {
+      if (typeof key !== 'string' || !keys.has(key) || handled.has(key)) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid explicit query removal');
+      handled.add(key);
+    }
+    if (handled.size !== keys.size) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Every query parameter must be mapped or explicitly removed');
+    const runtimeAuthConfig = sealConnectorHeaders(this.cryptoService, this.configService, row.id, destination, headers, receipt);
+    const scrubbed = sanitizeMcpPublicMetadata({ name: row.name, slug: row.slug, description: row.description,
+      authConfigSchema: row.authConfigSchema, actions: row.actions, mcpServerConfig: row.mcpServerConfig,
+      icon: row.icon, color: row.color }, row.mcpServerUrl);
+    // Redact copied metadata without rewriting validated execution controls when
+    // a removed query value happens to equal a protocol enum such as "read".
+    for (let index = 0; index < scrubbed.actions.length; index += 1) {
+      const original = row.actions[index], action = scrubbed.actions[index];
+      if (Object.values(ConnectorActionSafety).includes(original.safety)) action.safety = original.safety;
+      if (original.executionKind && Object.values(ConnectorActionExecutionKind).includes(original.executionKind)) action.executionKind = original.executionKind;
+      if (original.resultKind && Object.values(ConnectorActionResultKind).includes(original.resultKind)) action.resultKind = original.resultKind;
+      if (original.citationMode && Object.values(ConnectorCitationMode).includes(original.citationMode)) action.citationMode = original.citationMode;
+      if (original.workerAccess && ['inherit', 'allow', 'block'].includes(original.workerAccess)) action.workerAccess = original.workerAccess;
+    }
+    const updated = await this.connectorStore.update(id, { ...scrubbed, mcpServerUrl: destination,
+      authSourceType: 'server_config', runtimeAuthConfig }, plan.expectedSecurityRevision);
+    if (!updated) throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector changed before credential migration');
     return this.toPublicResponse(updated);
   }
 
@@ -468,7 +586,7 @@ export class ConnectorService {
     await this.connectorStore.insert({
       slug,
       name,
-      description: `MCP connector imported from ${serverUrl}`,
+      description: 'Imported MCP connector',
       icon: '',
       color: '',
       iconColor: 'light',
@@ -591,7 +709,7 @@ export class ConnectorService {
         } catch (error) {
           this.logger.error('Failed to get OAuth token for MCP inspection', {
             connectedAppKey,
-            errorName: (error as Error).name,
+            errorKind: error instanceof Error ? 'error' : 'non_error',
           });
           return {
             serverName: '',
@@ -690,15 +808,15 @@ export class ConnectorService {
       const { tools } = await client.listTools();
       await client.close();
 
-      const mappedTools = (tools ?? []).map((t: any) => ({
+      const mappedTools = sanitizeMcpPublicMetadata((tools ?? []).map((t: any) => ({
         name: t.name ?? '',
         description: t.description ?? '',
         inputSchema: t.inputSchema ?? {},
         safety: mcpToolSafety(t.annotations),
-      }));
+      })), serverUrl);
 
       return {
-        serverName: this.slugify(serverUrl.split('/').pop() ?? serverUrl),
+        serverName: this.slugify(new URL(serverUrl).pathname.split('/').pop() || 'connector'),
         tools: mappedTools,
       };
     } catch (err) {
@@ -706,7 +824,7 @@ export class ConnectorService {
       // credential-bearing URLs or auth material (WP02.8).
       this.logger.error('MCP inspection failed', {
         ...this.inspectLogContext(serverUrl),
-        errorName: err instanceof Error ? err.name : typeof err,
+        errorKind: err instanceof Error ? 'error' : 'non_error',
       });
       return {
         serverName: '',
@@ -718,13 +836,8 @@ export class ConnectorService {
 
   /** Project provider/SDK errors to a client-safe message: strip credential-bearing URL userinfo and bearer tokens, cap length (WP02.8). */
   private toSafeInspectErrorMessage(err: unknown): string {
-    const raw = err instanceof Error ? err.message : 'Failed to inspect MCP server';
-    // Consume ALL userinfo segments (user[:pass]@ repeated) so a second '@'
-    // cannot leave password material behind the scrub.
-    const scrubbed = raw
-      .replace(/([a-z][a-z0-9+.-]*:\/\/)(?:[^@\s/]+@)+/gi, '$1***@')
-      .replace(/(bearer\s+)[^\s"',;]+/gi, '$1***');
-    return this.truncateValue(scrubbed, 300);
+    // Provider errors are not a public contract and may contain arbitrary secrets.
+    return 'Failed to inspect MCP server';
   }
 
   /** Host-only inspection log context: never the full URL or error payload. */
@@ -772,8 +885,15 @@ export class ConnectorService {
       allowExactEndpoints: connector && policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [] };
   }
 
+  private assertEncryptedDestinationBinding(connector: ConnectorRow): void {
+    if (connector.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+      && connector.runtimeAuthConfig.destination !== connector.mcpServerUrl)
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted connector destination mismatch');
+  }
+
   /** Current connector policy, not URL similarity or a feature-name allowlist. */
   async assertRuntimeDestination(connector: ConnectorRow, userId?: string): Promise<void> {
+    this.assertEncryptedDestinationBinding(connector);
     try {
       await assertMcpDestinationAllowed(connector.mcpServerUrl, this.mcpDestinationPolicyOptions(connector));
       if (userId && this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
@@ -952,7 +1072,21 @@ export class ConnectorService {
     const credentialConfigured = (doc.authSourceType ?? 'credential') === 'connected_app'
       ? Boolean(doc.connectedAppKey)
       : Object.keys(runtimeAuthConfig).length > 0;
-    return {
+    if (doc.mcpServerUrl && !sanitizeEndpointUrl(doc.mcpServerUrl)) {
+      // Unparseable historical credentials cannot safely be classified. Keep a
+      // valid, identifiable administrative stub rather than returning raw words
+      // or a malformed tool/schema contract. The runtime row is not mutated.
+      return {
+        id: doc.id, slug: `migration-${doc.id}`, name: 'Connector credential migration required',
+        description: '', icon: '', color: '', iconColor: 'light', categoryId: null, categoryName: null,
+        authType: 'none', authConfigSchema: {}, authSourceType: 'none', connectedAppKey: '', credentialConfigured,
+        mcpTransportType: 'streamable_http', mcpSecurityPolicy: normalizeMcpSecurityPolicy(undefined),
+        securityRevision: doc.securityRevision ?? 1, mcpServerUrl: '', inspectionStatus: 'unsupported_for_http_inspection',
+        workerPolicy: DEFAULT_WORKER_POLICY, dynamicHeaders: [], actions: [], referencedSkillIds: [],
+        isActive: false, isSystem: false, isHidden: false, createdBy: '', createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+      };
+    }
+    return sanitizeMcpPublicMetadata<PublicConnectorDto>({
       id: doc.id,
       slug: doc.slug,
       name: doc.name,
@@ -1003,7 +1137,7 @@ export class ConnectorService {
       createdBy: doc.createdBy?.toString() ?? '',
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
-    };
+    }, doc.mcpServerUrl);
   }
 
   /** Validate raw override paths too; hidden JSON must not override platform identity. */

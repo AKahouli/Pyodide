@@ -248,7 +248,12 @@ def build_worker_dispatcher(
         )
         _emit_lifecycle(InvocationLifecycleState.STARTED, child_scope, producer_id)
         child_started = False
+        native_context = None
         try:
+            if owned_adapter is None:
+                from src.root_runtime.delegate_resolver import foreground_child_authority
+                native_context = foreground_child_authority(execution_id)
+                await native_context.__aenter__()
             if execution_id not in compiled:
                 if owned_adapter is not None:
                     compiled[execution_id] = await _compile_candidate(team, user_request, candidate, child_scope,
@@ -329,6 +334,10 @@ def build_worker_dispatcher(
                 execution_id=execution_id,
                 status=status,
             )
+
+        finally:
+            if native_context is not None:
+                await native_context.__aexit__(None, None, None)
 
     node = FunctionNode(func=dispatch, name="dispatch", parameter_binding="node_input", rerun_on_resume=True)
     workflow = Workflow(

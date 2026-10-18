@@ -7,8 +7,9 @@ const event = {
   aggregateType: 'workspace_document',
   aggregateId: 'document-1',
   occurredAt: new Date('2026-09-20T12:00:00Z'),
-  payload: { workspaceId: 'workspace-1', documentId: 'document-1' },
+  payload: { workspaceId: 'workspace-1', documentId: 'document-1', createdBy: 'uploader' },
 };
+const grants = { admitSourceEvent: jest.fn().mockResolvedValue({ '': 'signed-profiling-admission' }) };
 
 describe('SemanticModelSourceEventHandler', () => {
   let fetchMock: jest.Mock;
@@ -27,7 +28,7 @@ describe('SemanticModelSourceEventHandler', () => {
       runtimeServiceKey: 'secret',
       runtimeRequestTimeoutMs: 5000,
     };
-    const handler = new SemanticModelSourceEventHandler(registry as any, config as any);
+    const handler = new SemanticModelSourceEventHandler(registry as any, config as any, grants as never);
     handler.onModuleInit();
     await handler.handle(event);
 
@@ -37,14 +38,16 @@ describe('SemanticModelSourceEventHandler', () => {
     expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Semantic-Service-Key': 'secret' });
     expect(JSON.parse(init.body)).toEqual({
       eventId: 'event-1', eventType: event.eventType,
-      occurredAt: '2026-09-20T12:00:00.000Z', payload: event.payload,
+      occurredAt: '2026-09-20T12:00:00.000Z', payload: { ...event.payload, assetAdmissions: { '': 'signed-profiling-admission' } },
     });
+    expect(grants.admitSourceEvent).toHaveBeenCalledWith('event-1', '2026-09-20T12:00:00.000Z', event.payload);
   });
 
   it('does nothing while runtime writes are disabled', async () => {
     const handler = new SemanticModelSourceEventHandler(
       { register: jest.fn() } as any,
       { runtimeEnabled: true, runtimeWritesEnabled: false } as any,
+      grants as never,
     );
     await handler.handle(event);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -56,6 +59,7 @@ describe('SemanticModelSourceEventHandler', () => {
       { register: jest.fn() } as any,
       { runtimeEnabled: true, runtimeWritesEnabled: true, runtimeUrl: 'http://runtime',
         runtimeServiceKey: 'secret', runtimeRequestTimeoutMs: 5000 } as any,
+      grants as never,
     );
     await expect(handler.handle(event)).rejects.toThrow('runtime unavailable');
   });

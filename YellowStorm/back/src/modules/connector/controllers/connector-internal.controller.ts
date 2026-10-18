@@ -1,7 +1,7 @@
-import { Body, Controller, Post, UseGuards, Optional, Header } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Optional, Header, Req } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
+import { AdkNativeActorGuard, type AdkNativeRequest } from '../../auth/guards/adk-native-actor.guard';
 import { AdkRuntimeMcpRenewalGuard } from '../../auth/guards/internal-service-principal.guard';
 import { ConnectorTransferService } from '../connector-transfer.service';
 import { InternalImportConnectorItemDto } from '../dto/connector-transfer.dto';
@@ -30,12 +30,12 @@ export class ConnectorInternalController {
 
   @Post('transfer/import')
   @Public()
-  @UseGuards(InternalServiceGuard)
+  @UseGuards(AdkNativeActorGuard)
   @ApiOperation({ summary: 'Import connector items on behalf of a user (internal)' })
-  @ApiHeader({ name: 'X-Internal-Token', required: true })
-  async importFromConnector(@Body() dto: InternalImportConnectorItemDto): Promise<unknown> {
+  @ApiHeader({ name: 'X-YellowStorm-Execution-Authority', required: true })
+  async importFromConnector(@Body() dto: InternalImportConnectorItemDto, @Req() request: AdkNativeRequest): Promise<unknown> {
     return this.transferService.importToWorkspace(
-      dto.userId,
+      request.nativeActor.sub,
       dto.connectorId,
       dto.workspaceId,
       {

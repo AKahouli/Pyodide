@@ -118,12 +118,12 @@ async def test_rejects_wrong_signature_and_duplicate_authorization(keys):
 
 
 def test_auth_mode_configuration():
-    settings = Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
+    settings = Settings("http://localhost:3000", "", 120, 8027, 2097152,
         service_token="service-secret", auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm")
     settings.validate()
     for mode in ("invalid", "Bearer"):
         with pytest.raises(ValueError):
-            Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
+            Settings("http://localhost:3000", "", 120, 8027, 2097152,
                 service_token="service-secret", auth_mode=mode).validate()
 
 
@@ -131,7 +131,7 @@ def test_service_principal_token_is_required():
     # WP07.2: without the scoped secret the backend rejects every assistant
     # call, so startup must fail instead.
     with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required"):
-        Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152).validate()
+        Settings("http://localhost:3000", "", 120, 8027, 2097152).validate()
 
 
 @pytest.fixture
@@ -139,10 +139,9 @@ def production_env(monkeypatch):
     # Override local .env values so configuration tests are deployment-independent.
     for key, value in {
         "ENVIRONMENT": "production",
-        "YELLOWSTORM_INTERNAL_SERVICE_TOKEN": "internal-test-token",
         "SEMANTIC_MODEL_MCP_AUTH_MODE": "Bearer",
         "SEMANTIC_MODEL_MCP_INGRESS_TOKEN": "ingress-secret",
-        "SEMANTIC_MODEL_MCP_SERVICE_TOKEN": "service-secret",
+        "SEMANTIC_MODEL_MCP_SERVICE_TOKEN": "semantic-principal-test-secret-00000001",
         "SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE": "public.pem",
         "SEMANTIC_MODEL_MCP_JWT_ISSUER": "yellowstorm",
         "SEMANTIC_MODEL_MCP_JWT_AUDIENCE": "mcp-semantic-model",
@@ -216,5 +215,5 @@ def test_production_requires_service_principal_in_both_modes(production_env, mon
 
 
 def test_direct_production_bearer_settings_remain_supported():
-    Settings("http://localhost:3000", "internal", "ingress-secret", 120, 8027, 2097152,
-        service_token="service-secret", environment="production").validate()
+    Settings("http://localhost:3000", "ingress-secret", 120, 8027, 2097152,
+        service_token="semantic-principal-test-secret-00000001", environment="production").validate()

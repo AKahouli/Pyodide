@@ -145,6 +145,7 @@ async def request_run(
             command=command,
             # A changed runtime is a new build, not the same one again.
             idempotency_key=_engine_key(idempotency_key),
+            asset_admission_key=idempotency_key,
             task_name="semantic-model-population.run",
             queue_name=POPULATION_QUEUES[1],
         )

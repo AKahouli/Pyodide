@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grpc
+from src.root_runtime.delegate_resolver import with_root_authority
 import asyncio
 import json
 import uuid
@@ -438,6 +439,7 @@ class ChatbotServicer(
         if trace_pb is not None:
             chunk_pb.latency_trace.CopyFrom(trace_pb)
 
+    @with_root_authority
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -656,6 +658,7 @@ class ChatbotServicer(
                 user_ctx.reset(user_token)
             except Exception:
                 pass  # Token may already be reset or invalid
+    @with_root_authority
     async def RunSingleAgent(
         self,
         request: "chatbot_pb2.RunSingleAgentRequest",

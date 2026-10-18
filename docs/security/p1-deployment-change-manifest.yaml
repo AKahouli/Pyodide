@@ -1,0 +1,70 @@
+# Target-state inventory only. NOT an applied deployment or live secret receipt.
+# Values must be independently provisioned outside Git (production >=32 bytes).
+status: local-implementation-reviewed-deployment-not-qualified
+branch: fix/p1-scoped-authority
+baseRevision: abe23f8f99d6d371f0bfd9155d5727327d0f3a17
+principals:
+  mcp-agent:
+    credentialEnv: AGENT_MCP_BACKEND_SERVICE_TOKEN
+    consumers: [backend-agent-verifier, mcp-agent]
+    actorAudience: mcp-agent
+  mcp-playbook:
+    credentialEnv: PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN
+    consumers: [backend-playbook-verifier, mcp-playbook]
+    actorAudience: mcp-playbook
+  semantic-model-mcp:
+    credentialEnv: SEMANTIC_MODEL_MCP_SERVICE_TOKEN
+    consumers: [backend-semantic-mcp-verifier, mcp-semantic-model]
+    actorAudience: mcp-semantic-model
+  semantic-runtime:
+    credentialEnv: SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN
+    consumers: [backend-semantic-asset-verifier, semantic-runtime-workers]
+    additionalProof: signed-admission-and-live-canonical-task-lease-capability
+  adk-root-runtime:
+    credentialEnv: ADK_ROOT_RUNTIME_SERVICE_TOKEN
+    consumers: [backend-root-and-native-authority-verifier, adk-root-and-conversation-runtime]
+    additionalProof: purpose-separated-live-root-or-native-conversation-dispatch-generation-authority
+  adk-playbook-artifact:
+    credentialEnv: ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN
+    consumers: [backend-artifact-and-native-authority-verifier, adk-playbook-runtime]
+    additionalProof: live-playbook-execution-and-lease-generation-authority
+  adk-runtime:
+    credentialEnv: ADK_RUNTIME_MCP_RENEWAL_TOKEN
+    consumers: [backend-mcp-renewal-verifier, adk-mcp-client]
+    additionalProof: connector-bound-current-revision-actor-assertion
+  app-runtime:
+    credentialEnv: APP_RUNTIME_BIND_TOKEN
+    consumers: [backend-app-runtime-verifier, app-runtime]
+    additionalProof: existing-app-capability-checks
+forbiddenMcpEnvironmentAndMounts:
+  - INTERNAL_SERVICE_SECRET
+  - YELLOWSTORM_INTERNAL_SERVICE_TOKEN
+  - unrelated-principal-credentials
+  - private-MCP-signing-key
+requiredDeploymentEvidence:
+  - actual-compose-or-ACA-or-Kubernetes-service-paths-and-owners
+  - effective-container-environment-variable-names-and-secret-mount-identities-only
+  - independent-secret-rotation-receipts-without-values
+  - ingress-restricted-to-known-callers-and-cross-host-TLS
+  - scoped-auth-success-and-cross-domain-negative-results-on-staging
+  - canonical-PostgreSQL-job-and-revocation-tests
+  - authorized-resource-download-and-Ceph-test-bucket-results
+  - all-replicas-no-longer-serving-raw-key-presign-route
+  - historical-connector-query-inventory-and-approved-retention-preserving-reconciliation
+  - final-critical-and-major-security-findings-resolved
+localVerification:
+  connectorMigration: 9-suites-170-tests-pass-and-scoped-required-review-pass
+  productionBackendTypecheck: pass
+  rootNativeAuthority: scoped-required-review-pass
+  semanticAuthority: scoped-required-review-pass-and-55-postgres-tests-all-runtime-migrations-pass
+  mcpPython: agent-60-playbook-71-semantic-98-pass
+  backendMigrations: pass-on-isolated-test-database
+  catalogPostgresAtomicity: 3-pass-plus-1-real-concurrent-revision-cas-pass
+  workspacePostgresStores: 8-pass-including-access-filters
+  observabilityPolicy: 8-preexisting-unchanged-failures
+unresolvedConsumers:
+  - external-raw-key-presign-clients
+  - workspace-resolve-names-external-owner
+  - live-ADK-native-dispatch-and-full-application-qualification
+  - out-of-repository-deployment-secret-mounts
+rollbackConstraint: disable-affected-capability-rather-than-restoring-generic-auth-or-raw-key-signing

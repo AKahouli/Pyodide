@@ -22,6 +22,8 @@ class BackgroundInvocation:
     task: asyncio.Task | None = None
     status: str = 'running'
     stop_requested: bool = False
+    execution_authority: object | None = field(default=None, repr=False)
+    authority_renewal_task: asyncio.Task | None = field(default=None, repr=False)
 
 
 class BackgroundInvocationSupervisor:

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { ConnectorController } from '../connector.controller';
 import { ConnectorInternalController } from './connector-internal.controller';
-import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
+import { AdkNativeActorGuard } from '../../auth/guards/adk-native-actor.guard';
 import { AdkRuntimeMcpRenewalGuard } from '../../auth/guards/internal-service-principal.guard';
 import { ValidationPipe } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -30,12 +30,11 @@ describe('MCP JWT endpoints', () => {
 
   it('keeps user issuance behind login and renewal behind the dedicated runtime principal', () => {
     expect(Reflect.getMetadata('__guards__', ConnectorController)).toContain(JwtAuthGuard);
-    // Method-level guards: mcp-token is scoped to the semantic-model-mcp
-    // principal; the transfer import keeps the legacy internal guard.
+    // Renewal and native transfer have separate machine/execution authority.
     const tokenGuards = Reflect.getMetadata('__guards__', ConnectorInternalController.prototype.issueMcpToken) as unknown[];
     const importGuards = Reflect.getMetadata('__guards__', ConnectorInternalController.prototype.importFromConnector) as unknown[];
     expect(tokenGuards).toContain(AdkRuntimeMcpRenewalGuard);
-    expect(importGuards).toContain(InternalServiceGuard);
+    expect(importGuards).toContain(AdkNativeActorGuard);
   });
 
   it('routes internal renewal to the scoped principal rather than the public login guard', async () => {

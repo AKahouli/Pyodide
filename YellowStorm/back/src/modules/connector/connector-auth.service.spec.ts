@@ -43,4 +43,17 @@ describe('ConnectorAuthServiceImpl', () => {
       runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
     })).resolves.toEqual({ headers: {}, env: {} });
   });
+
+  it('does not put arbitrary provider errors or error names in connector auth telemetry', async () => {
+    const error = new Error('https://mcp.example.test/mcp?token=TEST_CANARY_R03');
+    error.name = 'TEST_CANARY_R03';
+    const logger = { setContext: jest.fn(), warn: jest.fn() };
+    const service = new ConnectorAuthServiceImpl({ getValidToken: jest.fn().mockRejectedValue(error) } as never,
+      {} as never, {} as never, logger as never);
+    await expect(service.resolveRuntimeAuth('user-1', { authSourceType: 'connected_app', connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer' },
+    })).resolves.toEqual({ headers: {}, env: {} });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('TEST_CANARY_R03');
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('https://');
+  });
 });

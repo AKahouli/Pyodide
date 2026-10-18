@@ -151,6 +151,33 @@ issuer/audience/verifier separately. See
 and [ADR-0018](../docs/agent-context/decisions/ADR-0018-connector-managed-mcp-security.md).
 Design acceptance and passing focused tests do not certify a deployed integration.
 
+### Private native execution authority (P1 integration)
+
+Native backend tools also require their own dispatch authority; an MCP assertion
+or generic internal key cannot substitute for it. Provision distinct
+`ADK_ROOT_RUNTIME_SERVICE_TOKEN` and `ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN` on ADK
+and their backend verifiers, separate from the MCP renewal credential. Root and
+ordinary conversation dispatch use different signed purposes bound to canonical
+message/job lease generations; Playbook uses its live execution and lease
+generation. These proofs travel in private gRPC metadata and request-local state,
+not agent parameters, model arguments or public events.
+
+`native_actor_headers()` selects the current private Root/native or Playbook
+context. Missing/stale authority fails closed for conversation assets, generated
+images, workspace ingest, connector transfer and Telegram validation; the latter
+also requires the exact conversation and current integration ownership/binding.
+Native-conversation authority cannot control Root executions. Renewal does not
+outlive the canonical attempt, and background ownership/renewal is independent of
+the RPC observer. Root/background and standalone single-agent dispatch
+qualification retains separate live-runtime gates: source presence is not
+readiness evidence. Foreground library/temporary children receive their own proof
+only in the internal `X-YellowStorm-Child-Authority` admission header; task-local
+native context is separate from parent controls, renews every 120 seconds and
+fails closed rather than using the parent token. Scoped required review passed
+after the role-aware source and private-transport corrections.
+See the [principal inventory](../docs/security/internal-principal-inventory.md)
+and [deployment gates](../docs/security/p1-deployment-change-manifest.yaml).
+
 ## Key Features
 
 - **Multi-Agent Orchestration** -- A manager agent dynamically creates and coordinates specialized sub-agents using Google ADK's `Runner` and `Agent` primitives. Supports sequential and parallel workflows.

@@ -35,7 +35,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
-            internal_token=os.getenv("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", ""),
+            internal_token=os.getenv("AGENT_MCP_BACKEND_SERVICE_TOKEN", ""),
             ingress_token=os.getenv("AGENT_MCP_INGRESS_TOKEN", ""),
             timeout_seconds=float(os.getenv("AGENT_MCP_TIMEOUT_SECONDS", "60")),
             port=int(os.getenv("MCP_PORT", "8026")),
@@ -47,8 +47,10 @@ class Settings:
         )
 
     def validate(self) -> None:
-        if not self.internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+        if not self.internal_token.strip() or self.internal_token != self.internal_token.strip():
+            raise ValueError("AGENT_MCP_BACKEND_SERVICE_TOKEN is required without surrounding whitespace")
+        if os.getenv("ENVIRONMENT") == "production" and len(self.internal_token) < 32:
+            raise ValueError("AGENT_MCP_BACKEND_SERVICE_TOKEN must be at least 32 characters in production")
         if self.auth_mode not in ("JWT", "Bearer"):
             raise ValueError("AGENT_MCP_AUTH_MODE must be JWT or Bearer")
         if self.auth_mode == "JWT" and not (self.jwt_public_key_file and self.jwt_issuer and self.jwt_audience):

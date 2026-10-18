@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 import httpx
+from src.root_runtime.delegate_resolver import native_actor_headers as root_authority_headers
 from google.adk.tools import ToolContext
 
 ASSET_TOOL_NAMES = ("list_conversation_assets", "inspect_conversation_asset", "read_conversation_asset", "prepare_conversation_asset")
@@ -16,10 +17,9 @@ ASSET_TOOL_NAMES = ("list_conversation_assets", "inspect_conversation_asset", "r
 def create_conversation_asset_tools(runtime_context: dict[str, Any] | None = None) -> list:
     ctx = runtime_context or {}
     api_url = str(ctx.get("platform_api_url") or "").rstrip("/")
-    token = str(ctx.get("platform_api_token") or "")
     conversation_id = str(ctx.get("conversation_id") or "")
     user_id = str(ctx.get("user_id") or "")
-    if not all((api_url, token, conversation_id, user_id)):
+    if not all((api_url, conversation_id, user_id)):
         return []
     if api_url.endswith("/api"):
         api_url += "/v1"
@@ -31,7 +31,7 @@ def create_conversation_asset_tools(runtime_context: dict[str, Any] | None = Non
             async with httpx.AsyncClient(timeout=35.0) as client:
                 response = await client.post(
                     f"{api_url}/internal/root-work/assets/{operation}",
-                    headers={"X-Internal-Token": token},
+                    headers=await root_authority_headers(),
                     json={"userId": user_id, "conversationId": conversation_id, **values},
                 )
                 response.raise_for_status()
@@ -149,7 +149,7 @@ async def hydrate_prepared_assets(context, conversation_id, invocation_id, recei
                 continue
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(f"{api_url}/internal/root-work/assets/prepare",
-                    headers={"X-Internal-Token": context.platform_api_token},
+                    headers=await root_authority_headers(),
                     json={"userId": context.user_id, "conversationId": conversation_id,
                         "invocationId": invocation_id, "ref": receipt["ref"], "includeBytes": True})
                 response.raise_for_status()

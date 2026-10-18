@@ -16,7 +16,7 @@ async def test_forwards_the_verified_mcp_jwt_as_actor_assertion():
     actor = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     assertion = verified_mcp_jwt.set("signed-mcp-jwt")
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         await client.get("/models", "user-1")
         await client.close()
     finally:
@@ -32,7 +32,7 @@ async def test_omits_the_assertion_header_outside_jwt_mode():
 
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         await client.get("/models", "user-1")
         await client.close()
     finally:
@@ -53,7 +53,7 @@ async def test_forwards_principal_assertion_and_actor_headers():
 
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         assert await client.get("/agents/agent-1", "user-1") == {"id": "agent-1"}
         await client.close()
     finally:
@@ -67,7 +67,7 @@ async def test_normalizes_backend_error_without_exposing_tokens():
 
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         with pytest.raises(SemanticModelBackendError) as error:
             await client.post("/teams", "user-1", {"name": "marketing"})
         assert error.value.code == "TEAM_ALREADY_EXISTS"
@@ -84,7 +84,7 @@ async def test_maps_timeout_to_dependency_error():
 
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         with pytest.raises(SemanticModelBackendError) as error:
             await client.get("/agents", "user-1")
         assert error.value.code == "SEMANTIC_MODEL_TOOL_TIMEOUT"
@@ -102,7 +102,7 @@ async def test_delete_returns_unwrapped_body_for_204():
 
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
-        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler), service_token="service-secret")
+        client = YellowStormSemanticModelClient("http://backend", transport=httpx.MockTransport(handler), service_token="service-secret")
         assert await client.delete("/agents/agent-1", "user-1") == {}
         await client.close()
     finally:

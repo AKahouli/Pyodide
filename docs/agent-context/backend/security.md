@@ -32,8 +32,41 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 | `semantic-model-mcp` | `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`; headers `X-Yellowstorm-Service-Principal` + `X-Yellowstorm-Service-Token` | `internal/semantic-model-assistant/*` only |
 | `app-runtime` | `APP_RUNTIME_BIND_TOKEN` (same two headers, principal `app-runtime`) | `internal/app-runtime/*` only |
 | `adk-runtime` | `ADK_RUNTIME_MCP_RENEWAL_TOKEN` (same two headers, principal `adk-runtime`) | `connectors/internal/mcp-token` renewal with current signed actor proof only |
+| `mcp-agent` | `AGENT_MCP_BACKEND_SERVICE_TOKEN` | Agent/Team internal CRUD, fixed actor audience `mcp-agent` |
+| `mcp-playbook` | `PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN` | Playbook assistant routes, fixed actor audience `mcp-playbook` |
+| `semantic-runtime` | `SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN` | Semantic asset grant and five asset operations, canonical signed admission plus live task/lease/claim proof |
+| `adk-root-runtime` | `ADK_ROOT_RUNTIME_SERVICE_TOKEN` | Root/native conversation operations with purpose-separated live dispatch authority |
+| `adk-playbook-artifact` | `ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN` | Playbook artifact/native operations with signed current execution and lease-generation authority |
 
-The legacy `internal-service.guard.ts` accepts only `INTERNAL_SERVICE_SECRET` and guards the remaining non-semantic internal routes (bounded compatibility path with a removal gate); it never accepts `APP_RUNTIME_BIND_TOKEN`. The original semantic/app scoped tokens are required (min length 16) at startup when `NODE_ENV=production`. The ADK renewal secret is optional when renewal is unused; if configured it requires at least 16 characters. Every principal denies requests when its secret is unset.
+P1 removes generic-key authorization from the tracked internal routes. All eight
+scoped credentials are required at production startup, at least 32 characters,
+without padding and pairwise distinct (also distinct from a configured legacy
+key); each guard denies unset or ambiguous credentials. Agent and Playbook
+connector slugs differ from their machine-principal names. MCP deployments must
+receive only their own machine credential and public verification material, never
+the generic key or private signer. Effective mounts/rotation are deployment gates.
+
+Native ingest, connector import and Telegram validation use the fixed Root/native
+and Playbook caller set plus `X-YellowStorm-Execution-Authority`; body/header actor
+selectors must agree with the live verified subject. Target workspace/conversation
+scope and existing current resource permissions remain mandatory. Workspace name
+lookup instead uses the normal signed-in access JWT and current whole-batch
+workspace rights. The arbitrary-key `internal/documents/download-url` route is
+removed; resource-ID download APIs remain. See the
+[principal inventory](../../security/internal-principal-inventory.md),
+[semantic grant contract](../../security/semantic-asset-grant-contract.md) and
+[resource download contract](../../security/document-presign-contract.md).
+Scoped required review passed for the local Root/native, semantic and encrypted
+connector corrections. The final connector/migration run passed 170 tests across
+9 suites plus the production build-config typecheck. The
+[connector migration contract](../../security/connector-url-secret-migration.md)
+records encrypted receipts, actual endpoint binding, portable credential archives,
+and separate authorization/CAS fencing. Subsequent isolated PostgreSQL checks
+passed catalog atomicity (3), concurrent revision CAS (1), workspace stores/access
+filters (8), and the backend migration command. Full authenticated application/
+provider/storage/deployment qualification is still open. Local review is not
+permission to restore generic authorization
+for unknown clients.
 
 **MCP profile and control plane (ADR-0017/0018):** JWT is one selected profile,
 not mandatory for every MCP. Existing connector rows own typed `mcpSecurityPolicy`

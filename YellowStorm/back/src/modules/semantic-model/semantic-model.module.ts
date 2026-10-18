@@ -60,11 +60,13 @@ import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard'
 // shared key pair.
 import { McpJwtService } from '../connector/services/mcp-jwt.service';
 import { PgConnectorStore } from '../connector/persistence/pg-connector.store';
+import { SemanticAssetGrantService } from './services/semantic-asset-grant.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule),forwardRef(() => NotificationsModule)],
   controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticDataConnectionController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticModelAssistantInternalController],
   providers: [
+    SemanticAssetGrantService,
     SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticDataConnectionService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
@@ -96,6 +98,6 @@ import { PgConnectorStore } from '../connector/persistence/pg-connector.store';
     DelegatedActorGuard,
     SemanticAssistantModelGuard,
   ],
-  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
+  exports: [SemanticAssetGrantService,SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
 })
 export class SemanticModelModule {}

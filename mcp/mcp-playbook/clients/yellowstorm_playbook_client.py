@@ -27,7 +27,7 @@ class PlaybookBackendError(RuntimeError):
 class YellowStormPlaybookClient:
     def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 190, max_response_bytes: int = 2 * 1024 * 1024, transport: httpx.AsyncBaseTransport | None = None) -> None:
         if not internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+            raise ValueError("PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN is required")
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
@@ -51,7 +51,8 @@ class YellowStormPlaybookClient:
 
     async def stream(self, path: str, user_id: str, last_event_id: int = 0) -> AsyncIterator[bytes]:
         headers = {
-            "X-Internal-Token": self._internal_token,
+            "X-YellowStorm-Service-Principal": "mcp-playbook",
+            "X-YellowStorm-Service-Token": self._internal_token,
             "X-YellowStorm-User-Id": user_id,
             "Last-Event-ID": str(last_event_id),
             **self._actor_headers(),
@@ -77,7 +78,8 @@ class YellowStormPlaybookClient:
                 path,
                 json=payload,
                 headers={
-                    "X-Internal-Token": self._internal_token,
+                    "X-YellowStorm-Service-Principal": "mcp-playbook",
+                    "X-YellowStorm-Service-Token": self._internal_token,
                     "X-YellowStorm-User-Id": user_id,
                     **self._actor_headers(),
                     **(extra_headers or {}),

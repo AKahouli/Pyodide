@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from typing import Any, Literal
 
 import httpx
+from src.root_runtime.delegate_resolver import native_actor_headers as root_authority_headers
 from google.adk.tools import ToolContext
 
 IMAGE_SANDBOX_INPUTS_STATE_KEY = "_image_sandbox_inputs"
@@ -54,12 +55,11 @@ def _render_source_pdf(encoded: str, page_number: int) -> str:
 def create_generate_image_tool(runtime_context: dict[str, Any] | None = None):
     ctx = runtime_context or {}
     api_url = str(ctx.get("platform_api_url") or "").rstrip("/")
-    token = str(ctx.get("platform_api_token") or "")
     conversation_id = str(ctx.get("conversation_id") or "")
     user_id = str(ctx.get("user_id") or "")
     agent_id = str(ctx.get("agent_id") or "")
     model = str(ctx.get("image_generation_model") or "gpt-image-2.5-flare")
-    if not all((api_url, token, conversation_id, user_id, agent_id)):
+    if not all((api_url, conversation_id, user_id, agent_id)):
         return None
     if api_url.endswith("/api"):
         api_url += "/v1"
@@ -98,7 +98,7 @@ def create_generate_image_tool(runtime_context: dict[str, Any] | None = None):
             async with httpx.AsyncClient(timeout=210.0) as client:
                 response = await client.post(
                     f"{api_url}/internal/root-work/images/generate",
-                    headers={"X-Internal-Token": token},
+                    headers=await root_authority_headers(),
                     json=payload,
                 )
                 response.raise_for_status()
@@ -107,7 +107,7 @@ def create_generate_image_tool(runtime_context: dict[str, Any] | None = None):
                 if isinstance(data, dict) and "sourcePdf" in data:
                     payload["preparedImage"] = _render_source_pdf(data["sourcePdf"], sourcePage)
                     response = await client.post(f"{api_url}/internal/root-work/images/generate",
-                        headers={"X-Internal-Token": token}, json=payload)
+                        headers=await root_authority_headers(), json=payload)
                     response.raise_for_status()
                     body = response.json()
                     data = body.get("data", body) if isinstance(body, dict) else None

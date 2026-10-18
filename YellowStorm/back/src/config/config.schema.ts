@@ -1,5 +1,20 @@
 import * as Joi from 'joi';
 
+const scopedServiceSecret = () => Joi.string().when('NODE_ENV', {
+  is: 'production',
+  then: Joi.string().min(32).required(),
+  otherwise: Joi.string().allow('').optional(),
+}).custom((value: string, helpers) => value !== value.trim() ? helpers.error('any.invalid') : value)
+  .messages({ 'any.invalid': 'Scoped service credentials must not contain padding' });
+
+const independentServiceTokenKeys = [
+  'AGENT_MCP_BACKEND_SERVICE_TOKEN', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
+  'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
+  'APP_RUNTIME_BIND_TOKEN', 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN',
+  'ADK_ROOT_RUNTIME_SERVICE_TOKEN', 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN',
+  'INTERNAL_SERVICE_SECRET',
+] as const;
+
 export const configValidationSchema = Joi.object({
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
   // Application
@@ -416,7 +431,14 @@ export const configValidationSchema = Joi.object({
   AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
-  ADK_RUNTIME_MCP_RENEWAL_TOKEN: Joi.string().min(16).allow('').default(''),
+  ADK_RUNTIME_MCP_RENEWAL_TOKEN: scopedServiceSecret(),
+  AGENT_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  ADK_ROOT_RUNTIME_SERVICE_TOKEN: scopedServiceSecret(),
+  ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN: scopedServiceSecret(),
+  // Legacy consumers are inventoried separately; never a scoped-principal fallback.
+  INTERNAL_SERVICE_SECRET: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
@@ -424,13 +446,7 @@ export const configValidationSchema = Joi.object({
   // Scoped internal service principal for the semantic MCP server (WP07.2):
   // semantic assistant + MCP token renewal only; distinct from the legacy
   // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).
-  SEMANTIC_MODEL_MCP_SERVICE_TOKEN: Joi.string()
-    .allow('')
-    .when('NODE_ENV', {
-      is: 'production',
-      then: Joi.string().min(16).required(),
-      otherwise: Joi.optional().allow(''),
-    }),
+  SEMANTIC_MODEL_MCP_SERVICE_TOKEN: scopedServiceSecret(),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
@@ -439,13 +455,7 @@ export const configValidationSchema = Joi.object({
   MCP_EGRESS_ALLOW_INSECURE_HTTP: Joi.boolean().default(false),
   // Scoped internal service principal for the app runtime bind surface (WP07.3):
   // valid ONLY for app-runtime bind/tool-invoke, never for other internal routes.
-  APP_RUNTIME_BIND_TOKEN: Joi.string()
-    .allow('')
-    .when('NODE_ENV', {
-      is: 'production',
-      then: Joi.string().min(16).required(),
-      otherwise: Joi.optional().allow(''),
-    }),
+  APP_RUNTIME_BIND_TOKEN: scopedServiceSecret(),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),
@@ -521,4 +531,9 @@ export const configValidationSchema = Joi.object({
   WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
 })
   // Auth throttling/lockout overrides (see auth.config.ts): AUTH_RATE_LIMIT_<KEY>_LIMIT|_WINDOW_SECONDS, AUTH_LOCKOUT_*
-  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1));
+  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1))
+  .custom((value: Record<string, unknown>, helpers) => {
+    const configured = independentServiceTokenKeys.map(key => value[key])
+      .filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
+    return new Set(configured).size === configured.length ? value : helpers.error('any.invalid');
+  }).messages({ 'any.invalid': 'Internal service credentials must be independently provisioned' });

@@ -188,6 +188,8 @@ class PopulationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)
+    asset_admission: str | None = Field(default=None, alias="assetAdmission", max_length=512000)
+    asset_command: str | None = Field(default=None, alias="assetCommand", max_length=512000)
     spec_hash: str = Field(alias="specHash", pattern=r"^sha256:[0-9a-f]{64}$")
     population_execution_fingerprint: str | None = Field(
         default=None, alias="populationExecutionFingerprint",
@@ -250,6 +252,12 @@ class PopulationPayload(BaseModel):
         if self.graph_exposure is None:
             data.pop("graphExposure", None)
             data.pop("graph_exposure", None)
+        if self.asset_admission is None:
+            data.pop("assetAdmission", None)
+            data.pop("asset_admission", None)
+        if self.asset_command is None:
+            data.pop("assetCommand", None)
+            data.pop("asset_command", None)
         return data
 
 
@@ -362,6 +370,8 @@ class Lease:
     lease_owner: str
     lease_expires_at: datetime
     attempt_count: int = 1
+    # Never persisted or returned through operational APIs. Rotated on every claim.
+    asset_capability: str = ""
 
 
 @dataclass(frozen=True)

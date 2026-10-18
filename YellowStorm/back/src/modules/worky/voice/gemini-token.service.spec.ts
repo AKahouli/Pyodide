@@ -103,24 +103,24 @@ describe('GeminiTokenService', () => {
     await expect(svc({}, null).mintSessionToken()).rejects.toThrow(/worky-concierge/);
   });
 
-  it('strips embedded URL credentials before browser toolEndpoints and logs hosts only', async () => {
+  it.each([
+    'https://user:TEST_CANARY_R03@mcp.example.test/mcp',
+    'https://mcp.example.test/mcp?token=TEST_CANARY_R03',
+    'https://mcp.example.test/mcp?%74oken=TEST_CANARY_R03',
+  ])('denies unsafe browser tool endpoints before provider token creation', async (endpoint) => {
     createMock.mockResolvedValue({ name: 'ephemeral-canary' });
     const canary = 'voice-canary-7c31';
     const service = svc();
     const connectors = (service as unknown as { connectors: { findRuntimeBySlug: jest.Mock } }).connectors;
     connectors.findRuntimeBySlug.mockImplementation((slug: string) =>
       slug === 'worky-concierge'
-        ? { slug, id: 'c1', mcpServerUrl: `https://user:${canary}@mcp.example.test/mcp`, actions: CONNECTOR_ACTIONS }
+        ? { slug, id: 'c1', mcpServerUrl: endpoint, actions: CONNECTOR_ACTIONS }
         : null,
     );
     const logSpy = jest.spyOn((service as unknown as { logger: { log: jest.Mock } }).logger, 'log');
 
-    const env = await service.mintSessionToken();
-
-    for (const url of Object.values(env.toolEndpoints)) {
-      expect(url).toBe('https://mcp.example.test/mcp');
-      expect(url).not.toContain(canary);
-    }
+    await expect(service.mintSessionToken()).rejects.toThrow(/without embedded credentials/);
+    expect(createMock).not.toHaveBeenCalled();
     const logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
     expect(logged).not.toContain(canary);
   });

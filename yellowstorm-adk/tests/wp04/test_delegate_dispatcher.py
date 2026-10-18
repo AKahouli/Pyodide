@@ -8,6 +8,7 @@ gating at the runner.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import uuid
 from typing import Any
 
@@ -27,6 +28,20 @@ from src.root_runtime.dispatcher import (
 )
 
 APP = "wp04_app"
+
+
+@pytest.fixture(autouse=True)
+def workflow_authority_broker(monkeypatch):
+    # These Workflow/LLM unit tests predate the transport boundary and fake its
+    # broker, just as they fake definition hydration/settlement. Real admission
+    # response headers and private contexts are covered in the dedicated suite.
+    from src.root_runtime import delegate_resolver
+    @asynccontextmanager
+    async def admitted_child(execution_id):
+        binding = delegate_resolver._native_child_authority.set(delegate_resolver._RootAuthority(execution_id, 'workflow-test-proof'))
+        try: yield
+        finally: delegate_resolver._native_child_authority.reset(binding)
+    monkeypatch.setattr(delegate_resolver, 'foreground_child_authority', admitted_child)
 
 
 class _Scripted(BaseLlm):
@@ -546,7 +561,7 @@ def test_production_bridge_parks_and_resumes_child(monkeypatch):
         branches.append(ctx.branch)
         if len(branches) == 1:
             return RequestInput(interrupt_id="ask", message="need input")
-        return {"answer": "used"}
+        return "used"  # The production worker-result boundary requires a text deliverable.
 
     node = FunctionNode(func=worker, name="parking", rerun_on_resume=True)
 

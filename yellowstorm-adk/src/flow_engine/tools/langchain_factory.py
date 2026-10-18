@@ -1686,7 +1686,6 @@ def _create_connector_mcp_tools(
                                     filename=filename,
                                     execution_id=eid,
                                     user_id=str(_uid or ""),
-                                    internal_token=internal_token,
                                 )
                                 artifact_kind = infer_artifact_kind(filename) or "document"
                                 logger.info(

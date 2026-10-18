@@ -166,8 +166,11 @@ def test_cross_workspace_uses_execution_time_verifier_not_payload_grants():
     def broken(*, actor_user_id, home_workspace_id, source_workspace_id):
         raise ConnectionError("authorization service unavailable")
 
-    assert run_discovery_for_payload(payload, authorize=broken) == {
-        "ok": False, "errorCode": "workspace_forbidden"}
+    unverifiable = run_discovery_for_payload(payload, authorize=broken)
+    assert unverifiable["ok"] is False
+    assert unverifiable["errorCode"] == "workspace_forbidden"
+    assert unverifiable["errorDetails"]["code"] == "workspace_forbidden"
+    assert unverifiable["errorDetails"]["errorType"] == "ConnectionError"
 
     # Same-workspace discovery needs no verifier at all.
     assert run_discovery_for_payload({"actorUserId": "u", "workspaceId": home,

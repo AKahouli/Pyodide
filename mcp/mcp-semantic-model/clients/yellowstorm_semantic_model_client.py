@@ -24,10 +24,8 @@ class SemanticModelBackendError(RuntimeError):
 
 
 class YellowStormSemanticModelClient:
-    def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024,
+    def __init__(self, base_url: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024,
                  transport: httpx.AsyncBaseTransport | None = None, service_token: str = "") -> None:
-        if not internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
         if not service_token:
             # WP07.2: backend assistant routes authenticate the
             # semantic-model-mcp service principal with its scoped secret.
@@ -37,7 +35,6 @@ class YellowStormSemanticModelClient:
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
-        self._internal_token = internal_token
         self._service_token = service_token
         self._max_response_bytes = max_response_bytes
 

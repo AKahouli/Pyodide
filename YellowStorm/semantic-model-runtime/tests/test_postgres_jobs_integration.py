@@ -3,6 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import base64
+import hashlib
+import time
+from contextlib import asynccontextmanager
+from uuid import uuid4
 from pathlib import Path
 
 import asyncpg
@@ -10,6 +15,7 @@ import pytest
 import pytest_asyncio
 
 from app.jobs.models import IdempotencyConflict, JobCommand, SourceEvent, StaleLease
+from app.jobs.models import DiscoveryCommand
 from app.jobs.service import JobService
 from app.persistence import graph_search_store as search_store
 from app.persistence.postgres_jobs import PostgresJobRepository
@@ -20,15 +26,55 @@ pytestmark = pytest.mark.skipif(not DSN, reason="SEMANTIC_RUNTIME_TEST_DATABASE_
 MIGRATIONS = sorted((Path(__file__).resolve().parents[1] / "migrations").glob("*.sql"))
 
 
-@pytest_asyncio.fixture
-async def pool():
+def _asset_candidate(key: str, original: dict | None = None, *, iat: int | None = None, exp: int | None = None):
+    """Candidate only: the backend signature/rights tests remain a separate gate.
+
+    Real SQL here tests canonical UUID persistence and live capability fencing;
+    this deliberately unsigned token cannot authorize a real backend asset read.
+    """
+    raw = original or {"actorUserId": "asset-test-user", "modelId": None, "workspaceId": "asset-test-workspace",
+                       "payload": {"source": {"workspaceId": "asset-test-workspace", "assetId": "asset-test-document",
+                                              "contentHash": "a" * 64}, "options": {"sheetName": "Allowed"}}}
+    now = int(time.time())
+    body = {"actor": raw["actorUserId"], "model": raw.get("modelId"), "purpose": "discovery",
+            "nonce": str(uuid4()), "key": key, "command": json.dumps(raw),
+            "iat": now if iat is None else iat, "exp": now + 300 if exp is None else exp}
+    encoded = base64.urlsafe_b64encode(json.dumps({"body": body}).encode()).decode().rstrip("=")
+    command = DiscoveryCommand.model_validate({**raw, "payload": {**raw["payload"],
+        "assetAdmission": f"candidate.{encoded}.not-a-backend-signature", "assetCommand": body["command"]}})
+    return command, body
+
+
+async def _admit_asset(repository, candidate, key):
+    return await JobService(repository).admit(job_type="datasource.discovery", command=candidate,
+        idempotency_key=key, task_name="semantic-model-datasource.discover", queue_name="semantic-model-datasource.batch")
+
+
+def _backend_live_asset_sql() -> str:
+    # Execute the actual backend query rather than a similar hand-maintained
+    # approximation. Signature, current user/model/source rights are not tested
+    # by this SQL-only boundary assertion.
+    backend = (Path(__file__).resolve().parents[2] / "back/src/modules/semantic-model/services/semantic-asset-grant.service.ts")
+    text = backend.read_text(encoding="utf-8")
+    start = text.index("`SELECT t.payload AS command") + 1
+    return text[start:text.index("`", start)]
+
+
+async def _live_asset_rows(pool, lease, *, capability=None, owner=None, epoch=None, task_id=None, job_id=None):
+    return await pool.fetch(_backend_live_asset_sql(), task_id or lease.task_id, job_id or lease.job_id,
+        lease.lease_epoch if epoch is None else epoch, owner or lease.lease_owner,
+        hashlib.sha256((lease.asset_capability if capability is None else capability).encode()).hexdigest())
+
+
+@asynccontextmanager
+async def _migrated_pool(migrations):
     assert DSN
     connection = await asyncpg.connect(DSN)
     try:
         for schema in ("semantic_jobs", "semantic_datasource", "semantic_runtime",
                        "semantic_population", "semantic_graph_search", "semantic_model"):
             await connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        for migration in MIGRATIONS:
+        for migration in migrations:
             await connection.execute(migration.read_text(encoding="utf-8"))
         await connection.execute("""
             CREATE SCHEMA IF NOT EXISTS semantic_model;
@@ -49,8 +95,32 @@ async def pool():
     finally:
         await connection.close()
     value = await asyncpg.create_pool(DSN, min_size=1, max_size=6)
-    yield value
-    await value.close()
+    try:
+        yield value
+    finally:
+        await value.close()
+
+
+@pytest_asyncio.fixture
+async def pool():
+    async with _migrated_pool(MIGRATIONS) as value:
+        yield value
+
+
+# This boundary has no vector/search dependency. Keep the full-chain fixture
+# above intact: jobs-only PASS must not be reported as a full migration PASS.
+ASSET_GRANT_MIGRATION_NAMES = {
+    "001_durable_jobs.sql", "002_recovery_indexes.sql", "003_source_revisions.sql",
+    "010_ui_signal_outbox.sql", "012_discovery_profiles.sql", "035_worker_heartbeats.sql",
+}
+
+
+@pytest_asyncio.fixture
+async def asset_grant_pool():
+    migrations = [path for path in MIGRATIONS if path.name in ASSET_GRANT_MIGRATION_NAMES]
+    assert {path.name for path in migrations} == ASSET_GRANT_MIGRATION_NAMES
+    async with _migrated_pool(migrations) as value:
+        yield value
 
 
 def command(purpose: str = "build") -> JobCommand:
@@ -68,6 +138,197 @@ async def admit(repository: PostgresJobRepository, key: str = "idem-1", purpose:
         task_name="semantic-model-population.run",
         queue_name="semantic-model-population.batch",
     )
+
+
+@pytest.mark.asyncio
+async def test_asset_grant_real_sql_database_identity(asset_grant_pool):
+    from urllib.parse import urlsplit
+    expected = urlsplit(DSN)
+    row = await asset_grant_pool.fetchrow("""SELECT current_database() AS database,
+        current_setting('server_version_num')::integer AS version,
+        (SELECT system_identifier::text FROM pg_control_system()) AS cluster""")
+    assert row["database"] == expected.path.lstrip("/")
+    assert row["version"] >= 160000
+    print(f"asset-grant PostgreSQL evidence: host={expected.hostname}:{expected.port} "
+          f"database={row['database']} version_num={row['version']} cluster_system_identifier={row['cluster']}")
+    print("asset-grant migrations: " + ", ".join(sorted(ASSET_GRANT_MIGRATION_NAMES)))
+
+
+@pytest.mark.asyncio
+async def test_asset_grant_real_sql_capability_progress_reclaim_and_old_proof_rejection(asset_grant_pool):
+    pool = asset_grant_pool
+    repository = PostgresJobRepository(pool)
+    candidate, body = _asset_candidate(f"claim-{uuid4()}")
+    admitted = await _admit_asset(repository, candidate, body["key"])
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", admitted.job_id)
+    queue = "semantic-model-datasource.batch"
+    first = await repository.claim_task(task_id=task_id, queue_name=queue, lease_owner="asset-first", lease_seconds=60)
+    assert first and len(first.asset_capability) == 64
+    digest = hashlib.sha256(first.asset_capability.encode()).hexdigest()
+    assert await _live_asset_rows(pool, first)
+    assert await repository.checkpoint(task_id=task_id, lease_owner=first.lease_owner, lease_epoch=first.lease_epoch,
+        progress={"stage": "read", "loaded": 7, "assetCapabilityDigest": "attempted-overwrite"}, lease_seconds=60)
+    assert await repository.renew_lease(task_id=task_id, lease_owner=first.lease_owner, lease_epoch=first.lease_epoch, lease_seconds=60)
+    checkpoint = await pool.fetchval("SELECT checkpoint FROM semantic_jobs.tasks WHERE id=$1", task_id)
+    checkpoint = json.loads(checkpoint) if isinstance(checkpoint, str) else checkpoint
+    assert checkpoint["assetCapabilityDigest"] == digest and checkpoint["loaded"] == 7
+    assert await _live_asset_rows(pool, first)
+    # Expiry alone invalidates the old proof before another worker claims it.
+    await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", task_id)
+    assert not await _live_asset_rows(pool, first)
+    second = await repository.claim_task(task_id=task_id, queue_name=queue, lease_owner="asset-second", lease_seconds=60)
+    assert second and second.asset_capability != first.asset_capability
+    assert second.lease_epoch == first.lease_epoch + 1
+    assert await _live_asset_rows(pool, second)
+    assert not await _live_asset_rows(pool, first)
+    assert not await _live_asset_rows(pool, second, capability=first.asset_capability)
+    assert not await _live_asset_rows(pool, second, owner=first.lease_owner)
+    assert not await _live_asset_rows(pool, second, epoch=first.lease_epoch)
+    assert not await _live_asset_rows(pool, second, job_id=str(uuid4()))
+    assert not await _live_asset_rows(pool, second, task_id=task_id + 10000)
+    assert not await repository.renew_lease(task_id=task_id, lease_owner=first.lease_owner, lease_epoch=first.lease_epoch, lease_seconds=60)
+    assert not await repository.checkpoint(task_id=task_id, lease_owner=first.lease_owner, lease_epoch=first.lease_epoch,
+        progress={"loaded": 999}, lease_seconds=60)
+    with pytest.raises(StaleLease):
+        await repository.complete_task(task_id=task_id, lease_owner=first.lease_owner, lease_epoch=first.lease_epoch,
+                                       job_state="completed", result={"ok": True})
+    checkpoint = await pool.fetchval("SELECT checkpoint FROM semantic_jobs.tasks WHERE id=$1", task_id)
+    checkpoint = json.loads(checkpoint) if isinstance(checkpoint, str) else checkpoint
+    assert checkpoint["loaded"] == 7
+    assert checkpoint["assetCapabilityDigest"] == hashlib.sha256(second.asset_capability.encode()).hexdigest()
+    persisted = await pool.fetchval("SELECT row_to_json(t)::text FROM semantic_jobs.tasks t WHERE id=$1", task_id)
+    assert first.asset_capability not in persisted and second.asset_capability not in persisted
+    # Cancellation is an independent fence, even with the latest correct proof.
+    await repository.request_cancel(second.job_id, candidate.actor_user_id)
+    assert not await _live_asset_rows(pool, second)
+
+
+@pytest.mark.asyncio
+async def test_asset_grant_real_sql_concurrent_claim_has_one_capability_digest(asset_grant_pool):
+    pool = asset_grant_pool
+    repository = PostgresJobRepository(pool)
+    candidate, body = _asset_candidate(f"concurrent-{uuid4()}")
+    job = await _admit_asset(repository, candidate, body["key"])
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", job.job_id)
+    claimed = await asyncio.gather(*(repository.claim_task(task_id=task_id, queue_name="semantic-model-datasource.batch",
+        lease_owner=f"asset-concurrent-{index}", lease_seconds=60) for index in range(6)))
+    winners = [lease for lease in claimed if lease is not None]
+    assert len(winners) == 1 and await _live_asset_rows(pool, winners[0])
+    assert await pool.fetchval("SELECT checkpoint->>'assetCapabilityDigest' FROM semantic_jobs.tasks WHERE id=$1", task_id) == hashlib.sha256(winners[0].asset_capability.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_asset_grant_real_sql_canonical_uuid_replay_cancel_and_fresh_retry(asset_grant_pool):
+    pool = asset_grant_pool
+    repository = PostgresJobRepository(pool)
+    key = f"canonical-{uuid4()}"
+    candidate, body = _asset_candidate(key)
+    job = await _admit_asset(repository, candidate, key)
+    assert job.job_id == body["nonce"]
+    row = await pool.fetchrow("SELECT command, command_hash, created_at FROM semantic_jobs.jobs WHERE id=$1::uuid", job.job_id)
+    assert body["iat"] <= row["created_at"].timestamp() <= body["exp"]
+    with pytest.raises(IdempotencyConflict):
+        await _admit_asset(repository, candidate, f"different-{uuid4()}")
+    # Bypass the service's signed-key check deliberately: the existing jobs UUID
+    # PK must independently prevent copying the same candidate under another key.
+    with pytest.raises(IdempotencyConflict):
+        await repository.admit(job_type="datasource.discovery", command=candidate, idempotency_key=f"bypass-{uuid4()}",
+            command_hash=row["command_hash"], task_name="semantic-model-datasource.discover", queue_name="semantic-model-datasource.batch")
+    fresh, fresh_body = _asset_candidate(key)
+    repeat = await _admit_asset(repository, fresh, key)
+    assert repeat.reused and repeat.job_id == job.job_id
+    assert await pool.fetchval("SELECT command FROM semantic_jobs.jobs WHERE id=$1::uuid", job.job_id) == row["command"]
+    await repository.request_cancel(job.job_id, candidate.actor_user_id)
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.jobs WHERE id=$1::uuid", job.job_id) == "cancelled"
+    with pytest.raises(IdempotencyConflict):
+        await _admit_asset(repository, candidate, key)
+    retry_key = hashlib.sha256(f"{key}:{job.job_id}".encode()).hexdigest()
+    with pytest.raises(IdempotencyConflict):
+        await repository.admit(job_type="datasource.discovery", command=candidate, idempotency_key=retry_key,
+            command_hash=row["command_hash"], task_name="semantic-model-datasource.discover", queue_name="semantic-model-datasource.batch")
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.jobs") == 1
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.tasks") == 1
+    retry = await _admit_asset(repository, fresh, key)
+    assert retry.job_id == fresh_body["nonce"] != job.job_id and not retry.reused
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.jobs") == 2
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.tasks") == 2
+
+
+@pytest.mark.asyncio
+async def test_asset_grant_real_sql_rejects_stale_and_mutated_candidates_without_inserts(asset_grant_pool):
+    pool = asset_grant_pool
+    repository = PostgresJobRepository(pool)
+    now = int(time.time())
+    for iat, exp in [(now - 301, now - 1), (now + 60, now + 300), (now, now + 301)]:
+        candidate, body = _asset_candidate(f"window-{uuid4()}", iat=iat, exp=exp)
+        with pytest.raises(IdempotencyConflict):
+            await _admit_asset(repository, candidate, body["key"])
+    for field in ("options", "source"):
+        candidate, body = _asset_candidate(f"scope-{uuid4()}")
+        candidate.payload[field] = {"sheetName": "unsigned"} if field == "options" else {"assetId": "unsigned"}
+        with pytest.raises(IdempotencyConflict):
+            await _admit_asset(repository, candidate, body["key"])
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.jobs") == 0
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.tasks") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_uploaded_at,occurred_at", [
+    (True, "2026-10-18T12:00:00Z"),
+    (False, "2026-10-18T12:00:00Z"),
+    (False, "2026-10-18T14:00:00+02:00"),
+])
+async def test_asset_grant_real_sql_source_event_per_sheet_uuid_and_deduplication(
+    asset_grant_pool, has_uploaded_at, occurred_at
+):
+    pool = asset_grant_pool
+    repository = PostgresJobRepository(pool)
+    repository.realtime_enabled = False  # This test covers durable admission, not UI broadcasting.
+    event_id = f"asset-event-{uuid4()}"
+    workspace, document = "asset-test-workspace", "asset-test-document"
+    model = "11111111-1111-1111-1111-111111111111"
+    for sheet in ("One", "Two", "Unsigned"):
+        await pool.execute("""INSERT INTO semantic_model.source_mappings
+            (model_id, workspace_id, document_id, sheet_name) VALUES ($1::uuid,$2,$3,$4)""",
+            model, workspace, document, sheet)
+    payload = {"workspaceId": workspace, "documentId": document, "createdBy": "asset-test-user",
+               "mimeType": "text/csv", "originalName": "source.csv", "sizeBytes": 4,
+               "contentHash": "a" * 64, "uploadedAt": "2026-10-18T12:00:00.000Z", "indexingStatus": "ready"}
+    if not has_uploaded_at:
+        payload.pop("uploadedAt")
+    source = {"workspaceId": workspace, "assetId": document, "originalName": payload["originalName"],
+              "mimeType": payload["mimeType"], "sizeBytes": 4, "contentHash": payload["contentHash"],
+              # The backend signs Date.toISOString(), including for the
+              # occurredAt fallback when the optional uploadedAt is absent.
+              "uploadedAt": "2026-10-18T12:00:00.000Z", "indexingStatus": "ready", "sourceEventId": event_id,
+              "sourceVersion": payload["contentHash"]}
+    candidates, nonces = {}, set()
+    for sheet in ("One", "Two"):
+        raw = {"actorUserId": payload["createdBy"], "modelId": None, "workspaceId": workspace,
+               "payload": {"source": source, "options": {"sheetName": sheet}}}
+        candidate, body = _asset_candidate(f"{event_id}:{sheet}", original=raw)
+        candidates[sheet] = candidate.payload["assetAdmission"]
+        nonces.add(body["nonce"])
+    # A generic event-wide candidate is deliberately not accepted for another sheet.
+    candidates["Unsigned"] = candidates["One"]
+    event = SourceEvent.model_validate({"eventId": event_id, "eventType": "workspace.document.indexing_ready.v1",
+        "occurredAt": occurred_at, "payload": {**payload, "assetAdmissions": candidates}})
+    observed = await repository.record_source_event(event)
+    assert observed["headAdvanced"] and not observed["reused"]
+    jobs = await pool.fetch("SELECT id::text, command FROM semantic_jobs.jobs ORDER BY id")
+    assert {row["id"] for row in jobs} == nonces and len(jobs) == 2
+    for row in jobs:
+        saved = json.loads(row["command"]) if isinstance(row["command"], str) else row["command"]
+        assert saved["payload"]["source"] == source
+        sheet = saved["payload"]["options"]["sheetName"]
+        assert sheet in ("One", "Two")
+        assert saved["payload"]["assetAdmission"] == candidates[sheet]
+        assert await pool.fetchval("SELECT payload= $2::jsonb FROM semantic_jobs.tasks WHERE job_id=$1::uuid",
+                                   row["id"], json.dumps(saved))
+    assert (await repository.record_source_event(event))["reused"]
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.jobs") == 2
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.tasks") == 2
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.outbox") == 2
 
 
 @pytest.mark.asyncio
@@ -259,8 +520,24 @@ async def test_source_event_enqueues_one_discovery_per_mapped_sheet(pool: asyncp
                     "createdBy": "user-1", "originalName": "data.xlsx",
                     "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "sizeBytes": 1024, "uploadedAt": "2026-09-22T11:00:00Z",
-                    "updatedAt": "2026-09-22T11:30:00Z"},
+                     "updatedAt": "2026-09-22T11:30:00Z"},
     })
+
+    # An authenticated source event is not itself asset execution authority.
+    # Model the backend's separate exact command admission for each sheet.
+    source = {"workspaceId": workspace_id, "assetId": document_id, "originalName": "data.xlsx",
+              "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "sizeBytes": 1024, "contentHash": None, "uploadedAt": "2026-09-22T11:00:00Z",
+              "indexingStatus": None, "sourceEventId": "event-profile",
+              "sourceVersion": "2026-09-22T11:30:00Z:1024"}
+    signed_event = event.model_dump(mode="json", by_alias=True)
+    signed_event["payload"]["assetAdmissions"] = {}
+    for sheet in ("Customers", "Orders"):
+        candidate, _ = _asset_candidate(f"event-profile:{sheet}", original={
+            "actorUserId": "user-1", "modelId": None, "workspaceId": workspace_id,
+            "payload": {"source": source, "options": {"sheetName": sheet}}})
+        signed_event["payload"]["assetAdmissions"][sheet] = candidate.payload["assetAdmission"]
+    event = SourceEvent.model_validate(signed_event)
 
     await PostgresJobRepository(pool).record_source_event(event)
 

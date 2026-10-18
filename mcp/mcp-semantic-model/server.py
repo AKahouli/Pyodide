@@ -100,7 +100,6 @@ def backend() -> YellowStormSemanticModelClient:
     if _client is None:
         _client = YellowStormSemanticModelClient(
             settings.backend_url,
-            settings.internal_token,
             settings.timeout_seconds,
             settings.max_response_bytes,
             service_token=settings.service_token,
