@@ -91,7 +91,7 @@ Protos owned: `grpc/proto/chatbot.proto`, `a2a_admin.proto`, `playbook-flow.prot
 | `mcp-semantic-model` | Semantic-model adapter (see module/README) |
 | `mcp-outlook` | Microsoft Graph Outlook/calendar connector; ingress auth is separate from the server-side Graph provider credential |
 | `mcp-team` | Microsoft Graph Teams connector; source repository is `YellowsysOrg/mcp-teams` because the requested `mcp-team` URL is unavailable |
-| `mcp-sharepoint` | Microsoft Graph SharePoint/OneDrive connector with bounded Ceph run storage |
+| `mcp-sharepoint` | Microsoft Graph SharePoint/OneDrive connector with bounded Ceph run storage; JWT ingress (`Authorization`) plus the acting user's delegated Graph token in `X-M365-Access-Token`, refusing tool calls when that delegated credential is absent, duplicated or equal to the assertion (ADR-0026) |
 | `mcp-manus` | Firecracker sandbox connector; uses the upstream `sandbox_mcp` runtime and required internal API-key ingress |
 
 ## Supporting services

@@ -864,6 +864,101 @@ describe('ConnectorService findByIdsForGrpc', () => {
     expect(binding.auth_headers).toEqual({ Authorization: 'Bearer SAVED' });
   });
 
+  it('carries a delegated provider credential alongside the assertion for a combined internal_jwt connector', async () => {
+    const connectorId = '507f1f77bcf86cd799439041';
+    const row = baseRow({
+      id: connectorId,
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'X-M365-Access-Token', headerPrefix: '' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'http://localhost:8100/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, allowInsecureHttp: true, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { 'X-M365-Access-Token': 'graph-token' }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = {
+      assertConnectorAccess: jest.fn().mockResolvedValue(undefined),
+      bindingAuth: jest.fn((_url: string, _user: string, _id: string, headers: Record<string, string>, env: Record<string, string>) =>
+        Promise.resolve({ headers: { ...headers, Authorization: 'Bearer assertion' }, env })),
+    };
+    const store = connectorStoreMock({ findByIds: jest.fn().mockResolvedValue([row]) });
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(), logger as any, null as any, auth as any,
+      createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    const [binding] = await service.findByIdsForGrpc([connectorId], 'user-1');
+
+    expect(mcpJwt.bindingAuth).toHaveBeenCalledWith('http://localhost:8100/mcp', 'user-1', connectorId,
+      { 'X-M365-Access-Token': 'graph-token' }, {});
+    expect(binding.auth_headers).toEqual({ 'X-M365-Access-Token': 'graph-token', Authorization: 'Bearer assertion' });
+  });
+
+  it('drops an internal_jwt binding when the declared provider credential cannot resolve', async () => {
+    const connectorId = '507f1f77bcf86cd799439042';
+    const row = baseRow({
+      id: connectorId,
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'X-M365-Access-Token', headerPrefix: '' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'http://localhost:8100/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, allowInsecureHttp: true, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), bindingAuth: jest.fn() };
+    const store = connectorStoreMock({ findByIds: jest.fn().mockResolvedValue([row]) });
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(), logger as any, null as any, auth as any,
+      createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    await expect(service.findByIdsForGrpc([connectorId], 'user-1')).rejects.toThrow('no usable provider credential');
+    expect(mcpJwt.bindingAuth).not.toHaveBeenCalled();
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
+
+  it('drops an internal_jwt binding whose provider credential only fills the assertion slot', async () => {
+    const connectorId = '507f1f77bcf86cd799439045';
+    const row = baseRow({
+      id: connectorId,
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer ' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'http://localhost:8100/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, allowInsecureHttp: true, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer graph-token' }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), bindingAuth: jest.fn() };
+    const store = connectorStoreMock({ findByIds: jest.fn().mockResolvedValue([row]) });
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(), logger as any, null as any, auth as any,
+      createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    await expect(service.findByIdsForGrpc([connectorId], 'user-1')).rejects.toThrow('no usable provider credential');
+    expect(mcpJwt.bindingAuth).not.toHaveBeenCalled();
+  });
+
   it('drops connectors that have no enabled action', async () => {
     const connectorId = '507f1f77bcf86cd799439036';
     const row = baseRow({
@@ -1070,6 +1165,141 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
     // now deterministically (400), and never reaches the network.
     await expect(service.importFromMcp('user-1', 'sse', `https://user:${canary}@mcp.example.test/sse`))
       .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('inspects a combined internal_jwt connector with both the provider credential and the assertion', async () => {
+    const row = baseRow({
+      id: '507f1f77bcf86cd799439043',
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'X-M365-Access-Token', headerPrefix: '' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://mcp-sharepoint.example.test/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row) });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { 'X-M365-Access-Token': 'graph-token' }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = {
+      assertConnectorAccess: jest.fn().mockResolvedValue(undefined),
+      headers: jest.fn((_url: string, _user: string, headers: Record<string, string>) =>
+        Promise.resolve({ ...headers, Authorization: 'Bearer assertion' })),
+    };
+    const service = new ConnectorService(
+      store, categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any, auth as any, createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    const result = await service.inspectMcp(row.mcpTransportType, row.mcpServerUrl, row.mcpServerConfig,
+      'user-1', undefined, row.runtimeAuthConfig, undefined, undefined, row.id);
+
+    expect(result.error).toBeUndefined();
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    const lastCall = (StreamableHTTPClientTransport as unknown as jest.Mock).mock.calls.at(-1) as [URL, { requestInit: { headers: Record<string, string> } }];
+    expect(lastCall[1].requestInit.headers).toEqual({ 'X-M365-Access-Token': 'graph-token', Authorization: 'Bearer assertion' });
+  });
+
+  it('refuses to inspect a combined internal_jwt connector when the provider credential is gone', async () => {
+    const row = baseRow({
+      id: '507f1f77bcf86cd799439044',
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'X-M365-Access-Token', headerPrefix: '' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://mcp-sharepoint.example.test/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row) });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), headers: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any, auth as any, createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    const result = await service.inspectMcp(row.mcpTransportType, row.mcpServerUrl, row.mcpServerConfig,
+      'user-1', undefined, row.runtimeAuthConfig, undefined, undefined, row.id);
+
+    expect(result.error).toBe('The protected MCP connector has no usable provider credential');
+    expect(result.tools).toEqual([]);
+    expect(mcpJwt.headers).not.toHaveBeenCalled();
+  });
+
+  it('refuses to inspect when the provider credential only fills the assertion slot', async () => {
+    const row = baseRow({
+      id: '507f1f77bcf86cd799439046',
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer ' },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://mcp-sharepoint.example.test/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row) });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer graph-token' }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), headers: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any, auth as any, createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    const result = await service.inspectMcp(row.mcpTransportType, row.mcpServerUrl, row.mcpServerConfig,
+      'user-1', undefined, row.runtimeAuthConfig, undefined, undefined, row.id);
+
+    expect(result.error).toBe('The protected MCP connector has no usable provider credential');
+    expect(mcpJwt.headers).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mixed provider mapping whose token sits in the assertion slot', async () => {
+    const row = baseRow({
+      id: '507f1f77bcf86cd799439047',
+      name: 'SharePoint',
+      authSourceType: 'connected_app',
+      connectedAppKey: 'microsoft',
+      runtimeAuthConfig: { strategy: 'custom_headers', headerMappings: { Authorization: 'Bearer {token}', 'X-Client-Id': 'yellowstorm' } },
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://mcp-sharepoint.example.test/mcp',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
+      actions: [{ key: 'list_accessible_sites', isEnabled: true }],
+    });
+    const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row) });
+    const auth = {
+      // The unrelated client id must not stand in for the credential that the
+      // assertion later overwrites in Authorization.
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({
+        headers: { Authorization: 'Bearer graph-token', 'X-Client-Id': 'yellowstorm' }, env: {},
+      }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), headers: jest.fn() };
+    const service = new ConnectorService(
+      store, categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any, auth as any, createPlaybookBindingSyncServiceMock() as any, null as any, mcpJwt as any,
+    );
+
+    const result = await service.inspectMcp(row.mcpTransportType, row.mcpServerUrl, row.mcpServerConfig,
+      'user-1', undefined, row.runtimeAuthConfig, undefined, undefined, row.id);
+
+    expect(result.error).toBe('The protected MCP connector has no usable provider credential');
+    expect(mcpJwt.headers).not.toHaveBeenCalled();
   });
 
   it('still inspects approved remote transports through the MCP SDK', async () => {

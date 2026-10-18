@@ -1,5 +1,5 @@
 import { DEFAULT_WORKER_POLICY, isPlatformOrchestration } from './utils/connector-worker-policy';
-import { assertMcpSecurityManager, assertNoReservedMcpOverrides, hasConfiguredMcpCredential, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
+import { assertMcpSecurityManager, assertNoReservedMcpOverrides, hasConfiguredMcpCredential, hasSeparateProviderCredential, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
 import type { McpSecurityPolicy } from './connector.types';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -240,7 +240,7 @@ export class ConnectorService {
       let authHeaders: Record<string, string> = {};
       let authEnv: Record<string, string> = {};
 
-      if (policy.profile === 'configured' && userId && connector.authSourceType !== 'none') {
+      if (policy.profile !== 'public' && userId && connector.authSourceType !== 'none') {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
@@ -257,6 +257,15 @@ export class ConnectorService {
           });
           throw err;
         }
+      }
+
+      // ADR-0026: alongside the assertion, a declared provider credential must
+      // resolve into a header the assertion does not own; otherwise the call is
+      // denied rather than downgraded to assertion-only, which would silently
+      // drop the user's provider authority.
+      if (policy.profile === 'internal_jwt' && connector.authSourceType && connector.authSourceType !== 'none'
+        && !hasSeparateProviderCredential(authHeaders)) {
+        throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable provider credential');
       }
 
       if (policy.profile === 'configured' && !hasConfiguredMcpCredential(connector, authHeaders)) {
@@ -598,6 +607,35 @@ export class ConnectorService {
           headers: {
             ...this.extractStringMap(finalServerConfig.headers),
             ...resolvedAuthHeaders,
+          },
+        };
+      }
+
+      // ADR-0026: a saved internal_jwt connector may also declare a provider
+      // credential. Its inspection must carry the assertion (minted below) AND
+      // the acting user's provider token, or the probe would test a request the
+      // MCP is designed to refuse. A declared credential that cannot resolve
+      // fails closed instead of probing with the assertion alone.
+      if (currentConnector && userId && currentConnector.authSourceType && currentConnector.authSourceType !== 'none'
+        && normalizeMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'internal_jwt') {
+        const providerAuth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+          authSourceType: currentConnector.authSourceType,
+          connectedAppKey: currentConnector.connectedAppKey || '',
+          runtimeAuthConfig: currentConnector.runtimeAuthConfig || {},
+          connectorId: currentConnector.id,
+        });
+        if (!hasSeparateProviderCredential(providerAuth.headers)) {
+          return {
+            serverName: '',
+            tools: [],
+            error: 'The protected MCP connector has no usable provider credential',
+          };
+        }
+        finalServerConfig = {
+          ...finalServerConfig,
+          headers: {
+            ...this.extractStringMap(finalServerConfig.headers),
+            ...providerAuth.headers,
           },
         };
       }

@@ -101,11 +101,31 @@ export function assertNoReservedMcpOverrides(value: unknown): void {
 }
 
 /** Trace/routing headers are not evidence of a resolved credential. */
+function isCredentialHeader(name: string, header: unknown): boolean {
+  return typeof header === 'string' && Boolean(header.trim())
+    && !/^(?:accept(?:-.*)?|content-type|user-agent|traceparent|tracestate|baggage|mcp-.*|x-correlation-id|x-request-id|x-yellowstorm-.*|x-user-.*|x-workspace-.*|x-sandbox-.*)$/i.test(name)
+    && !/^(?:bearer|basic)\s*$/i.test(header);
+}
+
 export function hasMcpCredentialHeaders(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.entries(value).some(([name, header]) => typeof header === 'string' && Boolean(header.trim())
-    && !/^(?:accept(?:-.*)?|content-type|user-agent|traceparent|tracestate|baggage|mcp-.*|x-correlation-id|x-request-id|x-yellowstorm-.*|x-user-.*|x-workspace-.*|x-sandbox-.*)$/i.test(name)
-    && !/^(?:bearer|basic)\s*$/i.test(header));
+  return Object.entries(value).some(([name, header]) => isCredentialHeader(name, header));
+}
+
+/**
+ * ADR-0026: with the assertion profile the ingress credential owns the
+ * `Authorization` slot, so the provider credential must arrive in its own
+ * header. A provider value sitting in `Authorization` is overwritten by the
+ * assertion later (`McpJwtService.headers()`) and must not be counted as a
+ * delivered credential — not even when a mapping also carries an unrelated
+ * metadata header such as a client id.
+ */
+export function hasSeparateProviderCredential(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  const occupiesAuthorizationSlot = entries.some(([name, header]) =>
+    /^authorization$/i.test(name) && typeof header === 'string' && Boolean(header.trim()));
+  return !occupiesAuthorizationSlot && entries.some(([name, header]) => isCredentialHeader(name, header));
 }
 
 export function hasConfiguredMcpCredential(connector: {

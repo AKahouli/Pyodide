@@ -48,9 +48,13 @@ async def _provider_credential_required(send: Send) -> None:
 
 
 def _single_header(headers: list[tuple[bytes, bytes]], name: str) -> str:
-    """The only value of `name`, or "" when it is absent or duplicated."""
-    values = [v.decode("utf-8", "replace").strip() for k, v in headers if k.lower() == name.encode() and v.decode("utf-8", "replace").strip()]
-    return values[0] if len(values) == 1 else ""
+    """The only value of `name`, or "" when it is absent, duplicated or blank.
+
+    Occurrences are counted before any value is inspected, so one valid value
+    plus a second blank/whitespace header is still an ambiguous credential.
+    """
+    values = [v.decode("utf-8", "replace") for k, v in headers if k.lower() == name.encode()]
+    return values[0].strip() if len(values) == 1 else ""
 
 
 class AuthMiddleware:

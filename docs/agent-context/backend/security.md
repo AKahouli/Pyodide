@@ -46,6 +46,24 @@ requires save before testing current persisted policy. Signing keys and receivin
 verifiers remain deployment-managed. A simple saved bearer value uses a literal
 custom Authorization mapping so it is not concatenated with a per-user token.
 
+**Assertion plus delegated provider credential (ADR-0026):** the profile and the
+auth source are independent, so one connector may carry the `internal_jwt`
+assertion *and* the acting user's provider credential. The credential must travel
+in a separate connector-declared header (`runtimeAuthConfig`, e.g.
+`http_header_bearer` with `X-M365-Access-Token` and an empty prefix for a raw
+token), because `McpJwtService.headers()` replaces only `Authorization`; a
+provider header set that fills the `Authorization` slot is not counted and is
+refused rather than silently dropped, even when it also carries unrelated
+metadata headers. Agent runtime, conversation-v2 runtime and saved-connector
+inspection all enforce this, and a declared provider credential that does not
+resolve fails closed (no assertion-only downgrade, no stored-identity fallback)
+— a `connected_app` connector never falls back to a saved static header. Provider
+and MCP credentials never stand in for one another. Receivers must reject a
+provider token presented as the ingress assertion and vice versa; `mcp-sharepoint`
+also runs its `streamable-http` transport stateless so no session retains either
+credential. The delivery settings are editable whenever an auth source is
+selected, including under `internal_jwt`.
+
 **Privileged writes:** `connectors.security.manage` is required in addition to the
 normal create/update permission for policy changes and trust-bearing destination/auth
 changes. Existing `connectors.*`/global wildcard semantics include it. Omitted fields

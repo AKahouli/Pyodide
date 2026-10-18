@@ -32,19 +32,44 @@ pip install -r requirements.txt
 
 ## Configuration
 
-MCP ingress is authenticated before dispatch using `MCP_AUTH_MODE=JWT` with the
-dedicated audience `mcp-sharepoint` (or explicit private `BEARER` mode). The
-verified JWT subject is the actor and untrusted identity headers cannot override
-it. Microsoft Graph uses the separate server-side `M365_ACCESS_TOKEN`; the MCP
-credential is never forwarded to Graph. This follows ADR-0017 profile C. Keep
-storage credentials server-side and apply site/resource allowlists for writes.
+Two independent credentials arrive on every call, and neither substitutes for the
+other (ADR-0017, ADR-0026):
+
+1. **Ingress** — `Authorization: Bearer <assertion>`, verified before dispatch
+   with `MCP_AUTH_MODE=JWT` against the dedicated audience `mcp-sharepoint` (or
+   explicit private `BEARER` mode with `MCP_INGRESS_TOKEN`). The verified JWT
+   subject is the actor, and untrusted identity headers cannot override it.
+2. **Provider authority** — the acting user's delegated Microsoft Graph token,
+   sent by the connector auth layer in `M365_TOKEN_HEADER` (default
+   `x-m365-access-token`). Graph calls use only that token, so every SharePoint
+   operation runs with the user's own permissions. The MCP holds no tenant-wide
+   Graph credential, and there is no environment fallback: tool calls fail closed
+   (`{"error":"provider_credential_required"}`) when the header is missing,
+   duplicated (a repeated header counts even when only one value is non-blank),
+   or echoes the ingress assertion.
+
+Both credentials are bound per HTTP request. The `streamable-http` transport runs
+stateless (`stateless_http=True`), so no transport session retains a token: a
+later call without the provider header is refused even if an earlier one supplied
+it. The `sse`/`http` transports keep their previous launch path and do not carry
+that guarantee.
+
+Keep storage credentials server-side and apply site/resource allowlists for writes.
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `M365_ACCESS_TOKEN` | Server-side Microsoft Graph provider token |
-| `SHAREPOINT_MCP_TRANSPORT` | Transport type: `sse` (default), `http`, `streamable-http` |
+| `M365_TOKEN_HEADER` | Header carrying the acting user's delegated Graph token (default `x-m365-access-token`) |
+| `SHAREPOINT_MCP_TRANSPORT` | Transport type: `streamable-http`, `sse`, `http` |
 | `SHAREPOINT_MCP_PORT` / `PORT` | Server port (default: 8001) |
 | `ALLOWED_ORIGINS` | CORS origins (default: `*`) |
+| `MCP_AUTH_MODE` / `MCP_INGRESS_TOKEN` / `MCP_JWT_PUBLIC_KEY` / `MCP_JWT_ISSUER` / `MCP_JWT_AUDIENCE` | Ingress authentication |
+
+### Tests
+
+```bash
+cd mcp-sharepoint
+python -m pytest tests -q
+```
 
 ## Running
 

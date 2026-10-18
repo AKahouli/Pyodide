@@ -11,7 +11,7 @@ import { isRemoteInspectableMcpTransport } from '../../connector/utils/remote-mc
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
 import { McpJwtService } from '../../connector/services/mcp-jwt.service';
-import { hasConfiguredMcpCredential, normalizeMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
+import { hasConfiguredMcpCredential, hasSeparateProviderCredential, normalizeMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
 import { UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
@@ -254,8 +254,9 @@ export class AgentConnectorRuntimeService {
         const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
         await this.connectorService.assertRuntimeDestination(connector);
         if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
-        if (policy.profile !== 'configured') return;
-        if (connector.authSourceType && connector.authSourceType !== 'none') {
+        if (policy.profile === 'public') return;
+        const declaresProviderAuth = Boolean(connector.authSourceType && connector.authSourceType !== 'none');
+        if (declaresProviderAuth) {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
@@ -273,27 +274,36 @@ export class AgentConnectorRuntimeService {
             throw err;
           }
         }
-        if (!hasConfiguredMcpCredential(connector, binding.auth_headers)) {
-          throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+        // ADR-0026: when the assertion is the ingress credential and the
+        // connector also declares a provider credential, that credential must
+        // resolve into its own header — the assertion overwrites Authorization
+        // later, so counting that slot would still emit an assertion-only call.
+        if (policy.profile === 'internal_jwt' && declaresProviderAuth && !hasSeparateProviderCredential(binding.auth_headers)) {
+          throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable provider credential');
         }
-        try {
-          const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
-            userId,
-            connector?.dynamicHeaders || [],
-          );
-          binding.auth_headers = {
-            ...binding.auth_headers,
-            ...dynamicHeaders,
-          };
-          this.logger.debug('Connector runtime auth headers resolved', {
-            connector_id: binding.connector_id,
-            authHeaderNames: Object.keys(binding.auth_headers),
-          });
-        } catch (err) {
-          this.logger.warn('Failed to resolve connector dynamic headers for agent runtime', {
-            connector_id: binding.connector_id,
-            error: (err as Error).message,
-          });
+        if (policy.profile === 'configured') {
+          if (!hasConfiguredMcpCredential(connector, binding.auth_headers)) {
+            throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+          }
+          try {
+            const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+              userId,
+              connector?.dynamicHeaders || [],
+            );
+            binding.auth_headers = {
+              ...binding.auth_headers,
+              ...dynamicHeaders,
+            };
+            this.logger.debug('Connector runtime auth headers resolved', {
+              connector_id: binding.connector_id,
+              authHeaderNames: Object.keys(binding.auth_headers),
+            });
+          } catch (err) {
+            this.logger.warn('Failed to resolve connector dynamic headers for agent runtime', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
         }
       }));
     }

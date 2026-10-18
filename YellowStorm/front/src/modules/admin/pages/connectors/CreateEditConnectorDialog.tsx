@@ -61,8 +61,19 @@ const ADD_CATEGORY_VALUE = '__add_category__';
 const AUTH_SOURCE_TYPES = [
   { value: 'credential', labelKey: 'connectors.form.auth.savedCredential' },
   { value: 'connected_app', labelKey: 'connectors.form.auth.connectedAccount' },
-  { value: 'internal_jwt', labelKey: 'connectors.form.auth.userDelegation' },
-  { value: 'none', labelKey: 'connectors.form.auth.publicAccess' },
+  { value: 'none', labelKey: 'connectors.form.auth.noAuthSource' },
+ ] as const;
+
+/**
+ * The security profile decides how the MCP identifies the caller; it is
+ * independent of the credential the connector sends (ADR-0026). An
+ * `internal_jwt` connector may therefore also deliver the acting user's
+ * provider credential from a connected account.
+ */
+const SECURITY_PROFILE_TYPES = [
+  { value: 'public', labelKey: 'connectors.form.securityProfile.public' },
+  { value: 'configured', labelKey: 'connectors.form.securityProfile.configured' },
+  { value: 'internal_jwt', labelKey: 'connectors.form.securityProfile.internalJwt' },
  ] as const;
 
 // Remote transports only: local stdio connectors are not supported over HTTP
@@ -171,7 +182,17 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
   if (form.authSourceType === 'credential' && form.accessToken?.trim()) {
     // Literal mapping deliberately has no {token} interpolation: an existing
     // per-user credential must never be appended to this explicitly entered token.
-    return { strategy: 'custom_headers', headerMappings: { Authorization: `Bearer ${form.accessToken.trim()}` } };
+    if (form.mcpSecurityPolicy?.profile !== 'internal_jwt') {
+      return { strategy: 'custom_headers', headerMappings: { Authorization: `Bearer ${form.accessToken.trim()}` } };
+    }
+    // ADR-0026: the assertion owns Authorization under this profile, so an
+    // explicitly entered provider token is delivered in the separately
+    // configured header instead of a slot the assertion overwrites.
+    const headerName = form.runtimeHeaderName.trim();
+    if (!headerName) {
+      return undefined;
+    }
+    return { strategy: 'custom_headers', headerMappings: { [headerName]: `${form.runtimeHeaderPrefix}${form.accessToken.trim()}` } };
   }
 
   if (form.authSourceType === 'server_config') {
@@ -204,6 +225,25 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
     headerName: form.runtimeHeaderName.trim() || 'Authorization',
     headerPrefix: form.runtimeHeaderPrefix,
   };
+}
+
+// ADR-0026: an assertion-profile connector delivers the provider token raw
+// because the receiver adds the scheme itself, so the untouched "Bearer "
+// default would arrive doubled. Value equality cannot tell an untouched default
+// from a prefix the admin typed on purpose (an explicit "Bearer " or an explicit
+// empty value), so the dialog tracks where the current value came from.
+type PrefixProvenance = 'default' | 'auto-raw' | 'explicit';
+
+function nextAssertionPrefix(provenance: PrefixProvenance, current: string): { value: string; provenance: PrefixProvenance } {
+  return provenance === 'explicit'
+    ? { value: current, provenance }
+    : { value: '', provenance: 'auto-raw' };
+}
+
+function nextPlainPrefix(provenance: PrefixProvenance, current: string): { value: string; provenance: PrefixProvenance } {
+  return provenance === 'auto-raw'
+    ? { value: defaultConnectorFormValues.runtimeHeaderPrefix, provenance: 'default' }
+    : { value: current, provenance };
 }
 
 function humanizeToolName(name: string) {
@@ -270,6 +310,7 @@ export function CreateEditConnectorDialog({
   const destinationLocked = !canManageSecurity && (legacyAuth || (!!savedSecurity?.mcpSecurityPolicy &&
     (savedSecurity.mcpSecurityPolicy.profile === 'internal_jwt' || savedSecurity.mcpSecurityPolicy.allowPrivateNetwork || savedSecurity.mcpSecurityPolicy.allowInsecureHttp || savedSecurity.mcpSecurityPolicy.actorDelegation === 'verified_user' || savedSecurity.mcpSecurityPolicy.requiredPermissions.length > 0)));
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
+  const prefixProvenance = useRef<PrefixProvenance>('default');
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
@@ -330,6 +371,7 @@ export function CreateEditConnectorDialog({
         // Stored credentials/config never round-trip to the browser (SEC-02 /
         // WP-02): the form starts empty and only replaces them when the admin
         // explicitly opts in.
+        prefixProvenance.current = savedSecurity?.mcpSecurityPolicy?.profile === 'internal_jwt' ? 'auto-raw' : 'default';
         setForm({
           ...defaultConnectorFormValues,
           mcpSecurityPolicy: savedSecurity?.mcpSecurityPolicy,
@@ -344,6 +386,10 @@ export function CreateEditConnectorDialog({
           authType: connector.authType || 'none',
           authSourceType: connector.authSourceType || 'credential',
           connectedAppKey: connector.connectedAppKey || '',
+          // A saved assertion connector also delivers the provider token raw.
+          runtimeHeaderPrefix: savedSecurity?.mcpSecurityPolicy?.profile === 'internal_jwt'
+            ? ''
+            : defaultConnectorFormValues.runtimeHeaderPrefix,
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
           dynamicHeaders: dynamicHeadersToRows(connector.dynamicHeaders),
@@ -360,6 +406,7 @@ export function CreateEditConnectorDialog({
           void refreshConnectionStatus(connector.connectedAppKey);
         }
       } else {
+        prefixProvenance.current = 'default';
         setForm({ ...defaultConnectorFormValues, authSourceType: canManageSecurity ? 'none' : 'credential', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] } : undefined });
       }
     }
@@ -412,7 +459,7 @@ export function CreateEditConnectorDialog({
       return;
     }
 
-    const runtimeAuthConfig = form.authSourceType !== 'none' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && (!connector || form.replaceCredentials) ? buildRuntimeAuthConfig(form) : undefined;
+    const runtimeAuthConfig = form.authSourceType !== 'none' && (!connector || form.replaceCredentials) ? buildRuntimeAuthConfig(form) : undefined;
     const leavingConfiguredAuth = !!connector && form.authSourceType === 'none' && (connector.authSourceType !== 'none' || savedSecurity?.mcpSecurityPolicy?.profile !== form.mcpSecurityPolicy?.profile);
 
     const policyChanged = securityPolicyChanged(form.mcpSecurityPolicy, savedSecurity?.mcpSecurityPolicy);
@@ -420,6 +467,22 @@ export function CreateEditConnectorDialog({
       toast.error(t('connectors.form.security.audienceRequired'));
       return;
     }
+    // ADR-0026: with the assertion profile a provider credential must reach its
+    // own header; the Authorization slot is replaced by the assertion, so saving
+    // that delivery would drop the credential silently. Only a save that
+    // actually serializes the delivery config can be rejected — a metadata-only
+    // update of an existing connector keeps its stored configuration.
+    const configuresDelivery = form.authSourceType !== 'none' && (!connector || form.replaceCredentials);
+    const providerHeaderName = form.runtimeHeaderName.trim();
+    const needsSeparateProviderHeader = configuresDelivery && form.mcpSecurityPolicy?.profile === 'internal_jwt' && (
+      (form.authSourceType === 'connected_app' && form.runtimeAuthStrategy === 'http_header_bearer')
+      || (form.authSourceType === 'credential' && !!form.accessToken?.trim())
+    );
+    if (needsSeparateProviderHeader && (!providerHeaderName || /^authorization$/i.test(providerHeaderName))) {
+      toast.error(t('connectors.form.security.separateProviderHeaderRequired'));
+      return;
+    }
+
     onSave({
       ...form,
       mcpSecurityPolicy: canManageSecurity && (!connector || policyChanged) ? form.mcpSecurityPolicy : undefined,
@@ -432,6 +495,60 @@ export function CreateEditConnectorDialog({
       connectedAppKey: form.authSourceType === 'connected_app' ? form.connectedAppKey : '',
       runtimeAuthConfig: runtimeAuthConfig ? JSON.stringify(runtimeAuthConfig) : '',
       clearCredentials: connector ? form.clearCredentials || leavingConfiguredAuth : false,
+    });
+  };
+
+  /**
+   * Changing the credential a connector sends must not disturb the identity it
+   * presents: a connector already on `internal_jwt` keeps that profile (and its
+   * verified-user delegation) whichever auth source is selected.
+   */
+  const applyAuthSource = (authSourceType: ConnectorFormValues['authSourceType'], connectedAppKey: string) => {
+    const keepsDelegation = form.mcpSecurityPolicy?.profile === 'internal_jwt';
+    setForm({
+      ...form,
+      authSourceType,
+      connectedAppKey: authSourceType === 'connected_app' ? connectedAppKey : '',
+      mcpSecurityPolicy: canManageSecurity ? {
+        version: 1,
+        profile: keepsDelegation ? 'internal_jwt' : authSourceType === 'none' ? 'public' : 'configured',
+        actorDelegation: keepsDelegation ? 'verified_user' : 'none',
+        allowPrivateNetwork: !keepsDelegation && authSourceType === 'none' ? false : form.mcpSecurityPolicy?.allowPrivateNetwork ?? false,
+        allowInsecureHttp: !keepsDelegation && authSourceType === 'none' ? false : form.mcpSecurityPolicy?.allowInsecureHttp ?? false,
+        requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [],
+        ...(form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}),
+      } : form.mcpSecurityPolicy,
+    });
+  };
+
+  const applySecurityProfile = (profile: 'public' | 'configured' | 'internal_jwt') => {
+    if (!canManageSecurity) return;
+    // ADR-0026: under an assertion profile the receiver adds the scheme to the
+    // separately delivered provider token, so a prefix the admin never touched
+    // becomes the raw value (the untouched "Bearer " default would arrive
+    // doubled). A prefix the admin typed, including an explicit "Bearer " or an
+    // explicit empty value, is never rewritten; leaving the profile puts back
+    // only the default this dialog itself replaced.
+    const prefix = profile === 'internal_jwt'
+      ? nextAssertionPrefix(prefixProvenance.current, form.runtimeHeaderPrefix)
+      : nextPlainPrefix(prefixProvenance.current, form.runtimeHeaderPrefix);
+    prefixProvenance.current = prefix.provenance;
+    setForm({
+      ...form,
+      // Public connectors carry no credential; every other profile keeps the
+      // selected auth source, so profile and credential stay independent.
+      authSourceType: profile === 'public' ? 'none' : form.authSourceType,
+      connectedAppKey: profile === 'public' ? '' : form.connectedAppKey,
+      runtimeHeaderPrefix: prefix.value,
+      mcpSecurityPolicy: {
+        version: 1,
+        profile,
+        actorDelegation: profile === 'internal_jwt' ? 'verified_user' : 'none',
+        allowPrivateNetwork: profile === 'public' ? false : form.mcpSecurityPolicy?.allowPrivateNetwork ?? false,
+        allowInsecureHttp: profile === 'public' ? false : form.mcpSecurityPolicy?.allowInsecureHttp ?? false,
+        requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [],
+        ...(form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}),
+      },
     });
   };
 
@@ -780,9 +897,27 @@ export function CreateEditConnectorDialog({
               <p className='text-sm text-muted-foreground'>{t('connectors.form.auth.sectionHelper')}</p>
             </div>
             <div className='grid grid-cols-2 gap-4'>
+              {canManageSecurity ? <div>
+                <Label htmlFor='connector-security-profile'>{t('connectors.form.auth.securityProfile')}</Label>
+                <Select value={form.mcpSecurityPolicy?.profile ?? 'configured'} onValueChange={(value) => applySecurityProfile(value as 'public' | 'configured' | 'internal_jwt')} disabled={destinationLocked}>
+                  <SelectTrigger id='connector-security-profile'>
+                    <SelectValue placeholder={t('connectors.form.auth.securityProfile')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SECURITY_PROFILE_TYPES.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className='mt-1 text-sm text-muted-foreground'>{t('connectors.form.auth.securityProfileHelper')}</p>
+                {form.mcpSecurityPolicy?.profile === 'internal_jwt' ? <div className='mt-2'>
+                  <Label htmlFor='connector-audience'>{t('connectors.form.security.audience')}</Label>
+                  <Input id='connector-audience' maxLength={256} value={form.mcpSecurityPolicy.audience ?? ''} onChange={(event) => setForm({ ...form, mcpSecurityPolicy: { ...form.mcpSecurityPolicy!, audience: event.target.value } })} />
+                </div> : null}
+              </div> : null}
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.mcpSecurityPolicy?.profile === 'internal_jwt' ? 'internal_jwt' : form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value === 'internal_jwt' ? 'none' : value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: value === 'internal_jwt' ? 'internal_jwt' : value === 'none' ? 'public' : 'configured', actorDelegation: value === 'internal_jwt' ? 'verified_user' : 'none', allowPrivateNetwork: value === 'none' ? false : form.mcpSecurityPolicy?.allowPrivateNetwork ?? false, allowInsecureHttp: value === 'none' ? false : form.mcpSecurityPolicy?.allowInsecureHttp ?? false, requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [], ...(value === 'internal_jwt' && form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}) } : form.mcpSecurityPolicy })} disabled={legacyAuth || destinationLocked || (!canManageSecurity && form.authSourceType === 'none')}>
+                <Select value={form.authSourceType} onValueChange={(value) => applyAuthSource(value as ConnectorFormValues['authSourceType'], form.connectedAppKey)} disabled={legacyAuth || destinationLocked || (!canManageSecurity && (form.authSourceType === 'none' || form.mcpSecurityPolicy?.profile === 'internal_jwt'))}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
@@ -790,7 +925,7 @@ export function CreateEditConnectorDialog({
                     {legacyAuth ? (
                       <SelectItem value={form.authSourceType}>{t('connectors.form.auth.serverConfigOption')}</SelectItem>
                     ) : null}
-                    {AUTH_SOURCE_TYPES.filter((option) => (option.value !== 'internal_jwt' || canManageSecurity || form.mcpSecurityPolicy?.profile === 'internal_jwt') && (option.value !== 'none' || canManageSecurity || form.authSourceType === 'none')).map((option) => (
+                    {AUTH_SOURCE_TYPES.filter((option) => option.value !== 'none' || canManageSecurity || form.authSourceType === 'none').map((option) => (
                       <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>
                     ))}
                   </SelectContent>
@@ -819,10 +954,6 @@ export function CreateEditConnectorDialog({
             {canManageSecurity ? <details className='rounded-md border p-3'>
               <summary className='cursor-pointer font-medium'>{t('connectors.form.security.details')}</summary>
               <div className='mt-3 grid gap-3'>
-                {form.mcpSecurityPolicy?.profile === 'internal_jwt' ? <div>
-                  <Label htmlFor='connector-audience'>{t('connectors.form.security.audience')}</Label>
-                  <Input id='connector-audience' maxLength={256} value={form.mcpSecurityPolicy.audience ?? ''} onChange={(event) => setForm({ ...form, mcpSecurityPolicy: { ...form.mcpSecurityPolicy!, audience: event.target.value } })} />
-                </div> : null}
                 <div className='flex items-center gap-2'>
                   <Switch id='connector-private-network' checked={form.mcpSecurityPolicy?.allowPrivateNetwork ?? false} onCheckedChange={(checked) => setForm({ ...form, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', requiredPermissions: [], allowInsecureHttp: false, ...form.mcpSecurityPolicy, allowPrivateNetwork: checked } })} />
                   <Label htmlFor='connector-private-network'>{t('connectors.form.security.allowPrivateNetwork')}</Label>
@@ -877,7 +1008,7 @@ export function CreateEditConnectorDialog({
               );
             })()}
 
-            {connector && form.authSourceType === 'credential' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' ? (
+            {connector && form.authSourceType === 'credential' ? (
               <div className='grid gap-3 rounded-md bg-muted/40 p-3'>
                 <span className={`text-sm font-medium ${connector.credentialConfigured ? 'text-green-600' : 'text-amber-600'}`}>
                   {connector.credentialConfigured
@@ -898,11 +1029,11 @@ export function CreateEditConnectorDialog({
               </div>
             ) : null}
 
-            {form.authSourceType === 'credential' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && (!connector || form.replaceCredentials) ? <div>
+            {form.authSourceType === 'credential' && (!connector || form.replaceCredentials) ? <div>
               <Label htmlFor='connector-access-token'>{t('connectors.form.auth.accessToken')}</Label>
               <Input id='connector-access-token' type='password' autoComplete='new-password' value={form.accessToken ?? ''} onChange={(event) => setForm({ ...form, accessToken: event.target.value })} />
             </div> : null}
-            {!legacyAuth && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && form.authSourceType !== 'none' && (!connector || form.replaceCredentials) && (
+            {!legacyAuth && form.authSourceType !== 'none' && (!connector || form.replaceCredentials) && (
               <details className='rounded-md border p-3'>
                 <summary className='cursor-pointer'>{t('connectors.form.sections.runtimeInjection')}</summary>
               <div className='mt-3 grid gap-4'>
@@ -920,15 +1051,21 @@ export function CreateEditConnectorDialog({
                   </Select>
                 </div>
 
-                {form.runtimeAuthStrategy === 'http_header_bearer' && (
+                {(form.runtimeAuthStrategy === 'http_header_bearer'
+                  || (form.authSourceType === 'credential' && form.mcpSecurityPolicy?.profile === 'internal_jwt')) && (
                   <div className='grid grid-cols-2 gap-4'>
                     <div>
                       <Label>{t('connectors.form.auth.headerNameLabel')}</Label>
                       <Input value={form.runtimeHeaderName} onChange={(e) => setForm({ ...form, runtimeHeaderName: e.target.value })} placeholder={t('connectors.form.auth.headerNamePlaceholder')} />
+                      {form.mcpSecurityPolicy?.profile === 'internal_jwt' ? (
+                        <p className='mt-1 text-xs text-muted-foreground'>
+                          {t('connectors.form.security.separateProviderHeaderHelper')}
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <Label>{t('connectors.form.auth.headerPrefixLabel')}</Label>
-                      <Input value={form.runtimeHeaderPrefix} onChange={(e) => setForm({ ...form, runtimeHeaderPrefix: e.target.value })} placeholder={t('connectors.form.auth.headerPrefixPlaceholder')} />
+                      <Input value={form.runtimeHeaderPrefix} onChange={(e) => { prefixProvenance.current = 'explicit'; setForm({ ...form, runtimeHeaderPrefix: e.target.value }); }} placeholder={t('connectors.form.auth.headerPrefixPlaceholder')} />
                       <p className='mt-1 text-xs text-muted-foreground'>
                         {t('connectors.form.auth.headerPrefixHelper')}
                       </p>
