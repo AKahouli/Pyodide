@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from src.flow_engine.tools import langchain_factory
-from src.flow_engine import mcp
+from src import mcp
 from src.flow_engine.tools.sandbox_mount_guard import (
     SandboxCallBudget,
     SandboxMountGuard,

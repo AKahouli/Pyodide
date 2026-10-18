@@ -37,11 +37,11 @@ function decodeImage(source: string): { bytes: Uint8Array<ArrayBuffer>; mimeType
 /** Persist captured visuals using the conversation's existing quota/upload owner. */
 export async function persistMcpExportImages<T extends McpExportManifest>(conversationId: string, manifest: T, assertCurrent: () => void): Promise<T> {
   const sources = new Map<string, string>();
-  async function lookup(filename: string, mimeType: string, documentId: string): Promise<string | undefined> {
+  async function lookup(mimeType: string, documentId: string): Promise<string | undefined> {
     let cursor: string | undefined;
     for (let page = 0; page < 3; page += 1) {
       assertCurrent();
-      const result = await fetchConversationAssets(conversationId, { search: filename, kind: 'image', limit: 50, cursor });
+      const result = await fetchConversationAssets(conversationId, { kind: 'image', limit: 50, cursor });
       assertCurrent();
       if (result.sourceErrors?.includes('upload')) throw new Error('Export image discovery unavailable');
       const asset = result.assets.find(item => item.status === 'ready'
@@ -74,7 +74,7 @@ export async function persistMcpExportImages<T extends McpExportManifest>(conver
         assertCurrent();
         await confirmFileUpload(conversationId, upload.documentId);
         assertCurrent();
-        source = await lookup(filename, image.mimeType, upload.documentId);
+        source = await lookup(image.mimeType, upload.documentId);
         assertCurrent();
         if (!source) throw new Error('Uploaded export image is unavailable');
       }

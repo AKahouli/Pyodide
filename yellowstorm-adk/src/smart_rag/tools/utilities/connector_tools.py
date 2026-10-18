@@ -1350,7 +1350,7 @@ def create_connector_tools(
                 if invocation_id:
                     effective_auth_headers["x-execution-id"] = invocation_id
                 context_state = getattr(tool_context, "state", {})
-                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug in {"code-interpreter", "code-interpreort-aga"} else {}
+                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} else {}
                 image_paths = image_state.get("paths", []) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else []
                 # Paths originate only from validated platform asset/image receipts for this turn.
                 image_paths = sorted(set(path for path in image_paths if isinstance(path, str)
@@ -1411,7 +1411,7 @@ def create_connector_tools(
                     _sandbox_lifecycle.update(known=True, active=False, receipts={})
                     _image_mount_guards.clear()
                     _sandbox_epochs.clear()
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key != "sandbox_destroy":
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key != "sandbox_destroy":
                     if not _sandbox_lifecycle["known"]:
                         if "sandbox_destroy" not in _available_actions:
                             return {"error": "A verified fresh sandbox lifecycle is required before execution."}
@@ -1427,7 +1427,7 @@ def create_connector_tools(
                     asset_receipts = {**_sandbox_lifecycle["receipts"], **asset_receipts}
                     if len(asset_receipts) > MAX_IMAGE_SANDBOX_INPUTS:
                         return {"error": "Too many retained sandbox inputs. Destroy the sandbox and select at most 32 assets."}
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key == "sandbox_destroy":
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key == "sandbox_destroy":
                     if not _sandbox_lifecycle["known"]:
                         merged_params["failed"] = True
                     from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
@@ -1444,7 +1444,7 @@ def create_connector_tools(
                             await validate_prepared_assets(context, _session_id, _sandbox_lifecycle["receipts"])
                         except SandboxMountValidationError:
                             merged_params["failed"] = True
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and _action_key != "sandbox_destroy":
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key != "sandbox_destroy":
                     from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
                     try:
                         revocation = await get_asset_revocation(context, _session_id)
@@ -1478,7 +1478,7 @@ def create_connector_tools(
                         _image_mount_guards.pop(invocation_id, None)
                         return {"error": "A selected asset is unavailable. Execution stopped and no output was published. Select current assets before retrying."}
 
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and image_paths and _action_key != "sandbox_destroy":
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and image_paths and _action_key != "sandbox_destroy":
                     guard = _image_mount_guards.get(invocation_id)
                     try:
                         if _action_key == "sandbox_create":
@@ -1502,7 +1502,7 @@ def create_connector_tools(
                         return {"error": "Required image inputs were not mounted after bounded sandbox validation. No substitute paths were used."}
                 else:
                     response = await call_action(_action_key, merged_params)
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga"}:
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}:
                     if _action_key == "sandbox_destroy":
                         if confirmed_destroy(response):
                             reset_lifecycle()
@@ -1534,7 +1534,7 @@ def create_connector_tools(
                 )
                 if isinstance(registered_response, dict):
                     registered_response.pop("_conversation_output_receipt", None)
-                if (_connector_slug in {"code-interpreter", "code-interpreort-aga"}
+                if (_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
                         and _action_key == "send_file_to_user"):
                     # A coordinator copy receipt alone is not a registered conversation file.
                     # Verify bytes/quota through the platform before emitting any ready artifact.

@@ -20,6 +20,16 @@ receipts, discard stale sandboxes and fence registration against concurrent dele
 UI-only cleanup retries are excluded from agent discovery. Focused tests:
 `src/smart_rag/tools/tests/test_conversation_assets.py`.
 
+Private image hydration verifies the exact prepared path and SHA after binary
+transfer. A failed remote read reports only its bounded OS error class/number,
+never a traceback with file paths or contents. Interpreter upload success must
+mean the actual write succeeded, including the coordinator's nested result;
+the interpreter client creates the exact destination parent before upload.
+The mount guard remains closed until exact-path verification passes.
+The existing `code-interpretor-aga` connector and legacy `code-interpreort-aga`
+alias use the same guarded interpreter and trusted output-registration paths as
+`code-interpreter`; recognizing an alias does not grant connector access.
+
 ## Architecture Overview 
 
 ```

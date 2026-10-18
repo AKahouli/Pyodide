@@ -97,7 +97,7 @@ def _first_connector_tool(
             dynamic_headers,
             parameter_schema_json,
         )]
-    if connector_slug in {"code-interpreter", "code-interpreort-aga"} and action_key != "sandbox_destroy":
+    if connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and action_key != "sandbox_destroy":
         bindings[0]["actions"] += [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}} for action in ["sandbox_create", "sandbox_destroy"] if action != action_key]
     tools = create_connector_tools(bindings,
         ConnectorToolContext(
@@ -109,7 +109,7 @@ def _first_connector_tool(
         ),
     )
     selected = next(tool for tool in tools if tool.name == build_connector_tool_name(connector_slug, action_key))
-    if connector_slug in {"code-interpreter", "code-interpreort-aga"} and action_key not in {"sandbox_create", "sandbox_destroy"}:
+    if connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and action_key not in {"sandbox_create", "sandbox_destroy"}:
         original = selected.func
         create = next(tool for tool in tools if tool.name.endswith("_sandbox_create"))
         async def with_sandbox(**kwargs):
@@ -1055,7 +1055,8 @@ def test_connector_tool_buffers_mcp_image_parts_for_model(
 
 
 @pytest.mark.asyncio
-async def test_general_asset_receipts_mount_through_existing_connector_alias(monkeypatch):
+@pytest.mark.parametrize("slug", ["code-interpreter", "code-interpreort-aga", "code-interpretor-aga"])
+async def test_general_asset_receipts_mount_through_existing_connector_alias(monkeypatch, slug):
     from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
     path=f"/mnt/workspace/conversation-assets/{'b'*64}.pdf"
     calls=[]
@@ -1063,19 +1064,20 @@ async def test_general_asset_receipts_mount_through_existing_connector_alias(mon
         calls.append((args[3],kwargs["auth_headers"]))
         return {"text":"Sandbox destroyed." if args[3] == "sandbox_destroy" else "ok"}
     monkeypatch.setattr("src.mcp.call_mcp_tool",call)
-    binding=_connector_binding({},auth_headers={"X-User-Id":"owner"},connector_slug="code-interpreort-aga")
+    binding=_connector_binding({},auth_headers={"X-User-Id":"owner"},connector_slug=slug)
     binding["actions"]=[{"action_key":action,"parameter_schema":{"type":"object","properties":{}}} for action in ["sandbox_create","sandbox_destroy","file_list","shell_exec"]]
     tools={tool.name:tool for tool in create_connector_tools([binding],ConnectorToolContext(session_id="c1"))}
     context=SimpleNamespace(invocation_id="turn",state={IMAGE_SANDBOX_INPUTS_STATE_KEY:{"invocation":"turn","paths":[path]}})
-    await tools["code-interpreort-aga_sandbox_create"].func(tool_context=context)
-    await tools["code-interpreort-aga_shell_exec"].func(tool_context=context)
+    await tools[f"{slug}_sandbox_create"].func(tool_context=context)
+    await tools[f"{slug}_shell_exec"].func(tool_context=context)
     assert [action for action,_ in calls]==["sandbox_destroy","sandbox_create","file_list","shell_exec"]
     assert all(headers["x-file-paths"]==f"owner/system_c1/conversation-assets/{'b'*64}.pdf" for _,headers in calls)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("denied",[False,True])
-async def test_output_receipt_is_issued_only_after_registration(monkeypatch,denied):
+@pytest.mark.parametrize("slug", ["code-interpreter", "code-interpreort-aga", "code-interpretor-aga"])
+async def test_output_receipt_is_issued_only_after_registration(monkeypatch,denied,slug):
     import httpx
     async def call(*args,**kwargs):
         if args[3]=="sandbox_destroy": return {"text":"Sandbox destroyed."}
@@ -1089,12 +1091,12 @@ async def test_output_receipt_is_issued_only_after_registration(monkeypatch,deni
             "storagePath":"owner/system_c1/saved.docx","fileName":"report.docx"},request=httpx.Request("POST",url))
     monkeypatch.setattr("src.mcp.call_mcp_tool",call)
     monkeypatch.setattr(httpx.AsyncClient,"post",post)
-    binding=_connector_binding({},action_key="send_file_to_user",connector_slug="code-interpreort-aga",auth_headers={"X-User-Id":"owner"})
+    binding=_connector_binding({},action_key="send_file_to_user",connector_slug=slug,auth_headers={"X-User-Id":"owner"})
     binding["actions"] += [{"action_key":action,"parameter_schema":{"type":"object","properties":{}}} for action in ["sandbox_create","sandbox_destroy"]]
     tools={t.name:t for t in create_connector_tools([binding],ConnectorToolContext(session_id="c1",platform_api_url="http://backend/api",platform_api_token="test"))}
     context=SimpleNamespace(invocation_id="turn",state={})
-    await tools["code-interpreort-aga_sandbox_create"].func(tool_context=context)
-    result=await tools["code-interpreort-aga_send_file_to_user"].func(tool_context=context)
+    await tools[f"{slug}_sandbox_create"].func(tool_context=context)
+    result=await tools[f"{slug}_send_file_to_user"].func(tool_context=context)
     if denied:
         assert "error" in result and "ceph_path" not in str(result)
     else:

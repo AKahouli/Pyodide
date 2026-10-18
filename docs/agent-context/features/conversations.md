@@ -110,8 +110,21 @@ Static HTML/PDF/DOCX contain editable text/tables and labelled visual snapshots.
 Exact scoped form values override variable defaults as in the live renderer;
 actor, source and revision changes reject capture. MCP image snapshots use exact
 uploaded bytes and returned private asset IDs. Live HTML/DOCX and a three-page PDF
-passed after reload; real editable PPTX remains blocked by sandbox image input
-verification after upload acknowledgement (the remote traceback is truncated).
+passed after reload. Real editable PPTX initially failed sandbox image input
+verification after upload acknowledgement. Bounded diagnostics now identify a
+remote FileNotFoundError without exposing file contents or private paths.
+Retry discovery uses the exact returned upload document ID even when the workspace
+renames a duplicate filename. The shared MCP upload-client fix creates the exact
+parent directory and rejects nested upload failures; isolated binary/SHA probes
+pass locally. The existing local connector has been reconnected to SmartAgent;
+the configured-agent retry qualified transport and reload/download. Local source
+checks alone do not establish a successful export. The configured-agent retry
+subsequently generated a four-slide PPTX with native editable text and the exact
+captured map bytes. Downloads before/after reload matched without agent rerun.
+The corrected four-slide deck also passed page-by-page visual inspection, retains
+native editable text and the exact map, and downloads identically after reload.
+The saved trip name and original unsent draft restored. This qualification applies
+to that map deck, not every dashboard in all export formats.
 See the rich-artifacts plan for evidence and limits.
 
 ## Scope and evidence

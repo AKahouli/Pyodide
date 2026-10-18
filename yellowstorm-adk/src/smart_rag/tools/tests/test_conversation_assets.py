@@ -126,7 +126,7 @@ async def test_prepare_rejects_wrong_invocation_or_denied_receipt(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid",["", "invocation", "digest", "bytes", "remote"])
+@pytest.mark.parametrize("invalid",["", "invocation", "digest", "bytes", "remote", "missing", "denied", "parent"])
 async def test_private_hydration_reauthorizes_and_hash_checks(monkeypatch,invalid):
     import hashlib
     from src.smart_rag.tools.utilities.conversation_assets import hydrate_prepared_assets
@@ -144,19 +144,29 @@ async def test_private_hydration_reauthorizes_and_hash_checks(monkeypatch,invali
     async def call(action,params):
         calls.append((action,params))
         if action=="shell_exec":
+            if params["command"].startswith("mkdir "):
+                assert params["command"] == "mkdir -p -- /mnt/workspace/conversation-assets && printf '%s' ASSET_PARENT_READY"
+                return {"result": "[stderr] Permission denied" if invalid == "parent" else "ASSET_PARENT_READY"}
             assert params["command"].startswith("python3 -c ")
+            if invalid in {"missing", "denied"}:
+                error = "FileNotFoundError:2" if invalid == "missing" else "PermissionError:13"
+                return {"result": "ASSET_VERIFY_ERROR:" + error}
             return {"result":"f"*64 if invalid=="remote" else digest, "text":digest}
         assert params=={"path":path,"content_base64":base64.b64encode(raw).decode()}
         return {"result":"ok"}
     context=SimpleNamespace(platform_api_url="http://backend/api",platform_api_token="test",user_id="actor-a")
     coro=hydrate_prepared_assets(context,"conversation-a","turn",{path:{"ref":"ref","path":path,"sha256":digest}},[path.rsplit("/",1)[-1]],call)
     if invalid:
-        with pytest.raises(SandboxMountValidationError):
+        with pytest.raises(SandboxMountValidationError) as failure:
             await coro
-        if invalid != "remote": assert calls==[]
+        if invalid in {"missing", "denied"}:
+            assert "verification failed" in str(failure.value)
+            assert path not in str(failure.value) and digest not in str(failure.value)
+        elif invalid == "parent": assert [a for a,_ in calls] == ["shell_exec"]
+        elif invalid != "remote": assert calls==[]
     else:
         assert await coro is None
-        assert [a for a,_ in calls]==["file_upload_base64","shell_exec"]
+        assert [a for a,_ in calls]==["shell_exec","file_upload_base64","shell_exec"]
 
 def test_private_base64_logs_are_redacted():
     from src.mcp import _redact_log_payload

@@ -1,6 +1,6 @@
 # OpenUI rich dashboard and HTML artifact reuse plan
 
-Status: **phase A qualified; phase B implemented, editable PPTX live qualification blocked; phase C implemented with configurable execution; phases D–E proposed**.
+Status: **phase A qualified; phase B exports qualified with current HtmlView map PPTX qualification below; phase C implemented with configurable execution; phases D–E proposed**.
 Assessed 2026-10-18. Complements the [mini-app plan](openui-mini-apps-plan.md)
 and [library reuse map](openui-mini-app-library-map.md); completed phases remain
 unchanged. Each implementation phase below has a separate commit and test gate.
@@ -28,9 +28,51 @@ MCP manifests upload exact captured bytes through the existing authorized worksp
 flow and resolve the returned document ID, never a same-name substitute. This avoids
 the message-size limit hit by inline base64. The real PPTX run prepared the saved
 131,990-byte image and received upload acknowledgement, but remote SHA verification
-returned a Python traceback and the mount guard stopped execution. Available logs
-truncate the traceback, so the precise remote cause is unproven. No PPTX success
-is claimed; the verification guard remains enforced.
+failed and the mount guard stopped execution. Bounded diagnostics subsequently
+identified FileNotFoundError. A fresh isolated sandbox reproduced the coordinator
+upload endpoint failing to create the exact destination's parent: its outer
+response reported success while the nested write failed. Creating that parent
+on the same scoped lease made the unchanged upload and exact remote SHA check pass.
+
+The shared MCP client now creates the quoted parent before upload and rejects
+nested upload failures (13 focused tests and a fresh-sandbox 1,073-byte exact-SHA
+probe passed). The ADK private hydration path also prepares only its validated
+conversation-assets parent through the existing connector, after reauthorization
+and local SHA validation, retaining mandatory remote SHA verification. Retry
+discovery resolves the exact confirmed document ID without a filename filter,
+because duplicate uploads may be renamed by workspace storage. The user has
+reconnected the existing local `code-interpretor-aga` connector to SmartAgent;
+configured-agent PPTX qualification after reload was pending at that point. Neither local probes
+nor a remote upload acknowledgement establishes PPTX success.
+
+The subsequent local-connector run exposed a second transport limit: uploading
+the real approximately 131-KiB visual failed with `Errno 7` (`Argument list too
+long` for `sshpass`). The earlier 1,073-byte probe did not cover that size.
+The shared client now uploads at most 32-KiB parts to unique temporary sibling
+paths on the same scoped lease, appends their exact bytes and atomically moves the
+completed file to the unchanged destination. Nested failures stop publication;
+temporary files are cleaned in bounded batches. Sixteen focused client/runtime
+tests and a fresh-sandbox 132,099-byte exact-SHA probe passed. Independent review
+accepted this transport correction before configured-agent PPTX qualification,
+with the destination and verification guard unchanged.
+The configured SmartAgent retry through `code-interpretor-aga` subsequently
+passed guarded sandbox creation with the actual 131,990-byte image present and
+its exact remote SHA matching the captured original. After conversation reload,
+it generated the four-slide `san_francisco_day_route.pptx` (150,948 bytes).
+Downloads before and after reload had identical SHA-256 values, without rerunning
+the agent. Package inspection confirmed native editable text on all four slides
+and the embedded map's exact original bytes. LibreOffice rendered all four pages;
+the map is correct, while auxiliary icon labels overlap descriptions on slides
+three and four. A subsequent agent request reused the saved deck through asset
+discovery, preparation and the existing MCP, producing
+`san_francisco_day_route_verified.pptx` (151,012 bytes). Downloads before and after
+reload matched SHA-256 `9e6829a2d825c758afe44fdcbdf96806d829a83ebbd50b0b7d5920425f27e581`
+without an agent rerun. Native editable text remains on all four slides and the
+131,990-byte map retains its original SHA. All four corrected pages were rendered
+with LibreOffice and inspected: label overlap is resolved and content/map are
+retained. The saved trip name and original unsent composer draft also restored.
+This qualifies the map deck's transport, editability, visual layout and reload
+downloads; it does not qualify a different dashboard in all four export formats.
 Focused capture/state, upload and integration tests passed; independent review
 accepted the capture boundary and scoped state projection.
 
@@ -321,8 +363,10 @@ coverage additionally checks table sort/filter/selected rows, chart series/point
 selection including zero, typed false/null, revision-zero actor fallback,
 conflicts/pending writes, access rejection and completed saved document results.
 
-Editable PPTX live qualification is **BLOCKED**: the existing configured MCP
+Historical phase B qualification at that stage was **BLOCKED**: the existing configured MCP
 interpreter reported startup/status HTTP transport errors. The projected manifest
 is covered by tests, but this is not evidence of a successfully downloaded editable
 PowerPoint. Test/build/review counts, retry outcome and the separate commit are
 recorded in the delivery checkpoint. No four-format end-to-end pass is claimed.
+The dated current qualification above supersedes this blocker for the HtmlView
+map deck only; it does not establish a four-format pass for this earlier dashboard.

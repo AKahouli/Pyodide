@@ -230,9 +230,24 @@ async def hydrate_prepared_assets(context, conversation_id, invocation_id, recei
             raw = base64.b64decode(encoded, validate=True)
             if not raw or len(raw) > 10 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != receipt["sha256"]:
                 raise ValueError("Changed asset bytes")
+            # The configured coordinator does not create upload parents. Use the
+            # same scoped lease and the validated destination, never another path.
+            parent = path.rsplit("/", 1)[0]
+            created = await call_action("shell_exec", {"command": "mkdir -p -- " + shlex.quote(parent)
+                + " && printf '%s' ASSET_PARENT_READY", "exec_dir": "/mnt/workspace"})
+            notices = [created] if isinstance(created, str) else [created.get(key) for key in ("result", "text")] if isinstance(created, dict) else []
+            notices = [notice for notice in notices if notice is not None]
+            if (not notices or any(not isinstance(notice, str) or notice.strip() != "ASSET_PARENT_READY" for notice in notices)
+                    or (isinstance(created, dict) and (created.get("error") or created.get("isError")))):
+                raise ValueError("Asset destination could not be prepared")
             await call_action("file_upload_base64", {"path": path, "content_base64": encoded})
-            code = "import hashlib;print(hashlib.sha256(open(" + repr(path) + ", 'rb').read(10485761)).hexdigest())"
+            code = ("import hashlib\ntry:\n print(hashlib.sha256(open(" + repr(path)
+                    + ", 'rb').read(10485761)).hexdigest())\nexcept OSError as error:\n"
+                    " print('ASSET_VERIFY_ERROR:' + type(error).__name__ + ':' + str(error.errno))")
             verified = await call_action("shell_exec", {"command": "python3 -c " + shlex.quote(code), "exec_dir": "/mnt/workspace"})
+            failure = re.search(r"ASSET_VERIFY_ERROR:(FileNotFoundError|PermissionError|OSError):([0-9]+|None)", json.dumps(verified))
+            if failure:
+                raise SandboxMountValidationError(f"Selected asset verification failed ({failure.group(1)}, errno={failure.group(2)}); no output was published.")
             # Private command prints only one digest; bytes never enter model output.
             digests = re.findall(r"(?<![a-f0-9])[a-f0-9]{64}(?![a-f0-9])", json.dumps(verified))
             if not digests or set(digests) != {receipt["sha256"]}:

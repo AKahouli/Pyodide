@@ -27,7 +27,8 @@ def build_tool_result_artifacts(
         return []
     receipt = result.get("_conversation_output_receipt", {})
     if require_receipt and (producer_tool_name not in {
-            "code-interpreter_send_file_to_user", "code-interpreort-aga_send_file_to_user"}
+            "code-interpreter_send_file_to_user", "code-interpreort-aga_send_file_to_user",
+            "code-interpretor-aga_send_file_to_user"}
             or not isinstance(receipt, dict)
             or receipt.get("storagePrefix") != trusted_storage_prefix
             or not isinstance(receipt.get("invocationId"), str) or not receipt["invocationId"]):
