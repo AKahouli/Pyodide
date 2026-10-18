@@ -16,7 +16,22 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 
 Bearer authentication is sufficient for MCP initialization and tool inspection. User-scoped tool calls additionally require `X-YellowStorm-User-Id`; callers may provide `X-YellowStorm-Tenant-Id`, `X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id`, and `X-Correlation-Id` as an optional complete actor envelope for authorization and audit correlation. Identity headers are never model tool arguments.
 
-In JWT mode, YellowStorm signs a five-minute RS256 token for the authenticated user. The MCP verifies it and takes the acting user only from `sub`; a caller-supplied user header cannot override it. YellowStorm's connector and ADK runtime renew tokens automatically. Read tools need only the user token; construction calls that use conversation context still require agent, conversation, and correlation headers. The backend checks current Playbook permissions and share grants on each operation.
+In JWT mode, YellowStorm signs a five-minute RS256 token for the authenticated user. The MCP verifies it and takes the acting user only from `sub`; a caller-supplied user header that disagrees is rejected. Required integer time claims must satisfy `0 < exp - iat <= 300` seconds. YellowStorm's connector and ADK runtime renew tokens automatically. Read tools need only the user token; construction calls that use conversation context still require agent, conversation, and correlation headers. The MCP forwards `X-YellowStorm-Mcp-Assertion` alongside its scoped internal service credential. The backend's shared `DelegatedActorGuard` derives the actor from that signed assertion and checks the invoking user's current permissions and resource access (ADR-0024). Bearer ingress is a development compatibility mode, not sufficient delegation for protected backend operations.
+
+### Request isolation
+
+The production entrypoint explicitly uses `stateless_http=True`. Each HTTP request
+authenticates independently; old or foreign `Mcp-Session-Id` values cannot select
+an actor or retain an initialization assertion. Actor, assertion and logging
+bindings restore their previous values on success, rejection, exceptions,
+cancellation and partial setup. Renewed assertions reach the current call.
+
+`tests/test_request_isolation.py` captures the production entrypoint and uses real
+FastMCP default SSE responses with the actual backend client against a mock backend.
+It covers initialization/discovery, concurrent users, legacy-session replay,
+renewal, rejections without downstream calls, nested context and task cancellation.
+This local coverage is not deployment certification. Restart existing MCP processes
+to activate it; do not roll back to stateful identity retention.
 
 ## Yellowmind
 

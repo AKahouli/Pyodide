@@ -37,8 +37,10 @@ async def request(keys, claims=None, token=None, extra_headers=()):
 
 
 @pytest.mark.asyncio
-async def test_jwt_user_overrides_spoofed_header_and_needs_no_trace_headers(keys):
+async def test_jwt_rejects_spoofed_header_and_needs_no_trace_headers(keys):
     messages = await request(keys, extra_headers=[(b"x-yellowstorm-user-id", b"other-user")])
+    assert messages[0]["status"] == 401
+    messages = await request(keys)
     assert messages[0]["status"] == 200
     assert messages[1]["body"] == b"user-1"
 
@@ -47,6 +49,9 @@ async def test_jwt_user_overrides_spoofed_header_and_needs_no_trace_headers(keys
 @pytest.mark.parametrize("claims", [
     {"exp": 1}, {"iss": "wrong"}, {"aud": "mcp-agent"}, {"sub": "invalid user"},
     {"sub": None}, {"iat": None}, {"iat": int(time.time()) + 3600},
+    {"exp": int(time.time()) + 600}, {"iat": str(int(time.time()))},
+    {"exp": str(int(time.time()) + 300)}, {"iat": True},
+    {"iat": int(time.time()), "exp": int(time.time())},
 ])
 async def test_rejects_invalid_claims(keys, claims):
     assert (await request(keys, claims))[0]["status"] == 401

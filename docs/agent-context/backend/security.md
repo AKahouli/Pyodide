@@ -55,14 +55,31 @@ connector fence; new/imported rows gain no trust automatically. Explicit Public
 transitions clear old credential/header configuration. A disabled connector can be
 revoked without granting new authority; reactivation of privileged policy is restricted.
 
-**MCP actor chain:** Semantic Model MCP uses explicit stateless Streamable HTTP and
-backend-issued RS256 JWTs (C1 maximum 300s, trusted issuer/audience, duplicate
-Authorization rejection). Verification does not mutate ambient context; actor,
-assertion and logging values are reset on every exit. Application conversations are
-not transport sessions. The verified token is forwarded as `X-YellowStorm-Mcp-Assertion`
-under a separate authenticated semantic service principal. `McpJwtService` verifies
-the credential and re-checks the current connector ID/revision, active account,
-required permissions and verified-user delegation before domain resource checks.
+**MCP actor chain:** Semantic Model, agent and playbook MCPs use explicit stateless
+Streamable HTTP and backend-issued RS256 JWTs (C1 maximum 300 seconds, trusted
+issuer/audience, duplicate Authorization rejection). The agent/playbook production
+entrypoints set `stateless_http=True`; their JWT checks require integer `iat`/`exp`
+with `0 < exp - iat <= 300` and reject conflicting user headers.
+Their middleware obtains identity from the signed `sub`, keeps
+actor/assertion/logging context request-local, and uses `ExitStack` to restore prior
+context on rejection, success, exceptions, cancellation and partial setup failures.
+Application conversations are not transport sessions. The verified token is
+forwarded as `X-YellowStorm-Mcp-Assertion` under each MCP's separate authenticated
+service principal. `McpJwtService` verifies the credential and re-checks the current
+connector ID/revision, active account, required permissions and verified-user
+delegation before domain resource checks; the backend `DelegatedActorGuard` derives
+the actor from the signed assertion and retains the invoking user's permission
+ceiling. Agent/playbook evidence exercises the production FastMCP ASGI entrypoints,
+concurrent Alice/Bob requests, foreign legacy-session replay, renewed assertion
+forwarding to mock backends, rejection without dispatch, and nested/actual task
+cancellation cleanup. These focused MCP tests passed separately (agent: 55;
+playbook: 66); the required scoped security review passed with no blocking findings.
+The delegated guard and Agent/Playbook controller suites passed (24 tests).
+The MCP tests mock the backend transport, so they do not prove real renewal issuance
+or deployed end-to-end authorization. This is not blanket security certification.
+Deployments must restart/redeploy MCP
+processes to load the stateless entrypoint configuration; this source/test evidence
+does not confirm any environment's rollout state.
 
 `DelegatedActorGuard` (ADR-0024) is the single shared delegated-user guard for the
 platform-trusted MCP surface: the actor comes only from the signed assertion, a
