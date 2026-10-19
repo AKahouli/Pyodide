@@ -5,10 +5,15 @@
 // If the artifacts changed without a version bump, npm's cache can serve the stale
 // tgz/wheel on reinstall — clear node_modules/<pkg> (or bump the SDK version).
 import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packCanonicalSdk, verifyConsumerIntegrities } from './pack-sdk.mjs';
+
+const arguments_ = process.argv.slice(2);
+if (arguments_.some(argument => argument !== '--update-locks') || arguments_.length > 1) {
+  throw new Error('Usage: node scripts/observability/build-sdks.mjs [--update-locks]');
+}
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const sdkDir = path.join(repoRoot, 'packages', 'observability-ts');
@@ -24,11 +29,10 @@ sh('npm run build', sdkDir);
 const staging = path.join(repoRoot, '.generated', 'observability', 'staging');
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
-sh(`npm pack --pack-destination ${JSON.stringify(staging)}`, sdkDir);
-const tarball = readdirSync(staging).find((f) => f.endsWith('.tgz'));
-if (!tarball) throw new Error('npm pack produced no tarball');
-
-const sha256 = createHash('sha256').update(readFileSync(path.join(staging, tarball))).digest('hex');
+const artifact = packCanonicalSdk(sdkDir, staging);
+const tarball = artifact.filename;
+const sha256 = artifact.sha256;
+verifyConsumerIntegrities(consumers, artifact.integrity, arguments_.includes('--update-locks'));
 
 let gitRev = 'unknown';
 try {
@@ -43,18 +47,6 @@ for (const consumer of consumers) {
   mkdirSync(dest, { recursive: true });
   copyFileSync(path.join(staging, tarball), path.join(dest, tarball));
   writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest, null, 2));
-  // The consumer's package-lock pins the tarball's integrity hash; npm verifies it on
-  // every install/ci and never rehashes a file: dep whose version is unchanged. Keep
-  // the recorded hash true so `npm ci` stays exact and never EINTEGRITYs.
-  const lockPath = path.join(consumer, 'package-lock.json');
-  const tgzHash = `sha512-${createHash('sha512').update(readFileSync(path.join(dest, tarball))).digest('base64')}`;
-  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  const lockEntry = lock.packages?.['node_modules/@yellowmind/observability'];
-  if (lockEntry && lockEntry.integrity !== tgzHash) {
-    lockEntry.integrity = tgzHash;
-    writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
-    console.log(`[observability] refreshed integrity in ${path.relative(repoRoot, lockPath)}`);
-  }
   console.log(`[observability] staged ${tarball} -> ${path.relative(repoRoot, dest)}`);
 }
 

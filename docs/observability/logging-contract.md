@@ -45,6 +45,33 @@ Developers do not choose sinks; collectors own remote delivery; the SDK never se
 
 Local dev pretty-printing (does not change the wire format): `npm run start:dev:pretty` in `YellowStorm/back`, `dev-pretty.cmd` in `yellowstorm-adk`, or pipe any service through `node scripts/observability/pretty.mjs`. Host the pipe in cmd/bash (`cmd /c "svc 2>&1 | node ...pretty.mjs"`) — Windows PowerShell's `2>&1 |` wraps stderr lines in ErrorRecords and they never reach the filter. The renderer filters by `LOG_DISPLAY_LEVELS` (read from the environment or `<cwd>/.env`), so setting e.g. `LOG_DISPLAY_LEVELS=ERROR|INFO` in the service's `.env` shows only those levels on the console.
 
+## Reproducible SDK staging
+
+`node scripts/observability/build-sdks.mjs` builds and stages the shared SDKs.
+The TypeScript tarball is packed by `pack-sdk.mjs` from a temporary copy of the
+existing package metadata and published `dist` inventory. Only valid UTF-8 text
+copies are normalized from CRLF to LF; checkout/source files and binary bytes
+are not normalized. Manifests stay outside the tarball.
+
+Ordinary staging validates both committed consumer integrities **before** copying
+the tarball into consumers and never repairs locks. For an intentional SDK content
+change, run `node scripts/observability/build-sdks.mjs --update-locks`, review and
+commit both consumer integrity changes, then rerun ordinary staging. A mismatch
+without that explicit maintenance flag is a failure, not a successful clean build.
+
+`node --test scripts/observability/pack-sdk.test.mjs` passes two focused regressions:
+complete tarball equality for LF/CRLF/mixed copies with metadata, inventory, binary
+bytes and inputs preserved, and ordinary integrity validation without lock writes.
+A real JSON-content change changes the artifact hash. Local negative staging
+rejected mismatched locks without writing them; explicit maintenance and subsequent
+ordinary staging passed with lock bytes unchanged. The packaging CI job runs the
+regression and rejects committed lock diffs; that updated remote CI has not yet run.
+These are same-host EOL invariance checks, not Windows/Linux equivalence evidence.
+
+Canonicalization does not retroactively qualify a pristine old source SHA. The
+PR-06 comparison will use the user-approved, explicitly labelled packaging-only
+baseline overlay with original source SHA, packaging patch and artifact hash.
+
 ## Short agent instructions
 
 - Emit events through the SDK with registry names and allowlisted attributes.

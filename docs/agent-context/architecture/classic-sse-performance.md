@@ -193,8 +193,14 @@ Two actual native backend replicas, dedicated TLS ADK/Redis/PG, `gpt-5.4-mini`,
 30 generated real login identities, fresh empty conversation per scenario and
 one identical short sky-explanation prompt. Driver: Windows, Node25.5.0, 16 logical
 CPUs, approximately 32 GB RAM shared by components. This is one measured repetition
-on uncommitted source (`66501b797` plus changes, `sourceDirty:true`), not a clean
-pinned build or a ratified realistic mixed workload.
+on an uncommitted measured prototype (`66501b797` plus changes later committed as
+`522a1d326`, `sourceDirty:true`), not a clean pinned baseline or a ratified realistic
+mixed workload. Subsequent canonical packaging does not retroactively make either
+old SHA reproducibly stage its committed SDK hash. The user approved a separate
+packaging fix commit and an explicitly labelled packaging-only baseline overlay,
+recording its original source SHA, packaging patch and artifact hash. The pristine
+baseline failure remains recorded, not reclassified as success. The SDK staging contract
+and evidence are recorded in the [logging contract](../../observability/logging-contract.md).
 
 | Users | Tabs/user | TTFT median (ms) | TTFT p95 (ms) | First-model emission→HTTP receipt p95 (ms) |
 | --- | --- | --- | --- | --- |
