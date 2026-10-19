@@ -19,7 +19,11 @@ MCP_API_KEY=replace-with-a-service-secret
 Send the service bearer credential plus `Workspace-Id: workspace-a` (or a
 comma-separated list of permitted IDs). Tool/body arguments may narrow that
 header's scope but cannot expand it. MCP and data-bearing standalone HTTP routes
-require a non-empty header. Filename-only `/search_documents` filters discovery
+require a non-empty header for document access. MCP initialization, protocol
+notifications, and tool/resource schema discovery require bearer authentication
+but no workspace header. Supply the current dynamic `Workspace-Id` on each
+document tool call or resource read; initialization does not establish a session-wide
+workspace. Filename-only `/search_documents` filters discovery
 and retrieval by the header too. Mixed out-of-header batches are rejected before
 executing any item. Metadata routes require authentication; health probes also
 require an allowed network as described below.
@@ -143,19 +147,15 @@ still fail the build. This deployment policy was authorized by the user to
 unblock publishing; it does not remediate the outstanding base-image advisories.
 The test job additionally audits dependency requirements on pull requests using
 an isolated, pinned pip-audit environment.
-After publishing, GitHub OIDC signs provenance and SBOM attestations for the image
-digest. Deployment verifies the provenance's repository/workflow identity and
-pulls/deploys that exact digest. Signing or verification failure blocks deployment.
-No signing key needs to be stored in this repository.
+The build job pushes the verified Docker image and captures its immutable SHA-256
+digest. Deployment pulls and runs that exact digest, ensuring tamper-proof deployment.
+GitHub Artifact Attestations was removed because private repositories on standard GitHub
+plans do not support the feature (which requires GitHub Enterprise).
 
-The self-hosted runners need Node 24 support, a recent GitHub CLI with
-`gh attestation verify`, registry access, and GitHub artifact-attestation support
-for the repository/organization. CI's build job has only the required contents,
-OIDC and attestation permissions. The deploy job has read permissions. These
-workflow changes have not been executed against GitHub/ACR from this review.
-Review/update the base digest and action pins deliberately. Provider policy,
-gateway enforcement, DB role grants, encrypted storage, and deployed TLS
-verification still require infrastructure owners.
+The self-hosted runners need registry access and Docker Compose. CI's build and deploy jobs
+require only contents read permissions. Review/update the base digest and action pins
+deliberately. Provider policy, gateway enforcement, DB role grants, encrypted storage, and
+deployed TLS verification still require infrastructure owners.
 
 ## Patched dependencies
 

@@ -1076,6 +1076,20 @@ def _get_request_workspace_ids() -> List[str]:
 
 def _get_effective_workspace_ids() -> List[str]:
     """Return the workspace scope supplied by the authenticated caller."""
+    from fastmcp.server.dependencies import get_http_request
+
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        pass  # In-process callers use the explicit context below.
+    else:
+        # Stateful MCP handlers inherit initialization context variables. Resolve
+        # scope from the current POST, authenticated by APIKeyAuthMiddleware.
+        workspace_ids = getattr(request.state, "authorized_workspace_ids", [])
+        if not workspace_ids:
+            raise AuthorizationScopeError("Missing Workspace-Id header")
+        return workspace_ids
+
     authorized = _get_request_workspace_ids()
     requested = _REQUESTED_WORKSPACE_IDS.get()
     if not requested:

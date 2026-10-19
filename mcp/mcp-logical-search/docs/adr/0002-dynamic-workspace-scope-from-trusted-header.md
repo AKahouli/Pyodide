@@ -20,7 +20,10 @@ prompt injection from expanding the scope supplied by trusted application code.
    settings, their validators, and additional credential/workspace mappings.
 2. Use `Workspace-Id` from each authenticated request as its dynamic scope.
    New workspace IDs require no configuration changes or restart.
-3. Require the header for MCP and data-bearing HTTP routes. Check exact tool/body
+3. Require the header for MCP document operations and data-bearing HTTP routes.
+   MCP initialization and schema discovery require bearer authentication without
+   workspace scope; each later document operation supplies its current header.
+   Check exact tool/body
    workspace IDs against it, reject mixed out-of-scope batches before work, and
    filter filename-only discovery to it. Preserve SQL scoping and request-context
    cleanup. Comma separation is supported in the header, not in literal tool IDs.

@@ -111,12 +111,14 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if len(requested) > settings.REQUEST_COLLECTION_MAX_ITEMS:
             return JSONResponse({"error": "invalid_workspace_scope"}, status_code=422)
         document_route = path in ("/routing-profile", "/summarize", "/search_documents", "/search_native", "/search_native/batch")
-        mcp_route = path == "/http" or path.startswith("/http/") or path == "/sse" or path.startswith("/sse/")
-        if (document_route or mcp_route) and not requested:
+        # MCP initialization/discovery has no workspace. Tools and resource reads
+        # enforce the current request's workspace scope before accessing data.
+        if document_route and not requested:
             return JSONResponse({"error": "workspace_header_required"}, status_code=403)
 
         # Trusted application code supplies this dynamic scope outside the LLM.
         # End-user entitlement checks belong to that backend/gateway.
+        request.state.authorized_workspace_ids = requested
         token = set_request_workspace_ids(requested)
         try:
             return await call_next(request)
