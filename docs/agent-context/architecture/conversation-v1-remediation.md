@@ -209,12 +209,14 @@ skip), plus seven settings/journal checks. Report:
 `.tmp/pr01-ci-pg-corrections-4gb-20261019.{json,log}`. A 2GB local invocation
 exhausted its heap; the passing PG verification used 4GB, as earlier local PG
 verification did. The same run showed a backend worker exceeding the 2GB ceiling
-and three frontend files assuming one-second provider/export waits. CI now runs
-backend tests serially with a 4GB heap, and those waits are bounded at 5-10
-seconds; the sheet-mapping test lets its initial debounced read settle before
-asserting that AI did not auto-read. Focused reruns pass 50 frontend tests plus
-both PG and settings/journal suites. These are verification-only changes, but
-full jobs at the follow-up SHA still need CI qualification.
+and frontend tests coupled to an ignored local `.env` plus one-second
+provider/export waits. CI now runs backend tests serially with a 4GB heap.
+LandingPage pins a configured API in its test instead of relying on the local
+dotenv; provider/export waits are bounded at 5-10 seconds, and the sheet-mapping
+test lets its initial debounced read settle before asserting that AI did not
+auto-read. Focused reruns pass 58 frontend tests plus both PG and
+settings/journal suites. These are verification-only changes, but full jobs at
+the follow-up SHA still need CI qualification.
 
 The user explicitly chose **Keep current policy** after inspection showed main
 has a ticket-number-only required-status ruleset and the work branch is

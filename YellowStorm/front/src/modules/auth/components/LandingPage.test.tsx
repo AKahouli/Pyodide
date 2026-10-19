@@ -28,6 +28,14 @@ vi.mock('../modals/AuthModals', () => ({ AuthModals: () => <div data-testid='aut
 vi.mock('../api', () => ({
   getAuthProviders: getAuthProvidersMock,
 }));
+vi.mock('@/lib/api/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/config')>();
+  return {
+    ...actual,
+    API_CONFIG: { ...actual.API_CONFIG, baseURL: 'http://localhost:3000/api/v1' },
+    isApiConfigured: () => true,
+  };
+});
 
 const classicProvider = {
   type: 'classic' as const,
