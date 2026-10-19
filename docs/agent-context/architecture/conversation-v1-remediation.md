@@ -215,8 +215,10 @@ LandingPage pins a configured API in its test instead of relying on the local
 dotenv; provider/export waits are bounded at 5-10 seconds, and the sheet-mapping
 test lets its initial debounced read settle before asserting that AI did not
 auto-read. Focused reruns pass 58 frontend tests plus both PG and
-settings/journal suites. These are verification-only changes, but full jobs at
-the follow-up SHA still need CI qualification.
+settings/journal suites. The intervening governance commit `b6ca77e5b` truncated
+the Conversation Arabic locale to four lines; it is restored from `b6ca77e5b^`
+and the 25-case locale parity suite passes. These are verification-only changes,
+but full jobs at the follow-up SHA still need CI qualification.
 
 The user explicitly chose **Keep current policy** after inspection showed main
 has a ticket-number-only required-status ruleset and the work branch is
