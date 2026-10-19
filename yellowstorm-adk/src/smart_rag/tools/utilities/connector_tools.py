@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
+# Windows hosts often lack the OpenXML types in the registry, which would
+# otherwise degrade document uploads to application/octet-stream.
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx")
+
 import requests
 from hashlib import sha256
 from google.adk.tools.tool_context import ToolContext
