@@ -46,6 +46,8 @@ let resyncHoldActive = false;
 let resyncHoldConversationId: string | null = null;
 let resyncHeldChunks: BufferedStreamChunk[] = [];
 let forcedResyncInFlight = false;
+/** The gateway's periodic reconcile markers are routine: warn only once. */
+let hasWarnedStreamResync = false;
 let missingStartRecoveryInFlight = false;
 /**
  * Backlog caps: the snapshot repair supersedes anything beyond these bounds,
@@ -516,6 +518,7 @@ interface ConversationState {
   // Actions - Messages
   fetchMessages: (conversationId: string) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
+  loadMessageAround: (messageId: string, signal?: AbortSignal) => Promise<void>;
   sendMessage: (conversationId: string, payload: SendMessagePayload, onAccepted?: (assistantMessageId?: string) => void) => Promise<void>;
   updateFeedback: (conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null) => Promise<void>;
   regenerateMessage: (conversationId: string, messageId: string) => Promise<void>;
@@ -1188,6 +1191,32 @@ export const useConversationStore = create<ConversationState>()(
         }
       },
 
+      loadMessageAround: async (messageId, signal) => {
+        const conversationId = get().currentConversationId;
+        if (!conversationId) throw new Error('Conversation unavailable');
+        const generation = liveAccountGeneration, sequence = currentMessagesRequestSequence;
+        const result = await api.fetchMessagesAround(conversationId, messageId, signal);
+        if (signal?.aborted || generation !== liveAccountGeneration || sequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) throw new Error('Conversation changed');
+        const candidates = [...result.messages, ...Object.values(result.branchesByQuestion ?? {}).flat()];
+        const target = candidates.find(message => message.id === messageId && message.conversationId === conversationId);
+        if (!target) throw new Error('Message unavailable');
+        set(state => {
+          const messages = new Map(state.messages.map(message => [message.id, message]));
+          // Never replace active streamed content with an older navigation snapshot.
+          for (const message of result.messages) if (!messages.has(message.id) && message.conversationId === conversationId) messages.set(message.id, message);
+          if (!messages.has(target.id)) messages.set(target.id, target);
+          const branchCache = new Map(state.branchCache), activeBranches = new Map(state.activeBranches);
+          for (const [questionId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+            const existing = new Map((branchCache.get(questionId) ?? []).map(message => [message.id, message]));
+            for (const branch of branches) if (!existing.has(branch.id)) existing.set(branch.id, branch);
+            branchCache.set(questionId, [...existing.values()]);
+            if (!activeBranches.has(questionId) && branches.length) activeBranches.set(questionId, branches[branches.length - 1].id);
+          }
+          if (target.conversationType === 'ai' && target.questionMessageId) activeBranches.set(target.questionMessageId, target.id);
+          return { messages: [...messages.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.questionMessageId === b.id ? 1 : b.questionMessageId === a.id ? -1 : a.id.localeCompare(b.id))), branchCache, activeBranches };
+        });
+      },
+
       loadMoreMessages: async () => {
         const state = get();
         // Don't load more if: no conversation, no more messages, already loading older, or initial load in progress
@@ -1278,7 +1307,7 @@ export const useConversationStore = create<ConversationState>()(
           content: payload.content,
           modelId: payload.modelId,
           reasoningEffort: payload.reasoningEffort,
-          interaction: payload.interaction,
+          interaction: payload.openUiSubmission ?? payload.interaction,
           interactions: payload.interactions,
           attachedFileIds: payload.attachedFileIds,
           attachedFiles: payload.attachedFiles,
@@ -2272,12 +2301,32 @@ export const useConversationStore = create<ConversationState>()(
        * tracked run it falls back to the canonical message reload.
        */
       onStreamResyncRequired: (event) => {
-        console.warn('[ConversationStore] stream resync required', {
-          reason: event.reason,
-        });
-        const conversationId = get().currentConversationId;
+        // Expected, bounded control frame: the gateway sends one on every fresh
+        // connection and a periodic reconcile marker (every 30s in distributed
+        // mode) so clients re-install authoritative snapshots. Warn once per
+        // session for visibility; the routine repeats stay at debug level.
+        if (!hasWarnedStreamResync) {
+          hasWarnedStreamResync = true;
+          console.warn('[ConversationStore] stream resync required', {
+            reason: event.reason,
+          });
+        } else {
+          console.debug('[ConversationStore] stream resync required', {
+            reason: event.reason,
+          });
+        }
+        const state = get();
+        const conversationId = state.currentConversationId;
         if (!conversationId) return;
-        void get().recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
+        const hasTrackedRun = state.inFlightSendConversations.has(conversationId)
+          || (state.isStreaming && state.streamingConversationId === conversationId)
+          || (state.isAwaitingFirstChunk && state.awaitingConversationId === conversationId)
+          || state.streamingStateCache.has(conversationId)
+          || Object.values(state.liveAnswers).some(answer => answer.conversationId === conversationId);
+        // A route id alone does not establish access: failed or unfinished
+        // navigation must not turn periodic resync into repeated denied reads.
+        if (state.currentConversation?.id !== conversationId && !hasTrackedRun) return;
+        void state.recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
         void forcedResyncActiveStream(conversationId);
       },
 

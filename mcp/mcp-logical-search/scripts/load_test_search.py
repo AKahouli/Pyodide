@@ -7,6 +7,7 @@ import argparse
 import asyncio
 from collections import Counter
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -14,6 +15,9 @@ import time
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+
+
+logger = logging.getLogger(__name__)
 
 
 def percentile(values, fraction):
@@ -93,6 +97,7 @@ async def run(args, cases, key):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True, help="Full streamable HTTP MCP endpoint, e.g. http://localhost:8045/http/")
     parser.add_argument("--cases", type=Path, required=True)
@@ -115,7 +120,7 @@ def main():
     report = asyncio.run(run(args, cases, key))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps(report, indent=2))
+    logger.info(json.dumps(report, indent=2))
     if report["completed"] != args.requests or report["errors"] or report["connection_errors"]:
         raise SystemExit(1)
 

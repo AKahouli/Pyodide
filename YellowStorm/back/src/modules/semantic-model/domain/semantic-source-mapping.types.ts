@@ -444,12 +444,6 @@ export function resolveSheetEntities(
 }
 
 /**
- * Version of the AI extraction contract (prompt + response shape). Must equal the ADK's reported
- * extractorVersion; bump both together. A run and a preview bind the agent with it.
- */
-export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
-
-/**
  * A document mapping kept in step with its concept: one row per concept field, in the concept's
  * order. Saved rows are kept as they are; a field added to the concept gets a row read like most of
  * the other fields, and a row for a field the concept no longer has is dropped. `changed` is false

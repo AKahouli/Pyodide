@@ -64,7 +64,12 @@ const BACKEND_CHILD_ROWS = [
   'streamBootstrapMs',
   'conversationContextLoadMs',
   'workspaceAgentResolutionMs',
+  'rootDelegationResolutionMs',
+  'rootBackgroundReadinessMs',
+  'rootExecutionAdmissionMs',
   'supplementalContextAssemblyMs',
+  'rootNativeStateRecordMs',
+  'rootSessionSeedMs',
   'grpcPayloadPreparationMs',
   'grpcTransitToAdkMs',
 ] as const;
@@ -99,6 +104,12 @@ const SESSION_CHILD_LABEL_KEYS: Record<string, string> = {
 };
 
 const BACKEND_CHILD_LABEL_KEYS: Record<string, string> = {
+  rootDelegationResolutionMs: 'latency.backendBreakdown.rootDelegationResolution',
+  rootBackgroundReadinessMs: 'latency.backendBreakdown.rootBackgroundReadiness',
+  rootExecutionAdmissionMs: 'latency.backendBreakdown.rootExecutionAdmission',
+  rootNativeStateRecordMs: 'latency.backendBreakdown.rootNativeStateRecord',
+  rootSessionSeedMs: 'latency.backendBreakdown.rootSessionSeed',
+
   controllerValidationRoutingMs: 'latency.backendBreakdown.controllerValidationRouting',
   userMessagePersistenceMs: 'latency.backendBreakdown.userMessagePersistence',
   aiPlaceholderPersistenceMs: 'latency.backendBreakdown.aiPlaceholderPersistence',
@@ -126,6 +137,7 @@ export function buildTimingClipboardText({
       lines.push(`${translate(STAGE_LABEL_KEYS[stage])} ${formatLatencyValue(latencyMetrics[stage])}`);
       if (stage === 'backendPreAdkMs' && latencyMetrics.backendPreAdkBreakdown) {
         for (const child of BACKEND_CHILD_ROWS) {
+          if (child.startsWith('root') && latencyMetrics.backendPreAdkBreakdown[child] === undefined) continue;
           lines.push(`  ${translate(BACKEND_CHILD_LABEL_KEYS[child])}: ${formatLatencyValue(latencyMetrics.backendPreAdkBreakdown[child])}`);
         }
       }

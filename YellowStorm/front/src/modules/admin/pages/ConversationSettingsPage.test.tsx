@@ -29,6 +29,13 @@ const settings = {
 };
 
 describe('ConversationSettingsPage', () => {
+  it('shows the generated-script warning and preserves the saved policy', async () => {
+    vi.mocked(getAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings, generativeUi: { htmlMode: 'interactive' } });
+    const { user } = renderWithProviders(<ConversationSettingsPage />);
+    expect(await screen.findByText('conversationSettings.generativeUi.warning')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'conversationSettings.actions.save' }));
+    await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith(expect.objectContaining({ generativeUi: { htmlMode: 'interactive' } })));
+  });
   beforeEach(() => {
     vi.mocked(getAdminConversationSettings).mockReset();
     vi.mocked(getAdminConversationSettingsAgents).mockReset();
@@ -47,6 +54,7 @@ describe('ConversationSettingsPage', () => {
     await user.click(screen.getByRole('button', { name: 'conversationSettings.actions.save' }));
 
     await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith({
+      generativeUi: { htmlMode: 'strict' },
       composerSuggestions: { ...settings, debounceMs: 750 },
       conversationName: { modelId: null },
       latencyInstrumentationEnabled: true,

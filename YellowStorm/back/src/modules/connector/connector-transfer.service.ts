@@ -59,7 +59,8 @@ export class ConnectorTransferService {
     authHeaders: Record<string, string>;
     connectorSlug: string;
   }> {
-    const connector = await this.connectorService.findById(connectorId);
+    // SERVER-ONLY runtime lookup: credentials stay off the public projection (WP-02).
+    const connector = await this.connectorService.getRuntimeById(connectorId);
 
     let adapter = this.adapters.get(connector.slug);
     if (!adapter) {

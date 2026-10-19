@@ -478,5 +478,7 @@
   "folder.dropToRootSuccessDescription": "Déplacement de {{name}} vers la racine",
   "folder.rename": "Renommer",
   "folder.delete": "Supprimer",
-  "folder.deleteConfirm": "Êtes-vous sûr de vouloir supprimer ce dossier ? Cela supprimera également tout son contenu."
+  "folder.deleteConfirm": "Êtes-vous sûr de vouloir supprimer ce dossier ? Cela supprimera également tout son contenu.",
+  "store.errors.uploadSettingsFailed": "Impossible de charger les limites d’envoi. Veuillez réessayer.",
+  "uploadDropZone.limits": "Jusqu’à {{count}} fichiers, {{size}} maximum chacun"
 }

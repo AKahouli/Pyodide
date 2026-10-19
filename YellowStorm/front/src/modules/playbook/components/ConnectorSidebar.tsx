@@ -104,7 +104,7 @@ export function ConnectorSidebar({ isOpen, onDragStart }: ConnectorSidebarProps)
             placeholder='Search...'
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className='pl-8 h-8 text-xs'
+            className='ps-8 h-8 text-xs'
           />
         </div>
       </div>
@@ -194,14 +194,14 @@ function ConnectorCard({
 
           {isOAuth && (
             isConnected ? (
-              <ShieldCheck className='h-3.5 w-3.5 text-green-600 shrink-0 ml-auto' />
+              <ShieldCheck className='h-3.5 w-3.5 text-green-600 shrink-0 ms-auto' />
             ) : (
-              <Link2 className='h-3.5 w-3.5 text-amber-500 shrink-0 ml-auto' />
+              <Link2 className='h-3.5 w-3.5 text-amber-500 shrink-0 ms-auto' />
             )
           )}
 
           {!isOAuth && (
-            <Badge variant='secondary' className='ml-auto text-[10px] px-1.5 py-0'>
+            <Badge variant='secondary' className='ms-auto text-[10px] px-1.5 py-0'>
               {enabledActions.length}
             </Badge>
           )}
@@ -210,7 +210,7 @@ function ConnectorCard({
             <Button
               size='sm'
               variant='ghost'
-              className='h-5 px-1.5 text-[10px] ml-auto shrink-0'
+              className='h-5 px-1.5 text-[10px] ms-auto shrink-0'
               disabled={isConnecting}
               onClick={(e) => {
                 e.stopPropagation();
@@ -224,7 +224,7 @@ function ConnectorCard({
       </CollapsibleTrigger>
 
       {isOAuth && !isConnected && (
-        <div className='ml-7 mb-1'>
+        <div className='ms-7 mb-1'>
           <p className='text-[10px] text-muted-foreground'>
             Connect your account to use this connector.
           </p>
@@ -232,7 +232,7 @@ function ConnectorCard({
       )}
 
       <CollapsibleContent>
-        <div className='ml-7 mt-0.5 space-y-0.5'>
+        <div className='ms-7 mt-0.5 space-y-0.5'>
           {enabledActions.map((action) => (
             <div
               key={action.key}
@@ -246,7 +246,7 @@ function ConnectorCard({
               }
             >
               <OverflowTooltip text={action.label} />
-              <Badge variant='outline' className='ml-auto text-[10px] px-1 py-0'>
+              <Badge variant='outline' className='ms-auto text-[10px] px-1 py-0'>
                 {action.safety}
               </Badge>
             </div>

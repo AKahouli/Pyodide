@@ -185,7 +185,7 @@ export function GovernancePage(): JSX.Element {
             <h2 className='mt-4 text-lg font-semibold'>{t('page.error.title')}</h2>
             <p className='mt-1 max-w-md text-sm leading-6 text-muted-foreground'>{t('page.error.description')}</p>
             <Button className='mt-5' variant='outline' disabled={programsFetching} onClick={() => void refetchPrograms()}>
-              <RefreshCw className='mr-2 h-4 w-4' />
+              <RefreshCw className='me-2 h-4 w-4' />
               {programsFetching ? t('page.error.retrying') : t('page.error.retry')}
             </Button>
           </div>
@@ -195,7 +195,7 @@ export function GovernancePage(): JSX.Element {
             <h2 className='mt-4 text-lg font-semibold'>{t('page.emptyPrograms.title')}</h2>
             <p className='mt-1 max-w-md text-sm leading-6 text-muted-foreground'>{t('page.emptyPrograms.description')}</p>
             <Button className='mt-5' onClick={() => setProgramDialogOpen(true)}>
-              <Plus className='mr-2 h-4 w-4' />
+              <Plus className='me-2 h-4 w-4' />
               {t('programs.create')}
             </Button>
           </div>

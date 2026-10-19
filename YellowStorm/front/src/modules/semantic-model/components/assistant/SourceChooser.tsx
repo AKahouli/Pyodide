@@ -168,12 +168,12 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
     const isOpen = findsFiles && expanded === row.id;
     const chosen = choice?.workspaceId === row.id;
     return <li key={row.id} className={chosen ? 'bg-primary/10' : undefined}>
-      <div className='flex items-center gap-1 py-1 pl-1 pr-2'>
+      <div className='flex items-center gap-1 py-1 ps-1 pe-2'>
         {findsFiles && <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0' onClick={() => setExpanded(isOpen ? null : row.id)}
           aria-label={isOpen ? t('knowledge.collapseWorkspace', { name: row.name }) : t('knowledge.expandWorkspace', { name: row.name })}>
           {isOpen ? <ChevronDown className='h-4 w-4' /> : <ChevronRight className='h-4 w-4' />}
         </Button>}
-        <button type='button' className='flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-muted/60' onClick={() => chooseWorkspace(row)} aria-label={t('assistantSources.chooser.pickWorkspace', { name: row.name })} aria-pressed={chosen}>
+        <button type='button' className='flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-start hover:bg-muted/60' onClick={() => chooseWorkspace(row)} aria-label={t('assistantSources.chooser.pickWorkspace', { name: row.name })} aria-pressed={chosen}>
           {row.shared ? <Share2 className='h-4 w-4 shrink-0 text-blue-500 dark:text-blue-400' /> : <Warehouse className='h-4 w-4 shrink-0 text-primary' />}
           <span className='min-w-0 flex-1'>
             <span className='block truncate text-sm font-medium'>{row.name}</span>
@@ -210,9 +210,9 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
       </DialogHeader>
       <div className='relative'>
         <Search className='pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' />
-        <Input autoFocus className={`${INPUT} pl-9`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('assistantSources.chooser.search')} aria-label={t('assistantSources.chooser.search')} />
+        <Input autoFocus className={`${INPUT} ps-9`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('assistantSources.chooser.search')} aria-label={t('assistantSources.chooser.search')} />
       </div>
-      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto pr-1' data-testid='source-chooser-list'>
+      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto pe-1' data-testid='source-chooser-list'>
         {findsFiles && term.length >= MIN_FILE_SEARCH && <section aria-label={t('assistantSources.chooser.files')} className='space-y-2'>
           <SectionHeader title={t('assistantSources.chooser.files')} count={files.data?.files.length || undefined} />
           {files.isLoading ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>

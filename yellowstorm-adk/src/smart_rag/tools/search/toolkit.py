@@ -13,7 +13,7 @@ import copy
 import re
 from typing import Dict, List, Optional, Set, Any, Callable
 
-import fitz
+import pymupdf
 
 from src.logger.logging import get_logger
 from .web_search import WebSearchTool
@@ -324,7 +324,7 @@ class SearchToolkit:
                 return f"##### {file_name}\n\nDownload error: {str(download_error)}\n\n#####\n\n"
 
             try:
-                with fitz.open(output_path) as doc:
+                with pymupdf.open(output_path) as doc:
                     content = "\n".join(page.get_text() for page in doc)
 
                 if not content.strip():

@@ -32,7 +32,7 @@ export function DynamicReasoningRuntimeContainerNode({ data }: NodeProps) {
       />
       <button
         type="button"
-        className="nodrag nopan flex h-16 w-full items-center justify-between gap-3 rounded-t-xl border-b border-border/70 bg-background/90 px-4 text-left"
+        className="nodrag nopan flex h-16 w-full items-center justify-between gap-3 rounded-t-xl border-b border-border/70 bg-background/90 px-4 text-start"
         onClick={(event) => {
           event.stopPropagation();
           value.onToggle?.();

@@ -125,7 +125,7 @@ export function GraphExportDialog({ open, onOpenChange, index, modelId, dataRevi
               <span className='h-2.5 w-2.5 rounded-full' style={{ background: colorOf(concept.key) }} />
               {concept.label}<span className='text-xs font-normal text-muted-foreground'>{concept.count.toLocaleString(language)}</span>
             </legend>
-            <ul className='ml-6 grid gap-x-6 gap-y-1 sm:grid-cols-2'>
+            <ul className='ms-6 grid gap-x-6 gap-y-1 sm:grid-cols-2'>
               {concept.fields.map((field) => {
                 const choice = choiceOf(concept.key, field.key);
                 return <li key={field.key} className='flex items-center gap-2 text-sm'>
@@ -146,9 +146,9 @@ export function GraphExportDialog({ open, onOpenChange, index, modelId, dataRevi
       </p>
       {error && <p className='text-sm text-destructive' role='alert'>{error}</p>}
       <DialogFooter>
-        {step && <span className='mr-auto flex items-center gap-2 text-sm text-muted-foreground' role='status'><Loader2 className='h-4 w-4 animate-spin' />{t(`graphViewer.exportStep_${step}`, { records: index.records.length })}</span>}
+        {step && <span className='me-auto flex items-center gap-2 text-sm text-muted-foreground' role='status'><Loader2 className='h-4 w-4 animate-spin' />{t(`graphViewer.exportStep_${step}`, { records: index.records.length })}</span>}
         <Button variant='outline' onClick={() => onOpenChange(false)} disabled={Boolean(step)}>{t('graphViewer.cancel')}</Button>
-        <Button onClick={() => void run()} disabled={Boolean(step) || !valid}><Download className='mr-1.5 h-4 w-4' />{t('graphViewer.exportRun')}</Button>
+        <Button onClick={() => void run()} disabled={Boolean(step) || !valid}><Download className='me-1.5 h-4 w-4' />{t('graphViewer.exportRun')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

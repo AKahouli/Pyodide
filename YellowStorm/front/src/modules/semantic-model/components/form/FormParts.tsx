@@ -33,7 +33,7 @@ export function SectionHeader({ title, help, count, icon, children, className }:
     <h3 className='text-sm font-semibold'>{title}</h3>
     {count !== undefined && <span className='rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground'>{count}</span>}
     {help && <HelpTip text={help} />}
-    {children && <div className='ml-auto flex items-center gap-1'>{children}</div>}
+    {children && <div className='ms-auto flex items-center gap-1'>{children}</div>}
   </div>;
 }
 

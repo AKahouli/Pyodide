@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConversationAssistantBubble } from './ConversationAssistantBubble';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConversationAssistantBubble, type ActivityPaneState } from './ConversationAssistantBubble';
 import { useAgentStore } from '@/modules/agent/store';
 import { mockNavigate } from '@/test/setup';
 
@@ -13,8 +13,11 @@ const mocks = vi.hoisted(() => ({
   redactSensitiveText: true,
 }));
 
-vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
-vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader }));
+vi.mock('../../api', async (importOriginal) => ({ ...await importOriginal<typeof import('../../api')>(), getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
+vi.mock('@/modules/file-viewer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/modules/file-viewer')>(),
+  openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader,
+}));
 vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
 vi.mock('../../hooks/useConversationSettings', () => ({
   useConversationSettings: () => ({ redactSensitiveText: mocks.redactSensitiveText }),
@@ -23,9 +26,14 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string; seconds?: number }) => ({
     'stream.activity.agent': 'Activity',
-    'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
+    'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show activity details`,
     'stream.activity.agentPlanning': 'Preparing your request',
     'stream.activity.agentPrepared': 'Request prepared',
+    'stream.activity.reasoningSummary': 'Reasoning summary',
+    'stream.activity.summaryCount_one': `${options?.count} summary`,
+    'stream.activity.summaryCount_other': `${options?.count} summaries`,
+    'stream.activity.toolCount_one': `${options?.count} tool call`,
+    'stream.activity.toolCount_other': `${options?.count} tool calls`,
     'stream.activity.thinking': `Thinking… ${options?.seconds}s`,
     'stream.activity.assistant': 'Assistant',
     'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
@@ -71,6 +79,19 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  it('keeps deleted artifacts and mini-apps unavailable without rendering their saved program', () => {
+    render(<ConversationAssistantBubble conversationId='c1' messageId='m1' isStreaming={false} components={[
+      { id: 'deleted-app', type: 'text', data: { content: 'root = MiniApp("PRIVATE DELETED APP")', assetDeletedAt: '2026-10-18T12:00:00Z' } },
+      { id: 'deleted-file', type: 'artifact', data: { artifactId: 'file', filename: 'deleted.docx', availability: 'ready', assetDeletedAt: '2026-10-18T12:00:00Z' } },
+    ]} />);
+    expect(screen.getAllByText('assets.unavailable')).toHaveLength(2);
+    expect(screen.queryByText(/PRIVATE DELETED APP/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'View' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
+    expect(mocks.getArtifactDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it('keeps the background lifecycle visible after the dispatch tool completes', () => {
     const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
       components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Dispatched', status: 'completed' as const } }],
@@ -117,6 +138,45 @@ describe('ConversationAssistantBubble', () => {
 
     expect(container.querySelector('[data-mobile-working]')).toHaveClass('md:hidden');
     expect(screen.getAllByText('Using tools')).toHaveLength(2);
+  });
+
+  it('labels native summaries explicitly and counts summaries separately from tools', () => {
+    const { container } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[
+      { id: 'empty', type: 'agentActivity', data: { summary: '', status: 'completed' } },
+      { id: 'summary', type: 'agentActivity', data: { activityKind: 'reasoning_summary', summary: 'Compare the supplied facts before answering.', detail: 'Compare the supplied facts before answering. Provider-generated summary.', status: 'completed' } },
+      { id: 'tool', type: 'toolActivity', data: { toolName: 'search', summary: 'Verify the facts', renderKind: 'search', status: 'completed' } },
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand activity' }));
+    const activity = container.querySelector('[data-desktop-activity]')! as HTMLElement;
+    expect(within(activity).queryByText('Request prepared')).not.toBeInTheDocument();
+    expect(within(activity).getByText('Reasoning summary')).toBeInTheDocument();
+    expect(container.querySelector('[data-reasoning-summary-preview]')).toHaveTextContent('Compare the supplied facts');
+    expect(screen.getByText('1 summary · 1 tool call')).toBeInTheDocument();
+    fireEvent.click(within(activity).getByRole('button', { name: /Reasoning summary.*Show activity details/ }));
+    expect(within(activity).getByText('Compare the supplied facts before answering. Provider-generated summary.')).toBeVisible();
+  });
+
+  it('counts tool-only activity as tool calls and preserves untyped planning as steps', () => {
+    const tool = { id: 'tool', type: 'toolActivity' as const, data: { toolName: 'search', summary: 'Verify the facts', renderKind: 'search', status: 'completed' } };
+    const { rerender } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming={false} components={[tool]} />);
+    expect(screen.getByText('1 tool call')).toBeInTheDocument();
+    expect(screen.queryByText('1 summary')).not.toBeInTheDocument();
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming={false} components={[tool,
+      { id: 'plan', type: 'agentActivity', data: { summary: 'Inspect the supplied evidence', status: 'completed' } },
+    ]} />);
+    expect(screen.getByText('1 tool call · 1 step')).toBeInTheDocument();
+  });
+
+  it('does not infer summary provenance from text and retains the only empty placeholder', () => {
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[
+      { id: 'generic', type: 'agentActivity', data: { summary: 'A reasoning summary in ordinary activity text', status: 'completed' } },
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand activity' }));
+    expect(container.querySelector('[data-reasoning-summary-preview]')).toBeNull();
+    rerender(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[
+      { id: 'empty', type: 'agentActivity', data: { summary: '', status: 'completed' } },
+    ]} />);
+    expect(screen.getAllByText('Request prepared')).not.toHaveLength(0);
   });
 
   it('collapses exact adjacent saved reasoning replays without merging actors or tool spans', () => {
@@ -231,7 +291,80 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-sequence]')).not.toBeInTheDocument();
   });
 
-  it('keeps an earlier activity row visible when detailed reasoning arrives', () => {
+  it('preserves the reading position as activity grows and resumes following at the bottom', () => {
+    const row = (id: string) => ({ id, type: 'agentActivity' as const, data: { summary: `Review the ${id} evidence carefully`, status: 'running' as const } });
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one')]} />);
+    const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+    Object.defineProperties(pane, {
+      scrollHeight: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    pane.scrollTop = 100;
+    fireEvent.scroll(pane);
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one'), row('two')]} />);
+    expect(pane.scrollTop).toBe(100);
+
+    pane.scrollTop = 600;
+    fireEvent.scroll(pane);
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 900 });
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('one'), row('two'), row('three')]} />);
+    expect(pane.scrollTop).toBe(900);
+  });
+
+  it('follows growth within the same streaming summary', () => {
+    const row = (summary: string) => ({ id: 'summary', type: 'agentActivity' as const, data: { summary, status: 'running' as const } });
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('First')]} />);
+    const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 600 });
+    rerender(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming components={[row('First and second')]} />);
+    expect(pane.scrollTop).toBe(600);
+  });
+
+  it.each(['pointerDown', 'keyDown', 'focus', 'wheel'] as const)('keeps activity open after %s during completion', (event) => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<ConversationAssistantBubble conversationId='c' messageId='m' isStreaming={false} justCompleted components={[
+        { id: 'summary', type: 'agentActivity', data: { summary: 'Inspect the evidence', detail: 'Read the evidence.', status: 'completed' } },
+      ]} />);
+      fireEvent[event](container.querySelector('[data-agent-summary]')!);
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not hide focused activity when clarification starts waiting', () => {
+    const props = { conversationId: 'c', messageId: 'm', isStreaming: true, components: [
+      { id: 'summary', type: 'agentActivity' as const, data: { summary: 'Inspect the evidence', status: 'completed' as const } },
+    ] };
+    const { container, rerender } = render(<ConversationAssistantBubble {...props} />);
+    fireEvent.focus(container.querySelector('[data-agent-summary]')!);
+    rerender(<ConversationAssistantBubble {...props} requestInputState='waiting' />);
+    expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+  });
+
+  it('retains the open reading position when the saved bubble replaces the live bubble', () => {
+    vi.useFakeTimers();
+    try {
+      const state: ActivityPaneState = {};
+      const props = { conversationId: 'c', messageId: 'm', activityPaneState: state, components: [
+        { id: 'summary', type: 'agentActivity' as const, data: { summary: 'Inspect the evidence', status: 'completed' as const } },
+      ] };
+      const live = render(<ConversationAssistantBubble {...props} isStreaming />);
+      const pane = live.container.querySelector('[data-activity-pane]') as HTMLElement;
+      Object.defineProperties(pane, { scrollHeight: { value: 800 }, clientHeight: { value: 200 } });
+      pane.scrollTop = 120;
+      fireEvent.scroll(pane);
+      live.unmount();
+      const saved = render(<ConversationAssistantBubble {...props} isStreaming={false} justCompleted />);
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(saved.container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+      expect((saved.container.querySelector('[data-activity-pane]') as HTMLElement).scrollTop).toBe(120);
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse activity' }));
+      expect(saved.container.querySelector('[data-activity-pane-shell]')).toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('replaces an empty completed preparation row when detailed activity arrives', () => {
     const { container, rerender } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -253,9 +386,8 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     const summaries = container.querySelectorAll('[data-agent-summary]');
-    expect(summaries).toHaveLength(2);
-    expect(summaries[0]).toHaveTextContent('Request prepared');
-    expect(summaries[1]).toHaveTextContent('Inspect the financial report');
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toHaveTextContent('Inspect the financial report');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
   });
 
@@ -355,14 +487,35 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    const trigger = screen.getByRole('button', { name: 'Inspect the reports, Completed. Show full reasoning' });
+    const trigger = screen.getByRole('button', { name: 'Inspect the reports, Completed. Show activity details' });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText(/Then compare every 2025 ratio/)).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
+    expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toBeInTheDocument();
+  });
+
+  it('formats native summary previews and expanded Markdown without executing HTML', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1' messageId='message-1' isStreaming={false}
+      components={[{ id: 'summary-1', type: 'agentActivity', data: {
+        activityKind: 'reasoning_summary', summary: '**Analyzing linear extensions**', status: 'completed',
+        detail: '**Analyzing linear extensions**\n\nCompare the *valid* schedules.\n\n## Results\n\n- First case\n- Second case\n\n<script>unsafe()</script>\n\n[Unsafe](javascript:alert(1))',
+      } }]}
+    />);
+    const trigger = screen.getByRole('button', { name: 'Reasoning summary, Completed. Show activity details' });
+    expect(trigger).toHaveTextContent('Reasoning summary');
+    expect(trigger).toHaveTextContent('Analyzing linear extensions');
+    expect(trigger).not.toHaveTextContent('**');
+    expect(trigger.querySelector('strong')).toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('heading', { name: 'Results' })).toBeInTheDocument();
+    expect(screen.getByText('valid').tagName).toBe('EM');
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(container.querySelector('script')).toBeNull();
+    expect(screen.getByText('Unsafe').getAttribute('href')).not.toMatch(/^javascript:/);
   });
 
   it('renders expanded reasoning details verbatim', () => {
@@ -381,7 +534,7 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect the private report safely, Completed. Show full reasoning' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect the private report safely, Completed. Show activity details' }));
 
     // No display-time redaction: details render as stored.
     expect(screen.getByText(/Read \/workspace\/private\/report\.pdf/)).toBeInTheDocument();
@@ -436,7 +589,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByRole('button', { name: `${detail}, Completed. Show full reasoning` })).toHaveTextContent('I am checking the official revenue statement');
+    expect(screen.getByRole('button', { name: `${detail}, Completed. Show activity details` })).toHaveTextContent('I am checking the official revenue statement');
     expect(container.querySelector('[data-answer-content]')).toHaveTextContent('Revenue was 33.9 million euros.');
     expect(container.querySelector('[data-answer-content]')).not.toHaveTextContent(detail);
   });
@@ -459,8 +612,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
+    expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(0);
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent(/start|contracts|parallel|call|now/);
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
     expect(screen.getAllByText(/Activate Skill/)).not.toHaveLength(0);
@@ -595,8 +747,8 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByRole('button', { name: 'Request prepared, Completed. Show full reasoning' })).toBeInTheDocument();
-    const activityRows = screen.getAllByRole('button', { name: `${repeatedDetail}, Completed. Show full reasoning` });
+    expect(screen.queryByRole('button', { name: 'Request prepared, Completed. Show activity details' })).not.toBeInTheDocument();
+    const activityRows = screen.getAllByRole('button', { name: `${repeatedDetail}, Completed. Show activity details` });
     expect(activityRows).toHaveLength(3);
     fireEvent.click(activityRows[0]);
     expect(screen.getByText(repeatedDetail, { selector: '[data-agent-detail-card] p' })).toBeInTheDocument();
@@ -629,7 +781,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByText(/Request prepared/)).toBeInTheDocument();
+    expect(screen.queryByText(/Request prepared/)).not.toBeInTheDocument();
     expect(screen.getByText(/quarterly revenue/)).toBeInTheDocument();
     expect(screen.getAllByText(/Calculate the totals/)).not.toHaveLength(0);
     expect(screen.queryByText('stream.activity.toolFallback')).not.toBeInTheDocument();
@@ -1113,7 +1265,7 @@ describe('ConversationAssistantBubble', () => {
     expect(toggle).toHaveClass('min-h-11', 'w-full');
     expect(toggle).toHaveTextContent('rootInput.requestActivity');
     expect(toggle).not.toHaveTextContent('Completed');
-    expect(toggle).toHaveTextContent('2 steps');
+    expect(toggle).toHaveTextContent('2 tool calls');
     expect(toggle).toHaveTextContent('View process');
     fireEvent.click(toggle);
 
@@ -1281,7 +1433,12 @@ describe('ConversationAssistantBubble', () => {
       viewUrl: 'https://storage.example/view',
       downloadUrl: 'https://storage.example/download',
     });
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const blob = new Blob(['presentation'], { type: 'application/pdf' });
+    const fetchArtifact = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob });
+    vi.stubGlobal('fetch', fetchArtifact);
+    const objectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:download-artifact');
+    let clicked: { href: string; filename: string } | undefined;
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked = { href: this.href, filename: this.download }; });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -1299,8 +1456,59 @@ describe('ConversationAssistantBubble', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+    expect(fetchArtifact).toHaveBeenCalledWith('https://storage.example/download', { credentials: 'omit', referrerPolicy: 'no-referrer' });
+    expect(objectUrl).toHaveBeenCalledWith(blob);
+    expect(clicked).toEqual({ href: 'blob:download-artifact', filename: 'report.pdf' });
+    expect(document.querySelector('a[href="blob:download-artifact"]')).toBeNull();
     expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledTimes(2);
     anchorClick.mockRestore();
+  });
+
+  it.each([false, 'network'])('shows an artifact error instead of navigating when download fails: %s', async (failure) => {
+    mocks.getArtifactDownloadUrl.mockResolvedValue({ downloadUrl: 'https://storage.example/download' });
+    vi.stubGlobal('fetch', failure === 'network' ? vi.fn().mockRejectedValue(new Error('Network')) : vi.fn().mockResolvedValue({ ok: false }));
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[{ id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'deck.pptx', availability: 'ready' } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(mocks.showError).toHaveBeenCalledWith('Artifact error'));
+    expect(anchorClick).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  });
+
+  it.each([
+    { filename: 'Zied-Turki-CV.docx', mimeType: undefined, expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'Zied-Turki-CV.DOCX', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'report.pdf', mimeType: 'application/octet-stream', expectedMime: 'application/pdf' },
+    { filename: 'report.docx', mimeType: 'application/pdf', expectedMime: 'application/pdf' },
+    { filename: 'notes.md', mimeType: undefined, expectedMime: 'text/markdown' },
+    { filename: 'notes.txt', mimeType: 'application/octet-stream', expectedMime: 'text/plain' },
+    { filename: 'metrics.csv', mimeType: undefined, expectedMime: 'text/csv' },
+    { filename: 'report.xlsx', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+    { filename: 'deck.pptx', mimeType: undefined, expectedMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' },
+    { filename: 'deck.ppt', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.ms-powerpoint' },
+    { filename: 'document.docx', mimeType: 'application/zip', expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'archive.zip', mimeType: 'application/zip', expectedMime: 'application/zip' },
+    { filename: 'archive.7z', mimeType: undefined, expectedMime: 'application/octet-stream' },
+  ])('opens $filename with $expectedMime when artifact MIME is $mimeType', async ({ filename, mimeType, expectedMime }) => {
+    mocks.getArtifactDownloadUrl.mockResolvedValue({
+      viewUrl: 'https://storage.example/existing-artifact',
+      downloadUrl: 'https://storage.example/download',
+    });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename, mimeType, availability: 'ready' } }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    await waitFor(() => expect(mocks.openFileViewerFromUrlLoader).toHaveBeenCalledWith(
+      JSON.stringify(['conversation-1', 'message-1', 'opaque-1']),
+      filename,
+      expectedMime,
+      expect.any(Function),
+    ));
+    expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledWith('conversation-1', 'message-1', 'opaque-1');
   });
 
   it('strips attachment sentinels from answer text but renders paths verbatim', () => {
@@ -1351,7 +1559,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/users\/12345678\/runs\/run-1\/private\.json/)).toBeInTheDocument();
     expect(screen.getByText(/file=\/tmp\/private\/customer\.csv/)).toBeInTheDocument();
     expect(screen.getAllByText(/uri=s3:\/\/private-bucket\/customer\.csv/)).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Review_record_507f1f77bcf86cd799439011, Completed. Show full reasoning' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review_record_507f1f77bcf86cd799439011, Completed. Show activity details' })).toBeInTheDocument();
     expect(screen.getAllByText('report.csv')).not.toHaveLength(0);
     expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });

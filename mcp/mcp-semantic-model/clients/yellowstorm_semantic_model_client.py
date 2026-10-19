@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import require_actor_context
+from auth import require_actor_context, verified_mcp_jwt
 from contracts import SemanticModelMcpResultV1, failure_result
 
 
@@ -24,15 +24,18 @@ class SemanticModelBackendError(RuntimeError):
 
 
 class YellowStormSemanticModelClient:
-    def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        if not internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+    def __init__(self, base_url: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024,
+                 transport: httpx.AsyncBaseTransport | None = None, service_token: str = "") -> None:
+        if not service_token:
+            # WP07.2: backend assistant routes authenticate the
+            # semantic-model-mcp service principal with its scoped secret.
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
-        self._internal_token = internal_token
+        self._service_token = service_token
         self._max_response_bytes = max_response_bytes
 
     async def close(self) -> None:
@@ -51,16 +54,24 @@ class YellowStormSemanticModelClient:
         return await self._request("DELETE", path, user_id)
 
     async def _request(self, method: str, path: str, user_id: str, payload: dict[str, Any] | None = None) -> Any:
+        # Service identity comes from the scoped semantic-model-mcp principal
+        # (WP07.2); the backend-issued MCP JWT travels as the signed actor
+        # assertion (WP06.4). Never logged.
+        assertion = verified_mcp_jwt.get()
+        headers = {
+            "X-Yellowstorm-Service-Principal": "semantic-model-mcp",
+            "X-Yellowstorm-Service-Token": self._service_token,
+            "X-YellowStorm-User-Id": user_id,
+            **self._actor_headers(),
+        }
+        if assertion:
+            headers["X-YellowStorm-Mcp-Assertion"] = assertion
         try:
             response = await self._client.request(
                 method,
                 path,
                 json=payload,
-                headers={
-                    "X-Internal-Token": self._internal_token,
-                    "X-YellowStorm-User-Id": user_id,
-                    **self._actor_headers(),
-                },
+                headers=headers,
             )
         except httpx.TimeoutException as exc:
             raise SemanticModelBackendError("SEMANTIC_MODEL_TOOL_TIMEOUT", "Semantic model backend request timed out", 504) from exc

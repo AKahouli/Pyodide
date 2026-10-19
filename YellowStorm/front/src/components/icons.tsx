@@ -9,7 +9,7 @@ export function AppLogo({ className, style, ...props }: IconProps) {
   const { theme, logo } = useContext(ThemeProviderContext);
 
   if (logo.id === 'kpmg') {
-    return <Icons.Kpmg className={`ml-2 w-auto ${className || ''}`} style={{ color: theme === 'light' ? '#2563eb' : '#ffffff', ...style }} {...props} />;
+    return <Icons.Kpmg className={`ms-2 w-auto ${className || ''}`} style={{ color: theme === 'light' ? '#2563eb' : '#ffffff', ...style }} {...props} />;
   }
 
   return <Icons.YellowMind className={`w-56 m-auto ${className || ''}`} style={style} {...props} />;

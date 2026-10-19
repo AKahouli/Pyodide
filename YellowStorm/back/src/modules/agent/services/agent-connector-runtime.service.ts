@@ -6,11 +6,15 @@ import { LoggerService } from '../../logger';
 import { SkillService } from '../../skill/skill.service';
 import { ISkillResponse } from '../../skill/interfaces/skill.interface';
 import { ConnectorService } from '../../connector/connector.service';
-import { IConnectorResponse } from '../../connector/interfaces/connector.interface';
+import { RuntimeConnectorDefinition } from '../../connector/interfaces/connector-runtime.interface';
+import { isRemoteInspectableMcpTransport } from '../../connector/utils/remote-mcp-transport.util';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
-import { SemanticModelMcpJwtService } from '../../connector/services/semantic-model-mcp-jwt.service';
 import { isTrustedMcpServerUrl } from '../../connector/utils/trusted-mcp-server.util';
+import { McpJwtService } from '../../connector/services/mcp-jwt.service';
+import { hasConfiguredMcpCredential, hasSeparateProviderCredential, normalizeMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
+import { UnauthorizedException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -25,7 +29,7 @@ export class AgentConnectorRuntimeService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly configService: ConfigService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {
     this.logger.setContext(AgentConnectorRuntimeService.name);
   }
@@ -155,12 +159,12 @@ export class AgentConnectorRuntimeService {
   }
 
   getConnectorSkillIds(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[],
   ): string[] {
     return [...new Set(
       connectorIds
-        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
+        .map((connectorId) => connectorsMap.get(connectorId)?.skillIds || [])
         .flat()
         .filter(Boolean),
     )];
@@ -185,13 +189,13 @@ export class AgentConnectorRuntimeService {
     };
   }
 
-  async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
-    const connectorsMap = new Map<string, IConnectorResponse>();
+  async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, RuntimeConnectorDefinition>> {
+    const connectorsMap = new Map<string, RuntimeConnectorDefinition>();
     if (connectorIds.length === 0) {
       return connectorsMap;
     }
 
-    const fetchedConnectors = await this.connectorService.findByIds(connectorIds);
+    const fetchedConnectors = await this.connectorService.findRuntimeByIds(connectorIds);
     for (const connector of fetchedConnectors) {
       connectorsMap.set(connector.id, connector);
     }
@@ -205,7 +209,7 @@ export class AgentConnectorRuntimeService {
   }
 
   async buildConnectorBindings(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[] = [],
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,
@@ -215,6 +219,15 @@ export class AgentConnectorRuntimeService {
     const bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
       .filter(Boolean)
+      // Stored stdio (or unknown) transports are never bound: the agent runtime
+      // can spawn local processes from binding config (WP-01).
+      .filter((connector): connector is RuntimeConnectorDefinition => {
+        if (connector && connector.isActive !== false && isRemoteInspectableMcpTransport(connector.mcpTransportType)) return true;
+        this.logger.warn('Skipping connector with non-remote MCP transport for agent runtime binding', {
+          connector_id: connector?.id,
+        });
+        return false;
+      })
       .map((connector: any) => ({
         connector_id: connector.id,
         connector_name: connector.name,
@@ -250,9 +263,17 @@ export class AgentConnectorRuntimeService {
       .filter((binding: any) => binding.actions.length > 0);
 
     if (userId) {
-      for (const binding of bindings) {
+      // Different connectors have independent auth state. Resolve them together,
+      // retaining each connector's destination/access/credential ordering.
+      await Promise.all(bindings.map(async (binding) => {
         const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType && connector.authSourceType !== 'none') {
+        if (!connector) return;
+        const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
+        await this.connectorService.assertRuntimeDestination(connector);
+        if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
+        if (policy.profile === 'public') return;
+        const declaresProviderAuth = Boolean(connector.authSourceType && connector.authSourceType !== 'none');
+        if (declaresProviderAuth) {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
@@ -267,52 +288,52 @@ export class AgentConnectorRuntimeService {
               connector_id: binding.connector_id,
               error: (err as Error).message,
             });
+            throw err;
           }
         }
-        try {
-          const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
-            userId,
-            connector?.dynamicHeaders || [],
-          );
-          binding.auth_headers = {
-            ...binding.auth_headers,
-            ...dynamicHeaders,
-          };
-          this.logger.debug('Connector runtime auth headers resolved', {
-            connector_id: binding.connector_id,
-            authHeaderNames: Object.keys(binding.auth_headers),
-          });
-        } catch (err) {
-          this.logger.warn('Failed to resolve connector dynamic headers for agent runtime', {
-            connector_id: binding.connector_id,
-            error: (err as Error).message,
-          });
+        // ADR-0026: when the assertion is the ingress credential and the
+        // connector also declares a provider credential, that credential must
+        // resolve into its own header — the assertion overwrites Authorization
+        // later, so counting that slot would still emit an assertion-only call.
+        if (policy.profile === 'internal_jwt' && declaresProviderAuth && !hasSeparateProviderCredential(binding.auth_headers)) {
+          throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable provider credential');
         }
-      }
+        if (policy.profile === 'configured') {
+          if (!hasConfiguredMcpCredential(connector, binding.auth_headers)) {
+            throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+          }
+          try {
+            const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+              userId,
+              connector?.dynamicHeaders || [],
+            );
+            binding.auth_headers = {
+              ...binding.auth_headers,
+              ...dynamicHeaders,
+            };
+            this.logger.debug('Connector runtime auth headers resolved', {
+              connector_id: binding.connector_id,
+              authHeaderNames: Object.keys(binding.auth_headers),
+            });
+          } catch (err) {
+            this.logger.warn('Failed to resolve connector dynamic headers for agent runtime', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }));
     }
 
-    const mcpLogicalSearchKey = this.configService.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
-    if (mcpLogicalSearchKey) {
-      for (const binding of bindings) {
-        const transport = String(binding.mcp_transport_type || '');
-        const authHeaders = binding.auth_headers as Record<string, unknown> | undefined;
-        const hasAuth = Boolean(authHeaders?.['Authorization']);
-        if (transport === 'streamable_http' && !hasAuth) {
-          binding.auth_headers = {
-            ...(binding.auth_headers),
-            Authorization: `Bearer ${mcpLogicalSearchKey}`,
-          };
-        }
-      }
-    }
-
-    if (userId && this.mcpJwt) {
-      for (const binding of bindings) {
-        const auth = await this.mcpJwt.bindingAuth(binding.mcp_server_url, userId,
+    const mcpJwt = this.mcpJwt;
+    if (userId && mcpJwt) {
+      // Do not mint any JWT until every connector above passed validation.
+      await Promise.all(bindings.map(async (binding) => {
+        const auth = await mcpJwt.bindingAuth(binding.mcp_server_url, userId,
           binding.connector_id, binding.auth_headers, binding.auth_env);
         binding.auth_headers = auth.headers;
         binding.auth_env = auth.env;
-      }
+      }));
     }
     return bindings;
   }

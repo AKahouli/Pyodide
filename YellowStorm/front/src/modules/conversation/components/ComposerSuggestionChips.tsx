@@ -193,7 +193,7 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
                 type='button'
                 onClick={handleApply}
                 className={cn(
-                  'w-full text-left',
+                  'w-full text-start',
                   'relative flex items-start gap-3',
                   'rounded-md px-4 py-3',
                   'text-sm leading-relaxed',

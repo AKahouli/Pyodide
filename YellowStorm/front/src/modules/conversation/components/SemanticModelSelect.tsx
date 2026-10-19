@@ -51,10 +51,10 @@ export function SemanticModelSelect({ value, onChange, disabled, label }: Semant
               )}
               {models.map((model) => (
                 <CommandItem key={model.id} value={model.name} disabled={!model.currentPublishedVersionId} onSelect={() => onChange(model.id)}>
-                  <Network className='mr-2 size-4 shrink-0' />
+                  <Network className='me-2 size-4 shrink-0' />
                   <span className='min-w-0 flex-1 truncate'>{model.name}</span>
-                  <span aria-hidden='true' className={`mr-1 h-2 w-2 rounded-full ${model.currentPublishedVersionId ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <Check className={cn('ml-2 size-4', value === model.id ? 'opacity-100' : 'opacity-0')} />
+                  <span aria-hidden='true' className={`me-1 h-2 w-2 rounded-full ${model.currentPublishedVersionId ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <Check className={cn('ms-2 size-4', value === model.id ? 'opacity-100' : 'opacity-0')} />
                 </CommandItem>
               ))}
             </CommandGroup>

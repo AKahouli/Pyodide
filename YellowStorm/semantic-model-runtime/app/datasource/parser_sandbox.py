@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import shutil
 from typing import Any
@@ -16,6 +18,13 @@ from .discovery import is_email_archive, max_source_bytes
 from .extraction_limits import EXTRACTION_LIMITS
 
 MAX_RESULT_BYTES = 10 * 1024 * 1024
+_STOP_GRACE_SECONDS = 2
+
+
+class ParserStopped(RuntimeError):
+    """The parser was asked to stop from outside (lease lost or run cancelled);
+    its process tree was terminated and nothing it wrote may be used. Never a
+    deterministic content failure: the run may still be retried fresh."""
 
 
 # What an admin's run limits change in the parser child: e-mails per archive, archive size, what is read of
@@ -68,32 +77,71 @@ def _child_environment(email_archive: bool = False, limits: dict[str, str] | Non
 
 
 def _stop_process(process: subprocess.Popen[Any]) -> None:
-    process.terminate()
+    """Terminate the child and its whole process tree, bounded, then hard-kill.
+
+    ``asyncio.to_thread`` cancellation never reaches an OS child, so every
+    caller that abandons a parse goes through here and waits for confirmed
+    exit before its temporary files are released or reused."""
+    if os.name == "nt":
+        # taskkill /T ends the tree; terminate() alone could leave grandchildren.
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                       capture_output=True, timeout=_STOP_GRACE_SECONDS)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)  # the child started its own group
+        except (ProcessLookupError, PermissionError):
+            process.terminate()
     try:
-        process.wait(timeout=2)
+        process.wait(timeout=_STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
         process.kill()
-        process.wait(timeout=2)
+        process.wait(timeout=_STOP_GRACE_SECONDS)
+
+
+def _cleanup_temp(directory: Path) -> None:
+    """Remove a parse's temporary directory, tolerating the Windows race where a
+    just-killed child's inherited handles clear slightly after ``wait()``."""
+    for attempt in range(6):
+        try:
+            shutil.rmtree(directory)
+            return
+        except PermissionError:
+            if attempt == 5:
+                shutil.rmtree(directory, ignore_errors=True)
+                return
+            time.sleep(0.1)
+        except FileNotFoundError:
+            return
 
 
 def run_preview_subprocess(source: dict[str, Any], options: dict[str, Any] | None,
-                           data: bytes | Path) -> dict[str, Any]:
+                           data: bytes | Path, *,
+                           stop_event: threading.Event | None = None) -> dict[str, Any]:
     """Run ``preview_source`` outside the Celery process and kill on timeout."""
-    return _run_subprocess("preview", source, options, data)
+    return _run_subprocess("preview", source, options, data, stop_event=stop_event)
 
 
 def prepare_dataset_subprocess(source: dict[str, Any], options: dict[str, Any] | None,
                                data: bytes | Path, output: Path, *,
-                               limits: dict[str, Any] | None = None) -> dict[str, Any]:
-    result = _run_subprocess("prepare", source, options, data, output, limits=limits)
+                               limits: dict[str, Any] | None = None,
+                               stop_event: threading.Event | None = None) -> dict[str, Any]:
+    result = _run_subprocess("prepare", source, options, data, output, limits=limits,
+                             stop_event=stop_event)
     return result
 
 
 def prepare_email_tables_subprocess(source: dict[str, Any], data: bytes | Path, output_dir: Path, *,
-                                    limits: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+                                    limits: dict[str, Any] | None = None,
+                                    stop_event: threading.Event | None = None) -> dict[str, dict[str, Any]]:
     """The three tables of an e-mail archive from one read, as ``<sheet>.parquet`` in ``output_dir``;
     returns each table's shape (``rowCount``, ``columns``, ``sizeBytes``, ``contentHash``, ``path``)."""
-    result = _run_subprocess("prepare_tables", source, None, data, output_dir, limits=limits)
+    result = _run_subprocess("prepare_tables", source, None, data, output_dir, limits=limits,
+                             stop_event=stop_event)
     tables = result.get("tables")
     if not isinstance(tables, dict):
         raise RuntimeError("parser_runtime_failed")
@@ -101,9 +149,11 @@ def prepare_email_tables_subprocess(source: dict[str, Any], data: bytes | Path, 
 
 
 def derive_files_subprocess(source: dict[str, Any], data: bytes | Path, output_dir: Path, *,
-                            limits: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+                            limits: dict[str, Any] | None = None,
+                            stop_event: threading.Event | None = None) -> list[dict[str, Any]]:
     """Message texts and readable attachments of an e-mail archive, written into ``output_dir``."""
-    result = _run_subprocess("derive", source, None, data, output_dir, limits=limits)
+    result = _run_subprocess("derive", source, None, data, output_dir, limits=limits,
+                             stop_event=stop_event)
     files = result.get("files")
     if files is None and isinstance(result.get("manifest"), str):
         from .parser_worker import DERIVED_MANIFEST
@@ -121,7 +171,8 @@ def derive_files_subprocess(source: dict[str, Any], data: bytes | Path, output_d
 
 def _run_subprocess(operation: str, source: dict[str, Any], options: dict[str, Any] | None,
                     data: bytes | Path, artifact_target: Path | None = None, *,
-                    limits: dict[str, Any] | None = None) -> dict[str, Any]:
+                    limits: dict[str, Any] | None = None,
+                    stop_event: threading.Event | None = None) -> dict[str, Any]:
     """``data`` is the source bytes, or a file already on disk (large e-mail archives). ``limits``
     are the run's (an admin's), applied to this parse."""
     # Only a full read of an e-mail archive needs the long budget; its preview stops after a few hundred e-mails.
@@ -135,8 +186,8 @@ def _run_subprocess(operation: str, source: dict[str, Any], options: dict[str, A
     temp_parent = Path(configured_temp).resolve() if configured_temp else None
     if temp_parent is not None and not temp_parent.is_dir():
         raise RuntimeError("semantic_task_temp_dir_unavailable")
-    with tempfile.TemporaryDirectory(prefix="semantic-parser-", dir=temp_parent) as directory:
-        work = Path(directory)
+    work = Path(tempfile.mkdtemp(prefix="semantic-parser-", dir=temp_parent))
+    try:
         source_path = work / "source.bin"
         request_path = work / "request.json"
         result_path = work / "result.json"
@@ -152,20 +203,43 @@ def _run_subprocess(operation: str, source: dict[str, Any], options: dict[str, A
         request_path.write_text(json.dumps({"operation": operation, "source": source,
                                             "options": options}), encoding="utf-8")
         deadline = time.monotonic() + parser_timeout_seconds(email_archive, limit_env)
+        stopped = ""
         with result_path.open("wb") as output_file:
             process = subprocess.Popen(
                 [*_parser_command(), str(request_path), str(source_path), str(artifact_path)],
                 cwd=root, env=_child_environment(email_archive, limit_env), stdin=subprocess.DEVNULL,
                 stdout=output_file, stderr=subprocess.DEVNULL,
+                # Its own process group on POSIX, so a stop ends the whole tree.
+                start_new_session=(os.name == "posix"),
             )
-            while process.poll() is None:
-                if result_path.stat().st_size > MAX_RESULT_BYTES:
+            try:
+                while process.poll() is None:
+                    if stop_event is not None and stop_event.is_set():
+                        stopped = "parser_stopped"
+                        break
+                    if result_path.stat().st_size > MAX_RESULT_BYTES:
+                        stopped = "parser_result_too_large"
+                        break
+                    if time.monotonic() >= deadline:
+                        stopped = "parser_timeout"
+                        break
+                    time.sleep(0.02)
+            except BaseException:
+                # Never leave a child behind, whatever unwinds (a lease loss
+                # raises through this frame too).
+                if process.poll() is None:
                     _stop_process(process)
-                    raise ValueError("parser_result_too_large")
-                if time.monotonic() >= deadline:
-                    _stop_process(process)
-                    raise ValueError("parser_timeout")
-                time.sleep(0.02)
+                raise
+            if stopped:
+                _stop_process(process)
+        # Raised after the output handle is closed, so nothing holds the
+        # temporary directory when the attempt unwinds.
+        if stopped == "parser_stopped":
+            raise ParserStopped("parser_stopped")
+        if stopped == "parser_result_too_large":
+            raise ValueError("parser_result_too_large")
+        if stopped == "parser_timeout":
+            raise ValueError("parser_timeout")
         if result_path.stat().st_size > MAX_RESULT_BYTES:
             raise ValueError("parser_result_too_large")
         output = result_path.read_bytes()
@@ -195,3 +269,5 @@ def _run_subprocess(operation: str, source: dict[str, Any], options: dict[str, A
             artifact_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(artifact_path), artifact_target)
         return result
+    finally:
+        _cleanup_temp(work)

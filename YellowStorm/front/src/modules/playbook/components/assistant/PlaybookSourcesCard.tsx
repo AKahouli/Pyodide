@@ -123,7 +123,7 @@ export function PlaybookSourcesCard({ continuationId, playbookName, onSend, cont
                 const inList = workspaceAnswer(answer);
                 const picked = !inList && choice && !choice.skipped && choice.option === answer;
                 return <Button key={answer} type='button' size='sm' variant='outline' aria-pressed={Boolean(picked)} disabled={busy || sent}
-                  className={`h-auto min-h-8 whitespace-normal py-1 text-left text-xs ${picked ? 'border-primary bg-primary/10' : ''}`}
+                  className={`h-auto min-h-8 whitespace-normal py-1 text-start text-xs ${picked ? 'border-primary bg-primary/10' : ''}`}
                   onClick={() => inList ? setChoosing({ question, search: inList.search }) : choose.mutate({ questionId: question.id, choice: { choice: answer } })}>
                   {answer}
                 </Button>;

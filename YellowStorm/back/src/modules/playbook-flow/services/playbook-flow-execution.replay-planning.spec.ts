@@ -45,7 +45,8 @@ describe('callGrpcRun replay planning', () => {
 
     expect(replayReportService.createPreRunReport).toHaveBeenCalledWith(expect.not.objectContaining({ eligibility: expect.anything() }));
     expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.not.objectContaining({ metadata: expect.objectContaining({ replay_instructions: expect.anything() }) })],
       }),
@@ -96,7 +97,8 @@ describe('callGrpcRun replay planning', () => {
 
     expect(replayReportService.createPreRunReport).toHaveBeenCalled();
     expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: expect.objectContaining({
@@ -154,7 +156,8 @@ describe('callGrpcRun replay planning', () => {
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {}, snapshot);
 
     expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: expect.objectContaining({
@@ -211,7 +214,8 @@ describe('callGrpcRun replay planning', () => {
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {}, snapshot);
 
     expect(replayPromptService.buildReplayPromptSection).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: expect.objectContaining({
@@ -286,7 +290,8 @@ describe('callGrpcRun replay planning', () => {
       mode: 'replay_flex',
       artifacts: expect.objectContaining({ mode: 'replay_strict' }),
     }));
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: expect.objectContaining({
@@ -349,7 +354,8 @@ describe('callGrpcRun replay planning', () => {
 
     expect(resolveActiveReplayArtifact).toHaveBeenCalledWith('flow-1', 'step-1');
     expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+    expect(run.mock.calls[0][1].get('x-yellowstorm-artifact-authority')).toEqual(['test-dispatch-authority']);
+    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: expect.objectContaining({

@@ -1,12 +1,17 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
+import { ENCRYPTED_CONNECTOR_HEADERS } from '../connector-auth.service';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
-import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
+import { McpJwtService } from './mcp-jwt.service';
+import { hasMcpCredentialHeaders, normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from '../utils/mcp-security-policy';
+import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
+import { denyRedirectFetch } from '../connector.service';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -35,7 +40,8 @@ export class ConnectorMcpRuntimeService {
     @Inject('ConnectorAuthService') private readonly auth: ConnectorAuthService,
     private readonly logger: LoggerService,
     private readonly workspaceShares: WorkspaceShareService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
+    @Optional() private readonly config?: ConfigService,
   ) {
     this.logger.setContext(ConnectorMcpRuntimeService.name);
   }
@@ -45,12 +51,33 @@ export class ConnectorMcpRuntimeService {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The requested MCP tool is not allowlisted for evidence retrieval.');
     }
 
-    const connector = await this.connectors.findById(input.connectorId);
+    // SERVER-ONLY runtime lookup: credentials stay off the public projection (WP-02).
+    const connector = await this.connectors.getRuntimeById(input.connectorId);
+    const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
     if (!connector.isActive) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected evidence-search connector is inactive.');
     }
     if (!['streamable_http', 'sse'].includes(connector.mcpTransportType)) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'Evidence retrieval only supports HTTP MCP transports.');
+    }
+
+    // SSRF egress policy (WP-05): the same destination rules as inspection
+    // apply to runtime tool calls, before any transport is constructed. The
+    // exact admin-configured internal endpoints (WP05.5) stay reachable.
+    try {
+      await assertMcpDestinationAllowed(connector.mcpServerUrl,
+        resolveMcpDestinationPolicyOptions(policy, connector.mcpServerUrl, this.config));
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        this.logger.warn('Denied MCP runtime tool call destination', {
+          connectorId: connector.id,
+          userId: input.authorizationUserId,
+          host: error.host,
+          reason: error.reason,
+        });
+        throw new BadRequestException(ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED, 'This MCP server destination is not allowed.');
+      }
+      throw error;
     }
 
     const configuredAction = connector.actions.find((action) => action.key === input.toolName);
@@ -59,25 +86,38 @@ export class ConnectorMcpRuntimeService {
     }
 
     await this.workspaceShares.assertUserHasAccess(input.authorizationUserId, [input.workspaceId]);
+    if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, input.authorizationUserId);
     const credentialOwnerUserId = connector.createdBy.toString();
-    const resolvedAuth = await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
+    const encryptedAuth = connector.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS;
+    if (encryptedAuth && policy.profile === 'public')
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted authentication cannot use a public MCP profile');
+    const resolvedAuth = policy.profile === 'configured' || encryptedAuth ? await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
       authSourceType: connector.authSourceType,
       connectedAppKey: connector.connectedAppKey,
       runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
       connectorId: connector.id,
-    });
-    if (!this.mcpJwt?.isJwtServer(connector.mcpServerUrl) && connector.authSourceType !== 'none' && Object.keys(resolvedAuth.headers).length === 0) {
+    }) : { headers: {}, env: {} };
+    // Evidence calls intentionally strip sensitive raw serverConfig headers.
+    // Only resolved auth material that will actually be attached can satisfy
+    // authentication here; an unused stored secret must not authorize a call.
+    if (policy.profile === 'configured' && !hasMcpCredentialHeaders(resolvedAuth.headers)) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector has no usable background credential.');
     }
 
-    const dynamicHeaders = await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []);
+    const dynamicHeaders = policy.profile === 'configured' ? await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []) : {};
+    if (encryptedAuth) {
+      const protectedNames = new Set(Object.keys(resolvedAuth.headers).map(name => name.toLowerCase()));
+      if (Object.keys({ ...this.safeConfiguredHeaders(connector.mcpServerConfig), ...dynamicHeaders,
+        ...(input.authoritativeHeaders ?? {}) }).some(name => protectedNames.has(name.toLowerCase())))
+        throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted credential headers cannot be overridden');
+    }
     let headers = {
       ...this.safeConfiguredHeaders(connector.mcpServerConfig),
       ...resolvedAuth.headers,
       ...dynamicHeaders,
       ...(input.authoritativeHeaders ?? {}),
     };
-    if (this.mcpJwt) headers = await this.mcpJwt.headers(connector.mcpServerUrl, input.authorizationUserId, headers);
+    if (this.mcpJwt) headers = await this.mcpJwt.headers(connector.mcpServerUrl, input.authorizationUserId, headers, connector.id);
     const transport = await this.createTransport(connector.mcpTransportType, connector.mcpServerUrl, headers);
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const client = new Client({ name: 'yellowstorm-evidence-search', version: '1.0.0' });
@@ -105,19 +145,25 @@ export class ConnectorMcpRuntimeService {
       this.logger.warn('MCP evidence tool call failed', {
         connectorId: connector.id,
         toolName: input.toolName,
-        error: error instanceof Error ? error.message : 'Unknown MCP error',
+        errorKind: error instanceof Error ? 'error' : 'non_error',
       });
-      throw error;
+      throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The MCP evidence-search call failed');
     } finally {
       await client.close().catch(() => undefined);
     }
   }
 
   private async createTransport(transportType: string, serverUrl: string, headers: Record<string, string>): Promise<Transport> {
-    const requestInit: RequestInit = { headers, ...(this.mcpJwt?.isJwtServer(serverUrl) ? { redirect: 'error' as const } : {}) };
+    // No-follow redirects on every runtime hop (WP05.3). SSE streams flow
+    // through the eventsource layer, which ignores requestInit.redirect —
+    // the fetch override is the only refusal that reaches that hop.
+    const requestInit: RequestInit = { headers, redirect: 'error' };
     if (transportType === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
-      return new SSEClientTransport(new URL(serverUrl), { requestInit });
+      return new SSEClientTransport(new URL(serverUrl), {
+        requestInit,
+        eventSourceInit: { fetch: denyRedirectFetch } as never,
+      });
     }
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
     return new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });

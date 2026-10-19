@@ -37,6 +37,14 @@ export function NotificationsProvider({
     error: null,
   });
 
+  const ownerId = isAuthenticated && user && !isPendingAdminApproval(user) ? user.id : null;
+  const ownerScope = React.useRef({ id: ownerId, active: false });
+  if (ownerScope.current.id !== ownerId) ownerScope.current = { id: ownerId, active: false };
+  const stateOwner = React.useRef(ownerId);
+  const listRequest = React.useRef(0);
+  const countRequest = React.useRef(0);
+  const isCurrent = (scope: typeof ownerScope.current) => scope.active && scope === ownerScope.current && Boolean(scope.id);
+
   // Handle notification events
   const handleNotificationEvent = React.useCallback(
     (event: SSEEvent) => {
@@ -102,47 +110,54 @@ export function NotificationsProvider({
     [showToasts],
   );
 
-  // Subscribe to notification service
+  // Only passive notifications pause when hidden. Agent execution streams keep running.
   React.useEffect(() => {
-    if (!isAuthenticated || !user || isPendingAdminApproval(user)) {
+    const scope = ownerScope.current;
+    scope.active = Boolean(ownerId);
+    if (stateOwner.current !== ownerId || !ownerId) {
+      stateOwner.current = ownerId;
+      setState({ notifications: [], unreadCount: 0, isConnected: false, isLoading: false, error: null });
+    }
+    if (!ownerId) {
       notificationsService.disconnect();
-      setState({
-        notifications: [],
-        unreadCount: 0,
-        isConnected: false,
-        isLoading: false,
-        error: null,
-      });
       return;
     }
-
-    // Subscribe to events
-    const unsubscribe = notificationsService.subscribe(handleNotificationEvent);
-
-    // Connect
-    notificationsService.connect();
-
-    // Fetch initial notifications and count
-    fetchNotifications();
-    fetchUnreadCount();
-
+    const unsubscribe = notificationsService.subscribe(event => { if (isCurrent(scope)) handleNotificationEvent(event); });
+    const visible = () => {
+      if (!isCurrent(scope)) return;
+      if (document.visibilityState === 'hidden') notificationsService.pause();
+      else {
+        notificationsService.connect();
+        void fetchNotifications();
+        void fetchUnreadCount();
+      }
+    };
+    document.addEventListener('visibilitychange', visible);
+    visible();
     return () => {
+      scope.active = false;
+      document.removeEventListener('visibilitychange', visible);
       unsubscribe();
       notificationsService.disconnect();
     };
-  }, [isAuthenticated, user?.id, user?.status, handleNotificationEvent]);
+  }, [ownerId, handleNotificationEvent]);
 
   // Fetch notifications
   const fetchNotifications = async () => {
+    const scope = ownerScope.current;
+    if (!isCurrent(scope)) return;
+    const request = ++listRequest.current;
     try {
       setState((prev) => ({ ...prev, isLoading: true }));
       const data = await notificationsApi.getNotifications({ limit: 50 });
+      if (!isCurrent(scope) || request !== listRequest.current) return;
       setState((prev) => ({
         ...prev,
         notifications: data.notifications,
         isLoading: false,
       }));
     } catch (error) {
+      if (!isCurrent(scope) || request !== listRequest.current) return;
       setState((prev) => ({
         ...prev,
         error: tNotification('context.errors.fetchFailed', 'Failed to fetch notifications'),
@@ -153,18 +168,26 @@ export function NotificationsProvider({
 
   // Fetch unread count
   const fetchUnreadCount = async () => {
+    const scope = ownerScope.current;
+    if (!isCurrent(scope)) return;
+    const request = ++countRequest.current;
     try {
       const { count } = await notificationsApi.getUnreadCount();
+      if (!isCurrent(scope) || request !== countRequest.current) return;
       setState((prev) => ({ ...prev, unreadCount: count }));
     } catch (error) {
+      if (!isCurrent(scope) || request !== countRequest.current) return;
       console.error('Failed to fetch unread count:', error);
     }
   };
 
   // Mark as read
   const markAsRead = async (notificationIds: string[]) => {
+    const scope = ownerScope.current;
+    if (!isCurrent(scope)) return;
     try {
       await notificationsApi.markAsRead(notificationIds);
+      if (!isCurrent(scope)) return;
 
       setState((prev) => ({
         ...prev,
@@ -176,6 +199,7 @@ export function NotificationsProvider({
         unreadCount: Math.max(0, prev.unreadCount - notificationIds.length),
       }));
     } catch (error) {
+      if (!isCurrent(scope)) return;
       toast.error(tNotification('context.errors.markReadFailed', 'Failed to mark notifications as read'));
       throw error;
     }
@@ -183,8 +207,11 @@ export function NotificationsProvider({
 
   // Mark all as read
   const markAllAsRead = async () => {
+    const scope = ownerScope.current;
+    if (!isCurrent(scope)) return;
     try {
       await notificationsApi.markAllAsRead();
+      if (!isCurrent(scope)) return;
 
       setState((prev) => ({
         ...prev,
@@ -196,6 +223,7 @@ export function NotificationsProvider({
         unreadCount: 0,
       }));
     } catch (error) {
+      if (!isCurrent(scope)) return;
       toast.error(tNotification('context.errors.markAllReadFailed', 'Failed to mark all notifications as read'));
       throw error;
     }
@@ -203,8 +231,11 @@ export function NotificationsProvider({
 
   // Delete notification
   const deleteNotification = async (notificationId: string) => {
+    const scope = ownerScope.current;
+    if (!isCurrent(scope)) return;
     try {
       await notificationsApi.deleteNotification(notificationId);
+      if (!isCurrent(scope)) return;
 
       setState((prev) => {
         const notification = prev.notifications.find(
@@ -221,6 +252,7 @@ export function NotificationsProvider({
         };
       });
     } catch (error) {
+      if (!isCurrent(scope)) return;
       toast.error(tNotification('context.errors.deleteFailed', 'Failed to delete notification'));
       throw error;
     }
@@ -237,7 +269,7 @@ export function NotificationsProvider({
   };
 
   const value: NotificationsContextType = {
-    ...state,
+    ...(stateOwner.current === ownerId ? state : { notifications: [], unreadCount: 0, isConnected: false, isLoading: false, error: null }),
     markAsRead,
     markAllAsRead,
     deleteNotification,

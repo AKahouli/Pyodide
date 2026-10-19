@@ -274,7 +274,16 @@ def _drive_with_failure():
             confirms = [i for i, _ in interrupts if i.startswith("confirm::")]
             mails: list = []
             for c in confirms:
-                out = await drive(hitl.confirmation_resume_part(hitl.confirm_fc_id(c), confirmed=True))
+                try:
+                    out = await drive(hitl.confirmation_resume_part(hitl.confirm_fc_id(c), confirmed=True))
+                except Exception as e:  # noqa: BLE001
+                    # The spawned await follow-up can blow up mid-turn (the
+                    # ACTBOOM model call fires as soon as its step runs) —
+                    # collect it like the resume/final passes below so the
+                    # harness observes the failure instead of dying here.
+                    errors.append(f"CONFIRM {c[:20]}: {type(e).__name__}: {str(e)[:90]}")
+                    print(errors[-1])
+                    continue
                 for i, _ in out:
                     if i.startswith("mail:") and i not in mails:
                         mails.append(i)

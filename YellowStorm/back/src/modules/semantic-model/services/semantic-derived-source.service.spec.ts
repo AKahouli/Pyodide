@@ -27,14 +27,13 @@ describe('SemanticDerivedSourceService', () => {
       advanceRevision: jest.fn(async () => 7),
       audit: jest.fn(async () => undefined),
     };
-    const runtime = { previewSheetFields: jest.fn(async () => ({
+    const runtime = { getAiExtractionIdentity: jest.fn(async () => ({ profileId: 'semantic-runtime', model: 'm', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 })), previewSheetFields: jest.fn(async () => ({
       rows: [{ rowNumber: 1, fields: { country: { method: 'rules', reason: 'found', value: 'France', column: 'notes', span: { start: 6, end: 12 } } } }],
       ai: { aiRows: 0, aiCalls: 0, aiSkippedRows: 0, aiFailedRows: 0 },
     })) };
-    const agent = { resolveAgent: jest.fn(async () => ({ slug: 'extractor', llmModel: 'm' })) };
     const settings = { getDefaults: jest.fn(async () => ({ configured: { maxBlocks: 50 } })) };
     return {
-      service: new SemanticDerivedSourceService(database as never, models as never, runtime as never, agent as never, settings as never),
+      service: new SemanticDerivedSourceService(database as never, models as never, runtime as never, settings as never),
       client, models, runtime, database,
     };
   };
@@ -64,11 +63,11 @@ describe('SemanticDerivedSourceService', () => {
     await expect(service.save('user', 'model', input)).rejects.toThrow(message);
   });
 
-  it('never chains derivations', async () => {
+  it('allows acyclic chains and refuses a derivation cycle', async () => {
     await expect(setup([derived({ id: 'd-2', conceptId: 'contract', sourceConceptId: 'site' })]).service.save('user', 'model', dto()))
-      .rejects.toThrow('Contract is itself made from another concept');
-    await expect(setup([derived({ id: 'd-2', conceptId: 'site', sourceConceptId: 'org' })]).service.save('user', 'model', dto()))
-      .rejects.toThrow('Organization already fills another concept');
+      .resolves.toMatchObject({ revision: 7 });
+    await expect(setup([derived({ id: 'd-2', conceptId: 'contract', sourceConceptId: 'org' })]).service.save('user', 'model', dto()))
+      .rejects.toThrow('would create a derivation cycle');
   });
 
   it('sends a run only the derivations it can make, in a stable order and shape', () => {
@@ -81,6 +80,32 @@ describe('SemanticDerivedSourceService', () => {
       derivationId: 'd-2', conceptId: 'org', sourceConceptId: 'contract', fieldMappings: derived().fieldMappings,
       conflictRule: 'latest', orderBy: 'effective_date', labelField: 'name', mappingVersion: '2026-09-30T00:00:00.000Z',
     });
+  });
+
+  it('does not require the runtime AI profile for copied fields and fails closed for AI fields', async () => {
+    const { service, runtime } = setup();
+    const failure = new Error('AI profile unavailable');
+    runtime.getAiExtractionIdentity.mockRejectedValue(failure);
+    const preview = (usesAi: boolean) => service.previewFields('user', 'model', {
+      conceptId: 'org', sourceConceptId: 'contract', records: [{ entityId: 'c1', values: { customer_name: 'Acme' } }],
+      fieldMappings: usesAi ? [{ sourceAttribute: 'customer_name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'ai' }]
+        : derived().fieldMappings,
+    });
+    await preview(false);
+    expect(runtime.getAiExtractionIdentity).not.toHaveBeenCalled();
+    runtime.previewSheetFields.mockClear();
+    await expect(preview(true)).rejects.toBe(failure);
+    expect(runtime.previewSheetFields).not.toHaveBeenCalled();
+  });
+
+  it('sends reachable chained derivations in dependency order rather than id order', () => {
+    const { service } = setup();
+    const runtime = service.runtimeDerivations([
+      derived({ id: 'a-child', conceptId: 'site', sourceConceptId: 'org',
+        fieldMappings: [{ sourceAttribute: 'id', targetAttribute: 'code' }] }),
+      derived({ id: 'z-parent' }),
+    ], nodes, new Set(['contract']), new Map([['org', ['id']], ['site', ['code']]]));
+    expect(runtime.map((item) => item.derivationId)).toEqual(['z-parent', 'a-child']);
   });
 
   it('leaves out a derivation whose key or date field was removed, and stops copying a removed field', () => {
@@ -233,7 +258,7 @@ describe('SemanticDerivedSourceService', () => {
           rules: { labels: ['Pays'] }, agentId: 'reader', description: 'The country', valueType: 'text' },
       ]);
       expect(request.rows).toEqual([{ rowNumber: 1, values: { customer_id: 'C-1', notes: 'Pays: France' } }]);
-      expect(request.aiExtraction).toEqual({ agentSlug: 'extractor', model: 'm', contractVersion: 'ai-attribute-v1' });
+      expect(request.aiExtraction).toEqual(await runtime.getAiExtractionIdentity.mock.results[0].value);
       expect(result.records).toEqual([{ entityId: 'contract:k1', fields: { country: expect.objectContaining({ value: 'France', column: 'notes' }) } }]);
     });
   });

@@ -1,7 +1,78 @@
+import type { ConversationMessageSearch, ConversationMessagesAround } from './types';
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
+import { useConversationUiStore } from './uiStore';
+import type { MiniAppStateIdentity, MiniAppStateSnapshot, MiniAppStateWrite } from './components/openui/mini-app-state';
 import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationUsageMetrics, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload, RecentConversationArtifact } from './types';
 
 // ===== Conversation APIs =====
+
+export interface ConversationAsset {
+  ref: string;
+  origin: 'upload' | 'generated' | 'workspace';
+  kind: 'image' | 'file' | 'app';
+  name: string;
+  mimeType?: string;
+  size?: number;
+  status: string;
+  documentId?: string;
+  workspaceId?: string;
+  messageId?: string;
+  componentId?: string;
+  version?: string;
+  actions: { view: boolean; download: boolean; read: boolean; delete?: boolean };
+}
+export interface ConversationAssetPage {
+  assets: ConversationAsset[];
+  nextCursor: string | null;
+  sourceErrors?: ConversationAsset['origin'][];
+  pendingCleanup?: ConversationAsset[];
+}
+export async function fetchConversationAssets(conversationId: string, params: {
+  cursor?: string; limit?: number; search?: string; kind?: ConversationAsset['kind'];
+} = {}, signal?: AbortSignal): Promise<ConversationAssetPage> {
+  let cursor = params.cursor;
+  const errors = new Set<ConversationAsset['origin']>();
+  const pendingCleanup = new Map<string, ConversationAsset>();
+  // Skip empty upload/workspace pages so a generated-only conversation opens usefully.
+  // Bounded traversal retains an explicit Next button for long filtered histories.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await apiClient.get<ApiResponse<ConversationAssetPage>>(API_ENDPOINTS.conversations.assets(conversationId), { params: { ...params, cursor }, signal });
+    const page = response.data.data;
+    page.sourceErrors?.forEach(origin => errors.add(origin));
+    page.pendingCleanup?.slice(0, 50).forEach(asset => { if (pendingCleanup.size < 50) pendingCleanup.set(asset.ref, asset); });
+    if (page.assets.length || !page.nextCursor || page.nextCursor === cursor || attempt === 2) return { ...page, sourceErrors: [...errors], ...(pendingCleanup.size ? { pendingCleanup: [...pendingCleanup.values()] } : {}) };
+    cursor = page.nextCursor;
+  }
+  throw new Error('Unreachable asset page');
+}
+export async function getConversationAssetUrl(conversationId: string, ref: string, signal?: AbortSignal): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(`${API_ENDPOINTS.conversations.asset(conversationId, ref)}/url`, undefined, { signal });
+  return response.data.data;
+}
+
+export interface ConversationAssetDeletion {
+  deleted: true;
+  alreadyDeleted: boolean;
+  cleanup: { blob: 'done' | 'pending' | 'notApplicable'; index: 'done' | 'pending' | 'notApplicable' };
+}
+export async function deleteConversationAsset(conversationId: string, ref: string): Promise<ConversationAssetDeletion> {
+  const response = await apiClient.delete<ApiResponse<ConversationAssetDeletion>>(API_ENDPOINTS.conversations.asset(conversationId, ref));
+  return response.data.data;
+}
+
+function miniAppStateUrl(identity: MiniAppStateIdentity): string {
+  return `/conversations/${encodeURIComponent(identity.conversationId)}/messages/${encodeURIComponent(identity.messageId)}/openui/${encodeURIComponent(identity.componentId)}/state`;
+}
+
+export async function fetchOpenUiAppState(identity: MiniAppStateIdentity, signal?: AbortSignal): Promise<MiniAppStateSnapshot> {
+  const response = await apiClient.get<ApiResponse<MiniAppStateSnapshot>>(miniAppStateUrl(identity), { signal });
+  return response.data.data;
+}
+
+export async function saveOpenUiAppState(identity: MiniAppStateIdentity, state: MiniAppStateWrite, signal?: AbortSignal): Promise<MiniAppStateSnapshot> {
+  const response = await apiClient.put<ApiResponse<MiniAppStateSnapshot>>(miniAppStateUrl(identity), state, { signal });
+  return response.data.data;
+}
 
 interface BackendPaginatedConversations<T extends Conversation | ConversationSummary> {
   conversations: T[];
@@ -115,6 +186,15 @@ export async function fetchTaggedAgents(id: string): Promise<any[]> {
 }
 
 // ===== Message APIs =====
+export async function searchConversationMessages(conversationId: string, q: string, signal?: AbortSignal): Promise<ConversationMessageSearch> {
+  const response = await apiClient.get<ApiResponse<ConversationMessageSearch>>(API_ENDPOINTS.conversations.searchMessages(conversationId), { params: { q, limit: 20 }, signal });
+  return response.data.data;
+}
+export async function fetchMessagesAround(conversationId: string, messageId: string, signal?: AbortSignal): Promise<ConversationMessagesAround> {
+  const response = await apiClient.get<ApiResponse<ConversationMessagesAround>>(API_ENDPOINTS.conversations.messagesAround(conversationId, messageId), { params: { limit: 100 }, signal });
+  return response.data.data;
+}
+
 
 export async function fetchMessages(conversationId: string, params?: MessageListParams): Promise<PaginatedResponse<Message>> {
   const response = await apiClient.get<ApiResponse<BackendPaginatedMessages>>(API_ENDPOINTS.conversations.messages(conversationId), { params });
@@ -270,8 +350,48 @@ export async function getArtifactDownloadUrl(conversationId: string, messageId: 
   return response.data.data;
 }
 
-export async function getCitationViewUrl(conversationId: string, messageId: string, citation: { source: string; fileName?: string; reference?: string }): Promise<{ url: string; fileName: string; mimeType: string }> {
-  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.citationUrl(conversationId, messageId), citation);
+/** Transfer the authorized signed object into a blob: cross-origin links ignore `download`. */
+export async function downloadArtifactFile(downloadUrl: string, filename: string): Promise<void> {
+  const response = await fetch(downloadUrl, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+  if (!response.ok) throw new Error('Artifact download failed');
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  try {
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+}
+
+export async function fetchSlideExportImage(conversationId: string, messageId: string, url: string, signal: AbortSignal): Promise<string> {
+  const response = await apiClient.post<ApiResponse<{ dataUrl: string }>>(`/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/slides/image`, { url }, { signal });
+  return response.data.data.dataUrl;
+}
+
+export async function getCitationViewUrl(conversationId: string, messageId: string, citation: { source: string; fileName?: string; reference?: string }, signal?: AbortSignal): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.citationUrl(conversationId, messageId), citation, { signal });
+  return response.data.data;
+}
+
+export async function getGeneratedImageUrl(conversationId: string, messageId: string, documentId: string, signal?: AbortSignal): Promise<{ url: string; fileName: string; mimeType: string; generated?: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string; generated?: boolean }>>(API_ENDPOINTS.conversations.generatedImageUrl(conversationId, messageId, documentId), undefined, { signal });
+  return response.data.data;
+}
+
+export type ConversationImageVersion = { source: string; fileName: string; createdAt: string; parentSource?: string; generated: boolean };
+
+export async function getGeneratedImageHistory(conversationId: string, messageId: string, documentId: string,
+  versionSource?: string, signal?: AbortSignal): Promise<{
+    versions: ConversationImageVersion[]; selected: ConversationImageVersion & { url: string; mimeType: string };
+  }> {
+  const response = await apiClient.post<ApiResponse<{
+    versions: ConversationImageVersion[]; selected: ConversationImageVersion & { url: string; mimeType: string };
+  }>>(API_ENDPOINTS.conversations.generatedImageHistory(conversationId, messageId, documentId), { versionSource }, { signal });
   return response.data.data;
 }
 
@@ -316,6 +436,11 @@ export async function fetchConversationWorkspaceDocuments(conversationId: string
 
 // ===== Conversation File APIs =====
 
+export async function fetchConversationFiles(conversationId: string, params?: { page?: number; limit?: number }): Promise<BackendPaginatedDocuments> {
+  const response = await apiClient.get<ApiResponse<BackendPaginatedDocuments>>(API_ENDPOINTS.conversations.files(conversationId), { params });
+  return response.data.data;
+}
+
 export interface FileUploadUrlResponse {
   documentId: string;
   uploadUrl: string;
@@ -337,6 +462,7 @@ export async function requestFileUploadUrl(conversationId: string, data: { filen
 
 export async function confirmFileUpload(conversationId: string, documentId: string): Promise<DocumentResponse> {
   const response = await apiClient.post<ApiResponse<DocumentResponse>>(API_ENDPOINTS.conversations.fileConfirm(conversationId), { documentId });
+  useConversationUiStore.getState().invalidateAssets();
   return response.data.data;
 }
 

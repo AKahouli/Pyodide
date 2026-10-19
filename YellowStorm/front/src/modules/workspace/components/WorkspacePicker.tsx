@@ -77,7 +77,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
                 <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground'>
                   <Layers className='h-5 w-5' />
                 </div>
-                <div className='min-w-0 text-left'>
+                <div className='min-w-0 text-start'>
                   <div className='text-xs text-muted-foreground'>Workspace</div>
                   <div className='text-sm font-medium truncate'>
                     {selected ? selected.name : 'Sélectionner un workspace'}
@@ -110,7 +110,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
           <span className='truncate text-sm'>
             {selected ? selected.name : 'Sélectionner un workspace'}
           </span>
-          <ChevronsUpDown className='ml-auto h-4 w-4 shrink-0 text-muted-foreground' />
+          <ChevronsUpDown className='ms-auto h-4 w-4 shrink-0 text-muted-foreground' />
         </Button>
       </PopoverTrigger>
       <PopoverContent className='w-72 p-0' align='start'>

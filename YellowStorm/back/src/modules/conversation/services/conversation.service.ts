@@ -1,3 +1,4 @@
+import { WorkspaceUploadSettingsService } from '../../system/workspace-upload-settings.service';
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -66,6 +67,7 @@ export class ConversationService {
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
     @Optional() private readonly workspaceShareService?: WorkspaceShareService,
     @Optional() private readonly audienceAuthorization?: GovernanceAudienceAuthorizationService,
+    @Optional() private readonly workspaceUploadSettings?: WorkspaceUploadSettingsService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -261,6 +263,13 @@ export class ConversationService {
     return this.mapToResponse(record);
   }
 
+  /** Resolve current broadcast recipients without hydrating display-only DTO fields. */
+  async getBroadcastMemberIds(conversationId: string): Promise<string[]> {
+    const record = await this.conversationStore.findById(conversationId);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return [...new Set([record.createdBy, ...(record.isGroup ? record.members.map((member) => member.userId) : [])])];
+  }
+
   async findAllByUser(
     userId: string,
     params: ConversationQueryParams,
@@ -431,10 +440,9 @@ export class ConversationService {
     const current = await this.conversationStore.findById(conversationId, true);
     if (!current) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
     if (current.systemWorkspaceId) return current.systemWorkspaceId;
-    const allocatedStorage = this.configService.get<number>(
-      'conversation.systemWorkspaceStorageBytes',
-      52428800,
-    );
+    const allocatedStorage = this.workspaceUploadSettings
+      ? (await this.workspaceUploadSettings.getSettings()).conversationWorkspaceStorageMb * 1048576
+      : this.configService.get<number>('conversation.systemWorkspaceStorageBytes', 52428800);
     try {
       const workspace = await this.workspaceService.createSystemWorkspace(
         userId,
@@ -548,6 +556,28 @@ export class ConversationService {
   async getConversationDocument(conversationId: string): Promise<ConversationRecord> {
     const record = await this.conversationStore.findById(conversationId, true);
     if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return record;
+  }
+
+  /** Conversation uploads are private to current participants, unlike linked workspace knowledge. */
+  async getUploadedDocuments(conversationId: string, params: DocumentQueryParams, userId: string): Promise<PaginatedDocuments> {
+    const record = await this.requireCurrentParticipant(conversationId, userId);
+    if (!record.systemWorkspaceId) {
+      return { documents: [], pagination: { page: params.page || 1, limit: params.limit || 20, total: 0, totalPages: 0 } };
+    }
+    return this.workspaceDocumentService.findByMultipleWorkspaces([record.systemWorkspaceId], params);
+  }
+
+  /** Shared non-public boundary for files and agent assets; never relies on document availability. */
+  async requireCurrentParticipant(conversationId: string, userId: string): Promise<ConversationRecord> {
+    const record = await this.getConversationDocument(conversationId);
+    if (record.createdBy !== userId && !record.members.some(member => member.userId === userId)) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Conversation uploads require current membership');
+    }
+    if (record.runtimeMode === 'governed' && (!record.governanceContext?.scopeId
+      || !await this.audienceAuthorization?.isUserAuthorized(userId, record.governanceContext.scopeId))) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Governed scope is unavailable');
+    }
     return record;
   }
 

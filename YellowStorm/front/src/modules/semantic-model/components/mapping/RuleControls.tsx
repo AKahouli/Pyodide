@@ -54,14 +54,14 @@ export function RuleSection({ id, title, icon, summary, help, invalid, open, onT
   const { t } = useModuleTranslation('semantic-model');
   const shown = open || Boolean(invalid);
   return <section className='border-b last:border-b-0'>
-    <div className='flex items-center gap-1 pr-1.5'>
+    <div className='flex items-center gap-1 pe-1.5'>
       <button type='button' aria-expanded={shown} aria-controls={id} aria-label={title} aria-describedby={summary ? `${id}-summary` : undefined} onClick={onToggle}
-        className='flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
+        className='flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-start text-xs hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
         <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', shown && 'rotate-90')} aria-hidden />
         <span className='flex shrink-0 text-muted-foreground' aria-hidden>{icon}</span>
         <span className='shrink-0 font-medium'>{title}</span>
         {summary && <span id={`${id}-summary`} className={cn('min-w-0 truncate text-[11px] text-muted-foreground', shown && 'sr-only')}>{summary}</span>}
-        {invalid && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
+        {invalid && <AlertTriangle className='ms-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
       </button>
       {help && <HelpTip text={help} />}
     </div>
@@ -103,7 +103,7 @@ const VARIANTS = {
   },
   tiles: {
     group: 'grid grid-cols-3 gap-1',
-    item: 'flex h-9 items-center gap-1.5 rounded-md border bg-background px-1.5 text-left hover:border-primary/50 hover:bg-primary/5',
+    item: 'flex h-9 items-center gap-1.5 rounded-md border bg-background px-1.5 text-start hover:border-primary/50 hover:bg-primary/5',
     checked: 'border-primary bg-primary/5 ring-1 ring-primary',
   },
 } as const;
@@ -237,7 +237,7 @@ export function PageRangeControl({ fieldLabel, from, to, pageCount, invalidFrom,
         return <button key={page} type='button' tabIndex={-1} aria-hidden title={t('mapping.reading.page', { page })} onClick={() => pick(page)}
           className={cn('h-5 w-3.5 rounded-[2px] border transition-colors', chosen ? 'border-primary bg-primary/30' : 'border-muted-foreground/30 bg-background hover:border-primary/60')} />;
       })}
-      {(!pageCount || pageCount > STRIP_PAGES) && <span className='ml-1 text-[10px] text-muted-foreground'>…</span>}
+      {(!pageCount || pageCount > STRIP_PAGES) && <span className='ms-1 text-[10px] text-muted-foreground'>…</span>}
     </div>
   </div>;
 }

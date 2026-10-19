@@ -107,7 +107,7 @@ export function OverviewPlaybookNode({ id, data, selected }: NodeProps<OverviewN
               </TooltipContent>
             ) : null}
           </Tooltip>
-          <div className={cn('mt-1 truncate text-[10px] text-muted-foreground', data.canExecute && 'pr-8')}>
+          <div className={cn('mt-1 truncate text-[10px] text-muted-foreground', data.canExecute && 'pe-8')}>
             {subtitle}
           </div>
         </div>

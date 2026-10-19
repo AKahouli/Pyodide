@@ -1,20 +1,31 @@
+import asyncio
 import inspect
+from src.root_runtime.delegate_resolver import native_actor_headers
 import json
+import mimetypes
 import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
+# Windows hosts often lack the OpenXML types in the registry, which would
+# otherwise degrade document uploads to application/octet-stream.
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")
+mimetypes.add_type("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx")
+
 import requests
 from hashlib import sha256
 from google.adk.tools.tool_context import ToolContext
+from google.adk.tools.base_toolset import BaseToolset
 
 from src.connector_tool_name import build_connector_tool_name
 from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
+from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY, MAX_IMAGE_SANDBOX_INPUTS
 from src.smart_rag.tools.utilities.connector_citations import normalize_connector_citations, normalize_vectorstore_source
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
     DISPLAY_PURPOSE_DESCRIPTION,
@@ -40,6 +51,78 @@ _RECORD_CITATION_GUIDANCE = (
 _MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
+class DeferredConnectorToolset(BaseToolset):
+    """Advertise connector schemas on demand, retaining their original dispatch.
+
+    This object belongs to one freshly constructed conversation agent. Loaded
+    names are additionally keyed by invocation, never persisted in chat state.
+    """
+
+    def __init__(self, tools):
+        super().__init__()
+        self._use_invocation_cache = False
+        self._originals = {tool.name: tool for tool in tools}
+        self._loaded = {}
+        catalog = "\n".join(
+            f"{tool.name}: {' '.join(str(tool.custom_schema.get('description') or tool.description).split())[:160]}"
+            for tool in tools
+        )
+
+        async def load_connector_tools(tool_names: list[str], tool_context: ToolContext):
+            unknown = [name for name in tool_names if name not in self._originals]
+            if unknown:
+                return {"error": "Unknown connector tool names", "unknown": unknown}
+            self._loaded.setdefault(tool_context.invocation_id, set()).update(tool_names)
+            return {"loaded": tool_names, "instruction": "Call the loaded tools using their original schemas on the next step."}
+
+        self._loader = SearchToolADK(load_connector_tools, {"function": {
+            "name": "load_connector_tools",
+            "description": "Load original connector tool schemas before calling them. Select exact names from this complete authorized catalog:\n" + catalog,
+            "parameters": {"type": "object", "properties": {
+                "tool_names": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["tool_names"]},
+        }}, reject_unknown_args=True)
+        self._catalog_metadata = {
+            "names": [self._loader.name, *self._originals],
+            "signature": sha256(json.dumps(
+                [self._loader.custom_schema, *[tool.custom_schema for tool in tools]],
+                sort_keys=True, separators=(",", ":"), default=str,
+            ).encode()).hexdigest(),
+        }
+        self._tools = []
+        for original in tools:
+            original_process = original.process_llm_request
+
+            async def process_llm_request(*, tool_context, llm_request, original=original, original_process=original_process):
+                object.__setattr__(llm_request, "_deferred_connector_catalog", self._catalog_metadata)
+                if original.name in self._loaded.get(tool_context.invocation_id, set()):
+                    await original_process(tool_context=tool_context, llm_request=llm_request)
+                else:
+                    # ADK dispatch remains complete for historical calls/replays;
+                    # only the outgoing declaration is deferred.
+                    llm_request.tools_dict[original.name] = original
+
+            original.process_llm_request = process_llm_request
+            self._tools.append(original)
+
+    async def get_tools(self, readonly_context=None):
+        return [self._loader, *self._tools]
+
+
+def defer_connector_tool_schemas(tools):
+    """Wrap only trusted connector wrappers; leave built-ins and controls intact."""
+    connectors = [tool for tool in tools if isinstance(tool, SearchToolADK)
+                  and getattr(tool, "_conversation_connector", False)]
+    if not connectors:
+        return list(tools)
+    return [tool for tool in tools if tool not in connectors] + [DeferredConnectorToolset(connectors)]
+
+
+def install_deferred_connector_tools(agent):
+    """Install on a freshly constructed conversation parent; instructions stay intact."""
+    agent.tools = defer_connector_tool_schemas(agent.tools or [])
+
+
 @dataclass(frozen=True)
 class ConnectorToolContext:
     workspace_id: Optional[str] = None
@@ -51,6 +134,7 @@ class ConnectorToolContext:
     agent_id: Optional[str] = None
     user_id: Optional[str] = None
     platform_api_token: Optional[str] = None
+    platform_api_url: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -64,7 +148,7 @@ def _redact_log_payload(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: Dict[str, Any] = {}
         for key, nested in value.items():
-            if key == "image_base64" and isinstance(nested, str):
+            if key in {"image_base64", "content_base64", "contentBase64"} and isinstance(nested, str):
                 redacted[key] = f"[redacted base64 length={len(nested)}]"
             else:
                 redacted[key] = _redact_log_payload(nested)
@@ -1046,7 +1130,12 @@ def create_connector_tools(
     bindings: List[Dict[str, Any]],
     context: Optional[ConnectorToolContext] = None,
 ) -> List[Any]:
+    # Imported after this module initializes: flow tools also reuse these connector helpers.
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountGuard, SandboxMountValidationError
+
     context = context or ConnectorToolContext()
+    from src.smart_rag.infrastructure.external.mcp_toolset_cache import current_conversation_id
+    conversation_scope = current_conversation_id() or context.session_id
     tools: List[Any] = []
     effective_workspace_names = (
         context.workspace_names
@@ -1081,6 +1170,10 @@ def create_connector_tools(
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
         binding_auth_env = binding.get("auth_env") or {}
         binding_dynamic_headers = binding.get("dynamic_headers") or []
+        image_mount_guards: Dict[str, SandboxMountGuard] = {}
+        sandbox_epochs: Dict[str, Optional[str]] = {}
+        sandbox_lifecycle: Dict[str, Any] = {"known": False, "active": False, "receipts": {}}
+        available_actions = {str(action.get("action_key") or "") for action in binding.get("actions") or []}
 
         if not connector_id.strip():
             continue
@@ -1178,7 +1271,7 @@ def create_connector_tools(
                 _parameter_schema: Dict[str, Any] = effective_parameter_schema,
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
-                _session_id: Optional[str] = context.session_id,
+                _session_id: Optional[str] = conversation_scope,
                 _agent_id: Optional[str] = context.agent_id,
                 _has_reserved_purpose: bool = has_reserved_purpose,
                 _is_logical_search: bool = is_logical_search,
@@ -1186,10 +1279,14 @@ def create_connector_tools(
                 _citation_mode: str = citation_mode,
                 _result_mapping: Dict[str, Any] = result_mapping,
                 _connector_slug: str = connector_slug,
+                _image_mount_guards: Dict[str, SandboxMountGuard] = image_mount_guards,
+                _sandbox_epochs: Dict[str, Optional[str]] = sandbox_epochs,
+                _sandbox_lifecycle: Dict[str, Any] = sandbox_lifecycle,
+                _available_actions: set[str] = available_actions,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
-                from src.flow_engine.mcp import call_mcp_tool
+                from src.mcp import call_mcp_tool
 
                 if not _server_url:
                     return (
@@ -1263,10 +1360,28 @@ def create_connector_tools(
                 invocation_id = getattr(tool_context, "invocation_id", "") or ""
                 if invocation_id:
                     effective_auth_headers["x-execution-id"] = invocation_id
+                context_state = getattr(tool_context, "state", {})
+                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} else {}
+                image_paths = image_state.get("paths", []) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else []
+                # Paths originate only from validated platform asset/image receipts for this turn.
+                image_paths = sorted(set(path for path in image_paths if isinstance(path, str)
+                    and (re.fullmatch(r"/mnt/workspace/generated-images/[a-f0-9]{24}\.(png|jpg|webp)", path)
+                        or re.fullmatch(r"/mnt/workspace/conversation-assets/[a-f0-9]{64}\.[a-z0-9]{1,10}", path))))
+                if len(image_paths) > MAX_IMAGE_SANDBOX_INPUTS:
+                    return {"error": "Too many image inputs for bounded sandbox validation."}
+                current_connector_context = _connector_context
+                if image_paths and _session_id:
+                    owner = _header_user_id(effective_auth_headers)
+                    if not owner:
+                        return {"error": "Image sandbox inputs require an authenticated owner."}
+                    # Exact keys refresh inputs added after the turn's original document manifest.
+                    image_keys = [f"{owner}/system_{_session_id}/{path.removeprefix('/mnt/workspace/')}" for path in image_paths]
+                    current_connector_context = {**_connector_context,
+                        "file_paths": _unique_strings([*(_connector_context.get("file_paths") or []), *image_keys])}
                 if _transport_type == "streamable_http":
                     effective_auth_headers = _apply_streamable_http_context_headers(
                         effective_auth_headers,
-                        _connector_context,
+                        current_connector_context,
                         _session_id,
                         _agent_id,
                     )
@@ -1293,15 +1408,118 @@ def create_connector_tools(
                     if key in merged_params and merged_params[key] != value:
                         return {"error": "The requested resource is outside the execution scope."}
                     merged_params[key] = value
-                response = await call_mcp_tool(
-                    _transport_type,
-                    _server_url,
-                    effective_server_config,
-                    _action_key,
-                    merged_params,
-                    auth_headers=effective_auth_headers,
-                    auth_env=_auth_env,
-                )
+                async def call_action(action: str, params: Dict[str, Any]) -> Any:
+                    return await call_mcp_tool(_transport_type, _server_url, effective_server_config,
+                        action, params, auth_headers=effective_auth_headers, auth_env=_auth_env)
+
+                asset_receipts = image_state.get("assets", {}) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else {}
+                sandbox_epoch = None
+                def confirmed_destroy(value):
+                    notices = [value] if isinstance(value, str) else [value.get(key) for key in ("result", "text")] if isinstance(value, dict) else []
+                    return not (isinstance(value, dict) and (value.get("error") or value.get("isError"))) and any(
+                        isinstance(notice, str) and notice.strip() in {"Sandbox destroyed.", "No sandbox is running."} for notice in notices)
+                def reset_lifecycle():
+                    _sandbox_lifecycle.update(known=True, active=False, receipts={})
+                    _image_mount_guards.clear()
+                    _sandbox_epochs.clear()
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key != "sandbox_destroy":
+                    if not _sandbox_lifecycle["known"]:
+                        if "sandbox_destroy" not in _available_actions:
+                            return {"error": "A verified fresh sandbox lifecycle is required before execution."}
+                        try:
+                            reset = await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            if not confirmed_destroy(reset):
+                                return {"error": "The previous sandbox could not be cleared. No action was executed."}
+                            reset_lifecycle()
+                        except (Exception, TimeoutError):
+                            return {"error": "The previous sandbox could not be cleared. No action was executed."}
+                    if not _sandbox_lifecycle["active"] and _action_key != "sandbox_create" and invocation_id not in _image_mount_guards:
+                        return {"error": "Create a fresh sandbox before executing interpreter actions."}
+                    asset_receipts = {**_sandbox_lifecycle["receipts"], **asset_receipts}
+                    if len(asset_receipts) > MAX_IMAGE_SANDBOX_INPUTS:
+                        return {"error": "Too many retained sandbox inputs. Destroy the sandbox and select at most 32 assets."}
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key == "sandbox_destroy":
+                    if not _sandbox_lifecycle["known"]:
+                        merged_params["failed"] = True
+                    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
+                    try:
+                        revocation = await get_asset_revocation(context, _session_id)
+                        if revocation["epoch"] is not None or revocation["cleanupPending"]:
+                            merged_params["failed"] = True
+                    except SandboxMountValidationError:
+                        # Cleanup remains possible during an outage, but must not archive drafts.
+                        merged_params["failed"] = True
+                    if _sandbox_lifecycle["receipts"]:
+                        from src.smart_rag.tools.utilities.conversation_assets import validate_prepared_assets
+                        try:
+                            await validate_prepared_assets(context, _session_id, _sandbox_lifecycle["receipts"])
+                        except SandboxMountValidationError:
+                            merged_params["failed"] = True
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key != "sandbox_destroy":
+                    from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
+                    try:
+                        revocation = await get_asset_revocation(context, _session_id)
+                        sandbox_epoch = revocation["epoch"]
+                        if revocation["cleanupPending"] or (sandbox_epoch is not None and _sandbox_epochs.get(invocation_id) != sandbox_epoch):
+                            _image_mount_guards.pop(invocation_id, None)
+                            _sandbox_epochs.pop(invocation_id, None)
+                            if "sandbox_destroy" not in _available_actions:
+                                raise SandboxMountValidationError("Sandbox reset is unavailable")
+                            destroyed = await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            notices = [destroyed] if isinstance(destroyed, str) else [destroyed.get(key) for key in ("result", "text")] if isinstance(destroyed, dict) else []
+                            if (isinstance(destroyed, dict) and (destroyed.get("error") or destroyed.get("isError"))) or not any(
+                                    isinstance(notice, str) and notice.strip() in {"Sandbox destroyed.", "No sandbox is running."} for notice in notices):
+                                raise SandboxMountValidationError("Sandbox reset failed")
+                            reset_lifecycle()
+                            asset_receipts = image_state.get("assets", {}) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else {}
+                            if revocation["cleanupPending"] or _action_key != "sandbox_create":
+                                return {"error": "Conversation files changed. Finish pending deletion cleanup and create a fresh sandbox before continuing."}
+                    except (SandboxMountValidationError, TimeoutError):
+                        return {"error": "Conversation asset availability or sandbox reset could not be verified. No action was executed."}
+                if asset_receipts and _action_key != "sandbox_destroy":
+                    from src.smart_rag.tools.utilities.conversation_assets import validate_prepared_assets
+                    try:
+                        await validate_prepared_assets(context, _session_id, asset_receipts)
+                    except SandboxMountValidationError:
+                        if invocation_id in _image_mount_guards and "sandbox_destroy" in _available_actions:
+                            try:
+                                await asyncio.wait_for(call_action("sandbox_destroy", {"failed": True}), timeout=20.0)
+                            except Exception:
+                                logger.warning("asset_revocation_sandbox_cleanup_failed")
+                        _image_mount_guards.pop(invocation_id, None)
+                        return {"error": "A selected asset is unavailable. Execution stopped and no output was published. Select current assets before retrying."}
+
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and image_paths and _action_key != "sandbox_destroy":
+                    guard = _image_mount_guards.get(invocation_id)
+                    try:
+                        if _action_key == "sandbox_create":
+                            if guard is None:
+                                async def hydrate_missing(missing):
+                                    if not {"file_upload_base64", "shell_exec"}.issubset(_available_actions):
+                                        return
+                                    from src.smart_rag.tools.utilities.conversation_assets import hydrate_prepared_assets
+                                    receipts = image_state.get("assets", {}) if isinstance(image_state, dict) else {}
+                                    await hydrate_prepared_assets(context, _session_id, invocation_id, receipts, missing, call_action)
+                                guard = SandboxMountGuard([{"path": path, "kind": "file"} for path in image_paths], _available_actions,
+                                    hydrate=hydrate_missing if isinstance(image_state, dict) and image_state.get("assets") else None)
+                                _image_mount_guards[invocation_id] = guard
+                            response = await guard.create_validated(call_action, merged_params)
+                        else:
+                            if guard is None or guard.authoritative_paths != image_paths:
+                                return {"error": "Create and validate the sandbox after preparing all asset/image inputs."}
+                            await guard.wait_until_ready()
+                            response = await call_action(_action_key, merged_params)
+                    except SandboxMountValidationError:
+                        return {"error": "Required image inputs were not mounted after bounded sandbox validation. No substitute paths were used."}
+                else:
+                    response = await call_action(_action_key, merged_params)
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}:
+                    if _action_key == "sandbox_destroy":
+                        if confirmed_destroy(response):
+                            reset_lifecycle()
+                    elif _action_key == "sandbox_create":
+                        _sandbox_epochs[invocation_id] = sandbox_epoch
+                        _sandbox_lifecycle.update(active=True, receipts=asset_receipts)
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations import normalize_web_connector_response
 
@@ -1325,6 +1543,56 @@ def create_connector_tools(
                     citation_mode=_citation_mode,
                     source_context=context,
                 )
+                if isinstance(registered_response, dict):
+                    registered_response.pop("_conversation_output_receipt", None)
+                if (_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
+                        and _action_key == "send_file_to_user"):
+                    # A coordinator copy receipt alone is not a registered conversation file.
+                    # Verify bytes/quota through the platform before emitting any ready artifact.
+                    try:
+                        import httpx
+                        publication = registered_response
+                        if not isinstance(publication, dict) or any(publication.get(key) for key in ("error", "isError")) or publication.get("status") == "error":
+                            raise ValueError("Failed publication")
+                        if not publication.get("ceph_path"):
+                            nested = publication.get("result")
+                            publication = json.loads(nested) if isinstance(nested, str) else nested
+                        if not isinstance(publication, dict) or any(publication.get(key) for key in ("error", "isError")) or publication.get("status") == "error":
+                            raise ValueError("Failed nested publication")
+                        owner = _header_user_id(effective_auth_headers)
+                        api_url = str(context.platform_api_url or "").rstrip("/")
+                        if not all((owner, _session_id, invocation_id, api_url)):
+                            raise ValueError("Missing trusted publication context")
+                        source = publication.get("ceph_path") if isinstance(publication, dict) else None
+                        if not isinstance(source, str) or not source.startswith(f"{owner}/system_{_session_id}/"):
+                            raise ValueError("Unscoped publication")
+                        if api_url.endswith("/api"):
+                            api_url += "/v1"
+                        elif not api_url.endswith("/api/v1"):
+                            api_url += "/api/v1"
+                        file_name = publication.get("filename") or str(publication.get("path") or source).replace("\\", "/").rsplit("/", 1)[-1]
+                        async with httpx.AsyncClient(timeout=90.0) as client:
+                            response = await client.post(f"{api_url}/internal/root-work/assets/register",
+                                headers=await native_actor_headers(),
+                                json={"userId": owner, "conversationId": _session_id, "invocationId": invocation_id,
+                                    "sourcePath": source, "fileName": file_name,
+                                    "inputReceipts": [{"ref": receipt["ref"], "sha256": receipt["sha256"]} for receipt in asset_receipts.values()],
+                                    "sandboxEpoch": sandbox_epoch,
+                                    "mimeType": publication.get("mime_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"})
+                            response.raise_for_status()
+                            body = response.json()
+                            data = body.get("data", body) if isinstance(body, dict) else None
+                        if (not isinstance(data, dict) or data.get("invocationId") != invocation_id
+                                or not isinstance(data.get("storagePath"), str) or not data.get("artifactId")):
+                            raise ValueError("Invalid registration")
+                        registered_response = {"generated_files": [{"ceph_path": data["storagePath"],
+                            "filename": data.get("fileName"), "mime_type": data.get("mimeType"), "size_bytes": data.get("size",0)}],
+                            "asset": data.get("asset"),
+                            "_conversation_output_receipt": {"invocationId": invocation_id,
+                                "storagePrefix": f"{owner}/system_{_session_id}", "artifactId": data["artifactId"],
+                                "storagePath": data["storagePath"]}}
+                    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+                        return {"error": "Output could not be registered or saved within the conversation quota. No ready output was published."}
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations.bounded_response import bound_web_response
                     return bound_web_response(registered_response)
@@ -1345,6 +1613,7 @@ def create_connector_tools(
             }
             from src.root_runtime.leaf_tools import register_tool_execution_kind
             tool = SearchToolADK(_connector_tool, schema, reject_unknown_args=True)
+            tool._conversation_connector = True
             tools.append(register_tool_execution_kind(tool, action.get("execution_kind", "unknown")))
 
         logger.info(
@@ -1361,14 +1630,13 @@ def create_connector_tools(
 def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]:
     """Bind trusted platform credentials to the native workspace file tool."""
     platform_api_url = agent_params.get("platform_api_url", "")
-    platform_api_token = agent_params.get("platform_api_token", "")
     user_id = agent_params.get("user_id", "")
 
-    if not platform_api_url or not platform_api_token:
+    if not platform_api_url:
         return None
 
     def redact_runtime_context(message: str) -> str:
-        for value in (platform_api_token, platform_api_url, user_id):
+        for value in (platform_api_url, user_id):
             if value:
                 message = message.replace(value, "[REDACTED]")
         return message
@@ -1404,7 +1672,7 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                     endpoint,
                     json=body,
                     headers={
-                        "X-Internal-Token": platform_api_token,
+                        **await native_actor_headers(),
                         "Content-Type": "application/json",
                     },
                 )

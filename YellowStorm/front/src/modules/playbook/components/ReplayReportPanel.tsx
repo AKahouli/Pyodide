@@ -847,7 +847,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       )}
 
       <Collapsible defaultOpen={false} className="rounded-md border bg-background p-3">
-        <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-left">
+        <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-start">
           <div>
             <div className="font-medium">{t('replayReport.postRun.detailsTitle' as any)}</div>
             <div className="mt-1 text-xs text-muted-foreground">{t('replayReport.advancedHint' as any)}</div>

@@ -162,6 +162,39 @@ COMMAND = {"actorUserId": "u", "modelId": "m", "environment": "draft"}
 
 
 @pytest.mark.asyncio
+async def test_retry_rejects_stale_revision_before_requesting_any_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
+    monkeypatch.setattr(routes.store, "get_active_binding", AsyncMock(return_value={"data_revision_id": "dr-new"}))
+    requested = AsyncMock()
+    monkeypatch.setattr(routes, "request_index", requested)
+    command = routes.IndexCommand.model_validate({**COMMAND, "expectedDataRevisionId": "dr-old", "expectedIndexId": "ix-old"})
+    with pytest.raises(routes.HTTPException) as raised:
+        await routes.request_search_index(command, _request(_Jobs(None)))
+    assert raised.value.status_code == 409 and raised.value.detail == "active_binding_changed"
+    requested.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_forwards_index_identity_and_returns_explicit_identity_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+    from app.graph_search.indexer import IndexUnavailable
+
+    monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
+    pin = AsyncMock(return_value={"data_revision_id": "dr-1"})
+    requested = AsyncMock(side_effect=IndexUnavailable("index_identity_changed"))
+    monkeypatch.setattr(routes, "_pin", pin)
+    monkeypatch.setattr(routes, "request_index", requested)
+    command = routes.IndexCommand.model_validate({**COMMAND, "expectedDataRevisionId": "dr-1", "expectedIndexId": "ix-1"})
+    with pytest.raises(routes.HTTPException) as raised:
+        await routes.request_search_index(command, _request(_Jobs(None)))
+    assert raised.value.status_code == 409 and raised.value.detail == "index_identity_changed"
+    assert pin.await_args.args[3] == "dr-1"
+    assert requested.await_args.kwargs["expected_index_id"] == "ix-1"
+
+
+@pytest.mark.asyncio
 async def test_restarting_a_stalled_build_stops_it_at_once_and_builds_again(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _stub_restart(monkeypatch, _row(stalled=True), _row(state="failed", last_error_code="cancelled"))
     jobs = _Jobs("cancelled")

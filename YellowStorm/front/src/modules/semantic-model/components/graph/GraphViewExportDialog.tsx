@@ -132,9 +132,9 @@ export function GraphViewExportDialog({ open, onOpenChange, index, ids, labels, 
       </p>
       {error && <p className='text-sm text-destructive' role='alert'>{error}</p>}
       <DialogFooter>
-        {step && <span className='mr-auto flex items-center gap-2 text-sm text-muted-foreground' role='status'><Loader2 className='h-4 w-4 animate-spin' />{t(`graphViewer.exportStep_${step}`, { records: records.toLocaleString(language) })}</span>}
+        {step && <span className='me-auto flex items-center gap-2 text-sm text-muted-foreground' role='status'><Loader2 className='h-4 w-4 animate-spin' />{t(`graphViewer.exportStep_${step}`, { records: records.toLocaleString(language) })}</span>}
         <Button variant='outline' onClick={() => onOpenChange(false)} disabled={Boolean(step)}>{t('graphViewer.cancel')}</Button>
-        <Button onClick={() => void run()} disabled={Boolean(step) || records === 0}><Download className='mr-1.5 h-4 w-4' />{t('graphViewer.exportRun')}</Button>
+        <Button onClick={() => void run()} disabled={Boolean(step) || records === 0}><Download className='me-1.5 h-4 w-4' />{t('graphViewer.exportRun')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

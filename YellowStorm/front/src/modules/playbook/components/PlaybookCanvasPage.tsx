@@ -4760,7 +4760,7 @@ function PlaybookCanvasInner() {
           <Button variant="ghost" size="sm" onClick={() => handleEditNode(starterTaskIds[0])}>{t('starter.editInput')}</Button>
           <Button variant="outline" size="sm" onClick={() => handleEditNode(starterTaskIds[1] || starterTaskIds[0])}>{t('starter.adapt')}</Button>
           <Button size="sm" disabled={!canRunWithInputs} onClick={handleRunRequest}>{t('starter.test')}</Button>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setStarterTaskIds([])}>{t('starter.dismiss')}</Button>
+          <Button variant="ghost" size="sm" className="ms-auto" onClick={() => setStarterTaskIds([])}>{t('starter.dismiss')}</Button>
         </div>
       )}
       <TooltipProvider delayDuration={300}>
@@ -5095,7 +5095,7 @@ function PlaybookCanvasInner() {
             <DialogTitle>{t('evaluationDialog.title')}</DialogTitle>
             <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
           </DialogHeader>
-          <div className="min-h-0 overflow-y-auto pr-1">
+          <div className="min-h-0 overflow-y-auto pe-1">
             {playbook && id && (
               <AdvisorEvaluationWorkspace
                 playbookId={id}

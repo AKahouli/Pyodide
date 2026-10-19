@@ -74,6 +74,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   const retryRef = React.useRef<{ fingerprint: string; requestId: string }>();
   const newConversationRequestRef = React.useRef<string>();
   const conversationIdRef = React.useRef<string>();
+  const pendingSendRef = React.useRef<{ conversationId: string; terminalMessageIds: Set<string> }>();
   const hydrateGenerationRef = React.useRef(0);
   const recoveryRef = React.useRef<{
     conversationId: string;
@@ -241,6 +242,10 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         streamingBuffer.addChunk(event.data.action, event.data.component, event.data.revision);
         break;
       case 'stream_complete':
+        if (pendingSendRef.current?.conversationId === activeConversationId) {
+          const ids = pendingSendRef.current.terminalMessageIds;
+          if (ids.size < 32) ids.add(event.data.messageId);
+        }
         if (recovery) recovery.terminal = true;
         streamingBuffer.clear();
         setStreamingComponents([]);
@@ -249,11 +254,17 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         void loadHistory();
         break;
       case 'stream_error':
+        if (pendingSendRef.current?.conversationId === activeConversationId) {
+          const ids = pendingSendRef.current.terminalMessageIds;
+          if (ids.size < 32) ids.add(event.data.messageId);
+        }
         if (recovery) recovery.terminal = true;
         streamingBuffer.clear();
         setStreamingComponents([]);
         setStreamingMessageId(undefined);
         setLoading(false);
+        // Omit raw backend text so handleApiError resolves the existing localized code.
+        setError({ code: event.data.errorCode, statusCode: 500 });
         break;
       case 'conversation_name_generated':
         setHistory((current) => current.map((conversation) => conversation.id === conversationId
@@ -264,7 +275,10 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   }), [hydrate, loadHistory, streamingBuffer]);
 
   const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[], handoff?: PendingPlaybookHandoffDraft) => {
-    if (!conversationId || loading) return false;
+    if (!conversationId || loading || pendingSendRef.current) return false;
+    // Only retain terminal IDs across this POST, never across turns/conversations.
+    const pendingSend = { conversationId, terminalMessageIds: new Set<string>() };
+    pendingSendRef.current = pendingSend;
     setLoading(true);
     setError(undefined);
     const fingerprint = JSON.stringify({ content, interaction, interactions, clientContext, playbookHandoffId: handoff?.handoffId });
@@ -284,18 +298,20 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         interaction,
         interactions,
       });
+      if (conversationIdRef.current !== conversationId) return true;
       setMessages((current) => upsertMessage(current, response.userMessage));
-      if (response.aiMessageId) {
+      if (response.aiMessageId && !pendingSend.terminalMessageIds.has(response.aiMessageId)) {
         setStreamingMessageId(response.aiMessageId);
         setStreamingComponents([]);
       }
       retryRef.current = undefined;
       return true;
     } catch (sendError: unknown) {
-      setError(sendError);
+      if (conversationIdRef.current === conversationId && pendingSend.terminalMessageIds.size === 0) setError(sendError);
       return false;
     } finally {
-      setLoading(false);
+      if (pendingSendRef.current === pendingSend) pendingSendRef.current = undefined;
+      if (conversationIdRef.current === conversationId) setLoading(false);
     }
   };
 

@@ -13,8 +13,8 @@ interface RequestWithSseUser extends Request {
 }
 
 /**
- * Guard for SSE endpoints that validates JWT from query parameter
- * EventSource API doesn't support custom headers, so we use query params
+ * Classic conversation uses fetch Authorization. The separate v2 EventSource
+ * transport retains its existing query-token compatibility.
  */
 @Injectable()
 export class SseAuthGuard implements CanActivate {
@@ -26,7 +26,11 @@ export class SseAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithSseUser>();
-    const token = request.query.token as string;
+    const authorization = request.headers?.authorization;
+    const bearer = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/i.exec(authorization)?.[1] : undefined;
+    // This guard is shared with v2, which is outside the classic migration.
+    const isV2 = /^\/(?:api\/v1\/)?conversation-v2(?:\/|$)/.test(request.originalUrl?.split('?')[0] ?? '');
+    const token = bearer ?? (isV2 && typeof request.query.token === 'string' ? request.query.token : undefined);
 
     if (!token) {
       throw new UnauthorizedException(

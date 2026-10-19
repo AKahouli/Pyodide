@@ -17,7 +17,7 @@ export function HealthConceptRail({ concepts, selectedId, onSelect }: Readonly<{
       const classes = STATUS_CLASSES[badge];
       const selected = concept.conceptId === selectedId;
       return <button key={concept.conceptId} type='button' aria-pressed={selected} onClick={() => onSelect(concept.conceptId)}
-        className={`w-full rounded-xl border p-3.5 text-left transition hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selected ? `bg-muted ${classes.ring}` : 'bg-card'}`}>
+        className={`w-full rounded-xl border p-3.5 text-start transition hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selected ? `bg-muted ${classes.ring}` : 'bg-card'}`}>
         <span className='flex items-center gap-2.5'>
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${classes.dot}`} aria-hidden />
           <span className='min-w-0 flex-1 truncate text-sm font-semibold'>{concept.label}</span>

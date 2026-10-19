@@ -84,7 +84,7 @@ BODY = {
     "actorUserId": "user-1", "modelId": "model-1",
     "workspaceId": "6512f0a1c9e77a001234aaa1",
     "payload": {
-        "modelVersionId": "v1", "specHash": canonical_spec_hash(SPEC), "purpose": "build",
+        "modelVersionId": "v1", "specHash": canonical_spec_hash(SPEC), "purpose": "build", "scope": {"kind": "model"},
         "specification": SPEC,
         "sources": [{
             "conceptId": "c1",
@@ -155,12 +155,18 @@ def test_idempotency_key_with_different_payload_is_409(job_client: TestClient):
 
 
 def test_idempotency_key_cannot_cross_operation_types(job_client: TestClient):
-    # Same key, same command content: only the operation type differs.
+    # Same effective key, same command content: only the operation type differs.
+    # Population namespaces its keys per runtime engine (population_routes._engine_key),
+    # so the cross-operation fence is exercised on the effective key a run admits under.
+    from app.population.engine_version import population_engine_version
+
+    run = {**AUTH, "Idempotency-Key": "idem-1"}
+    discovery = {**AUTH, "Idempotency-Key": f"idem-1:{population_engine_version()}"}
     assert job_client.post(
-        "/v1/semantic-model-population/runs", headers=AUTH, json=DISCOVERY_BODY
+        "/v1/semantic-model-population/runs", headers=run, json=DISCOVERY_BODY
     ).status_code == 202
     response = job_client.post(
-        "/v1/semantic-model-datasource/discoveries", headers=AUTH, json=DISCOVERY_BODY
+        "/v1/semantic-model-datasource/discoveries", headers=discovery, json=DISCOVERY_BODY
     )
     assert response.status_code == 409
 

@@ -44,7 +44,7 @@ export function AgentCard({
   return (
     <div
       className={cn(
-        'flex flex-col gap-3.5 rounded-2xl border border-border bg-card p-4 text-left transition-colors',
+        'flex flex-col gap-3.5 rounded-2xl border border-border bg-card p-4 text-start transition-colors',
         className,
       )}
     >
@@ -54,7 +54,7 @@ export function AgentCard({
         aria-expanded={expanded}
         aria-controls={panelId}
         data-testid={`agent-card-toggle-${agent.key}`}
-        className="flex items-center gap-3 rounded-lg text-left transition-colors hover:bg-accent/40"
+        className="flex items-center gap-3 rounded-lg text-start transition-colors hover:bg-accent/40"
       >
         <AgentAvatar initials={agent.initials} colorSeed={agent.colorSeed} status={agent.status} />
         <div className="min-w-0 flex-1">
@@ -101,7 +101,7 @@ export function AgentCard({
               key={task.id}
               type="button"
               onClick={() => onOpenTask(task)}
-              className="flex items-center gap-3 rounded-xl border border-border bg-background/40 p-3 text-left transition-colors hover:bg-accent/40"
+              className="flex items-center gap-3 rounded-xl border border-border bg-background/40 p-3 text-start transition-colors hover:bg-accent/40"
             >
               <span className={cn('size-2 shrink-0 rounded-full', laneDot(task.lane))} />
               <div className="min-w-0 flex-1">

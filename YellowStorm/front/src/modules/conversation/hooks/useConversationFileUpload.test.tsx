@@ -38,7 +38,7 @@ class MockXMLHttpRequest {
 
   open() {}
 
-  setRequestHeader() {}
+  setRequestHeader = vi.fn();
 
   send() {}
 
@@ -125,6 +125,19 @@ describe('useConversationFileUpload', () => {
     });
 
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('sends the create-only precondition required by the S3 signature', async () => {
+    requestFileUploadUrlMock.mockResolvedValueOnce({ documentId: 'doc-1',
+      uploadUrl: 'https://upload.example/file?X-Amz-SignedHeaders=host%3Bif-none-match',
+      expiresAt: new Date().toISOString() });
+    const { result } = renderHook(() => useConversationFileUpload({ conversationId: 'conv-1' }));
+    act(() => result.current.addFiles([new File(['image'], 'image.png', { type: 'image/png' })], ['protected']));
+    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(1));
+    const xhr = MockXMLHttpRequest.instances[0];
+    expect(xhr.setRequestHeader).toHaveBeenCalledWith('If-None-Match', '*');
+    act(() => xhr.emitLoad(201));
+    await waitFor(() => expect(confirmFileUploadMock).toHaveBeenCalledWith('conv-1', 'doc-1'));
   });
 
   it('releases only submitted files without deleting documents or aborting a new upload', async () => {

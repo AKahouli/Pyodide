@@ -53,7 +53,7 @@ export function PreviewBrowserFrame({
             <LockIcon className='size-3 shrink-0 opacity-55' aria-hidden />
             <span className='truncate tracking-tight'>{addressLabel}</span>
             {live && liveLabel ? (
-              <span className='ml-auto inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-ok'>
+              <span className='ms-auto inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-ok'>
                 <span className='relative flex size-1.5'>
                   <span className='absolute inline-flex size-full animate-ping rounded-full bg-ok/70 opacity-50 motion-reduce:animate-none' />
                   <span className='relative inline-flex size-1.5 rounded-full bg-ok' />

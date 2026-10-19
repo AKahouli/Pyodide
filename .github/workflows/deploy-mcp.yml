@@ -76,6 +76,14 @@ jobs:
               "mcp/${mcp}"
           done
 
+  # Deploy secret provisioning (per purpose, never aliased to a generic key):
+  # mcp-agent: AGENT_MCP_BACKEND_SERVICE_TOKEN; mcp-playbook:
+  # PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN; mcp-semantic-model:
+  # SEMANTIC_MODEL_MCP_SERVICE_TOKEN. Bind the same purpose-specific value to its
+  # backend principal verifier. Do not mount INTERNAL_SERVICE_SECRET or the
+  # legacy YELLOWSTORM_INTERNAL_SERVICE_TOKEN in these containers. MCP ingress
+  # credentials/public verification keys remain separately provisioned according
+  # to the configured ingress profile.
   deploy:
     runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
     needs: build

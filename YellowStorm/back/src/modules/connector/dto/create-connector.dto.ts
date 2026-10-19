@@ -4,6 +4,8 @@ import {
   IsEnum,
   IsObject,
   IsIn,
+  IsInt,
+  Min,
   IsOptional,
   IsString,
   Matches,
@@ -13,7 +15,8 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ConnectorActionExecutionKind } from '../connector.types';
-import { ConnectorActionResultKind, ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, ConnectorCitationMode, DynamicHeaderSource, McpTransportType } from '../connector.types';
+import { ConnectorActionResultKind, ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, ConnectorCitationMode, DynamicHeaderSource } from '../connector.types';
+import { REMOTE_INSPECTABLE_MCP_TRANSPORTS, RemoteInspectableMcpTransport } from '../utils/remote-mcp-transport.util';
 
 export class ConnectorDynamicHeaderDto {
   @ApiProperty({ description: 'HTTP header name to inject, e.g. X-User-Id' })
@@ -119,6 +122,17 @@ export class ConnectorActionDto {
 }
 
 export class CreateConnectorDto {
+  @ApiPropertyOptional({ description: 'Connector MCP security policy (privileged changes require connectors.security.manage)' })
+  @IsOptional()
+  @IsObject()
+  mcpSecurityPolicy?: import('../connector.types').McpSecurityPolicy;
+
+  @ApiPropertyOptional({ description: 'Expected security revision for binding-affecting updates' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expectedSecurityRevision?: number;
+
   @ApiPropertyOptional({ type: ConnectorWorkerPolicyDto })
   @IsOptional()
   @ValidateNested()
@@ -196,21 +210,32 @@ export class CreateConnectorDto {
   @IsObject()
   runtimeAuthConfig?: Record<string, unknown>;
 
-  @ApiPropertyOptional({ description: 'MCP transport type' })
+  @ApiPropertyOptional({
+    description: 'MCP transport type (remote transports only; stdio is not supported over HTTP)',
+    enum: REMOTE_INSPECTABLE_MCP_TRANSPORTS,
+  })
   @IsOptional()
-  @IsString()
-  mcpTransportType?: McpTransportType;
+  @IsIn(REMOTE_INSPECTABLE_MCP_TRANSPORTS)
+  mcpTransportType?: RemoteInspectableMcpTransport;
 
-  @ApiPropertyOptional({ description: 'MCP server URL (for http/sse/streamable_http) or command (for stdio)' })
+  @ApiPropertyOptional({ description: 'MCP server URL (for http/sse/streamable_http)' })
   @IsOptional()
   @IsString()
   @MaxLength(1024)
   mcpServerUrl?: string;
 
-  @ApiPropertyOptional({ description: 'MCP server extra configuration (e.g. commandArgs, env for stdio)', type: Object })
+  @ApiPropertyOptional({ description: 'MCP server extra configuration (e.g. headers)', type: Object })
   @IsOptional()
   @IsObject()
   mcpServerConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Set true to clear stored runtime credentials without reading them; omitted fields preserve existing secrets',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  clearRuntimeAuthConfig?: boolean;
 
   @ApiPropertyOptional({
     description: 'Dynamic per-user headers (e.g. X-User-Id mapped to the calling user)',

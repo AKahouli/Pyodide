@@ -2037,7 +2037,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId || files.length === 0) return;
 
-        const { validFiles } = validateFiles(files);
+        let maxFileSize: number;
+        try {
+          const settings = await workspaceApi.getWorkspaceUploadSettings();
+          maxFileSize = (settings.maxFileSizeMb ?? 500) * 1024 * 1024;
+        } catch (error) {
+          toast.error(getApiErrorMessage(error, tError('uploadSettingsFailed', 'Unable to load upload limits')));
+          return;
+        }
+        const { validFiles } = validateFiles(files, maxFileSize);
         if (validFiles.length === 0) return;
 
         const previousFileIds = new Set(get().pageFiles.map((f) => f.id));

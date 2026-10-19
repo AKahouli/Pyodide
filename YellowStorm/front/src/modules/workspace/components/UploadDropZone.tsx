@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useSelectedWorkspace } from '../store';
 import { validateFiles } from '../utils';
+import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 
@@ -21,6 +22,7 @@ export function UploadDropZone({ children, onDrop }: UploadDropZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
   const { t } = useModuleTranslation('workspace');
+  const { maxFileSize } = useAllowedUploadExtensions();
 
   const selectedWorkspace = useSelectedWorkspace();
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
@@ -52,13 +54,13 @@ export function UploadDropZone({ children, onDrop }: UploadDropZoneProps) {
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
 
-      const { validFiles } = validateFiles(files);
+      const { validFiles } = validateFiles(files, maxFileSize);
       if (validFiles.length === 0) return;
 
       addFilesToQueue(validFiles, selectedWorkspace.id);
       void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
     },
-    [selectedWorkspace, addFilesToQueue, startUpload, onDrop, t],
+    [selectedWorkspace, addFilesToQueue, startUpload, onDrop, maxFileSize, t],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {

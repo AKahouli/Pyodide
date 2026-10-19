@@ -26,6 +26,8 @@ export function buildMessagePdfDocument(title: string, bodyHtml: string, subtitl
     table { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
     a { color: #2563eb; }
+    img { max-width: 100%; max-height: 240mm; width: auto; height: auto; object-fit: contain; break-inside: avoid; }
+    p:has(> img) { break-after: avoid; }
     @media print { body { margin: 0; max-width: none; } }
   </style>
 </head>
@@ -37,7 +39,7 @@ export function buildMessagePdfDocument(title: string, bodyHtml: string, subtitl
 </html>`;
 }
 
-export function printHtmlDocument(html: string): void {
+export async function printHtmlDocument(html: string, signal?: AbortSignal): Promise<void> {
   const iframe = document.createElement('iframe');
   Object.assign(iframe.style, {
     position: 'fixed',
@@ -60,7 +62,22 @@ export function printHtmlDocument(html: string): void {
   doc.open();
   doc.write(html);
   doc.close();
-  win.focus();
-  win.print();
-  window.setTimeout(() => iframe.remove(), PRINT_CLEANUP_MS);
+  let deadline: number | undefined;
+  try {
+    // Embedded images still decode asynchronously. Printing immediately can
+    // otherwise capture empty boxes even though the export contains the bytes.
+    await Promise.race([
+      Promise.all(Array.from(doc.images, (image) => image.decode())),
+      new Promise<never>((_, reject) => { deadline = window.setTimeout(() => reject(new Error('print-image-timeout')), 15_000); }),
+    ]);
+    signal?.throwIfAborted();
+    win.focus();
+    win.print();
+    window.setTimeout(() => iframe.remove(), PRINT_CLEANUP_MS);
+  } catch (error) {
+    iframe.remove();
+    throw error;
+  } finally {
+    if (deadline !== undefined) window.clearTimeout(deadline);
+  }
 }

@@ -13,7 +13,7 @@ export function NotFound() {
       <div className='w-fit flex flex-col items-center'>
         <ChatConversationEmptyState title={t('notFound.title')} description={t('notFound.description')} />
         <Button variant='outline' onClick={() => navigate('/')} className='w-fit'>
-          <ArrowLeft className='mr-2 h-4 w-4' />
+          <ArrowLeft className='me-2 h-4 w-4' />
           {t('notFound.back')}
         </Button>
       </div>

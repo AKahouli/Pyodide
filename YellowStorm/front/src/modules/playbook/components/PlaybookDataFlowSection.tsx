@@ -456,7 +456,7 @@ export function PlaybookDataFlowSection({
               className="h-7 px-2 text-xs text-blue-600 hover:text-blue-700"
               onClick={addInputPort}
             >
-              <Plus className="mr-1 h-3.5 w-3.5" />
+              <Plus className="me-1 h-3.5 w-3.5" />
               {t('dataFlow.addInput')}
             </Button>
           )}
@@ -488,7 +488,7 @@ export function PlaybookDataFlowSection({
           </div>
           {canEditPorts && canModifyOutputPorts && onOutputPortsChange && (
             <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-amber-600 hover:text-amber-700" onClick={addOutputPort}>
-              <Plus className="mr-1 h-3.5 w-3.5" />
+              <Plus className="me-1 h-3.5 w-3.5" />
               {t('dataFlow.addOutput')}
             </Button>
           )}
@@ -645,7 +645,7 @@ function SourceCell({
         </>
       )}
 
-      <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="ms-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         <button
           type="button"
           onClick={() => setPickerOpen(true)}
@@ -856,7 +856,7 @@ function SourcePicker({
                   onConnect(inputPort.id, src.taskId, src.portId);
                   onClose();
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs transition-colors hover:bg-accent"
               >
                 <KindBadge kind={src.artifactKind} />
                 <span className="font-medium text-foreground">{src.taskTitle}</span>

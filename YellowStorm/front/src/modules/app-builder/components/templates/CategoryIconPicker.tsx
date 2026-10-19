@@ -46,7 +46,7 @@ export function CategoryIconPicker({ value, onChange, disabled, id }: CategoryIc
               t('categories.selectIcon')
             )}
           </span>
-          <ChevronsUpDown className='ml-2 size-4 shrink-0 opacity-50' />
+          <ChevronsUpDown className='ms-2 size-4 shrink-0 opacity-50' />
         </Button>
       </PopoverTrigger>
       <PopoverContent align='start' className='w-[var(--radix-popover-trigger-width)] p-0'>

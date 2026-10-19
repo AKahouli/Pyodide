@@ -8,6 +8,8 @@ describe('ConversationService neutral persistence', () => {
   let userLookup: { byId: jest.Mock; byIds: jest.Mock; byEmails: jest.Mock };
   let emailService: { sendBulk: jest.Mock };
   let service: ConversationService;
+  let workspaceDocuments: { findByMultipleWorkspaces: jest.Mock };
+  let workspaceService: { createSystemWorkspace: jest.Mock };
 
   const record = (patch: Record<string, unknown> = {}) => ({
     id: new Types.ObjectId().toString(),
@@ -77,14 +79,16 @@ describe('ConversationService neutral persistence', () => {
       }),
     };
     emailService = { sendBulk: jest.fn().mockResolvedValue(undefined) };
+    workspaceDocuments = { findByMultipleWorkspaces: jest.fn() };
+    workspaceService = { createSystemWorkspace: jest.fn() };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() };
     service = new ConversationService(
       conversationStore as never,
       userLookup as never,
       logger as never,
       { get: jest.fn((_key: string, fallback: unknown) => fallback) } as never,
-      {} as never,
-      {} as never,
+      workspaceService as never,
+      workspaceDocuments as never,
       emailService as never,
       agentRepository as never,
       { resolveRootForConversation: jest.fn().mockResolvedValue(null) } as never,
@@ -94,6 +98,68 @@ describe('ConversationService neutral persistence', () => {
         assertProjectWriteAccess: jest.fn().mockResolvedValue(undefined),
       } as never,
     );
+  });
+
+  it.each(['owner', 'member'])('lists only conversation uploads for current %s', async userId => {
+    const conversation = record({ createdBy: 'owner', members: [{ userId: 'member' }], systemWorkspaceId: 'uploads', workspaces: ['linked', 'foreign'] });
+    conversationStore.findById.mockResolvedValue(conversation);
+    const result = { documents: [{ id: 'upload-1' }], pagination: { page: 2, limit: 10, total: 11, totalPages: 2 } };
+    workspaceDocuments.findByMultipleWorkspaces.mockResolvedValueOnce(result);
+    expect(await service.getUploadedDocuments(conversation.id, { page: 2, limit: 10 }, userId)).toBe(result);
+    expect(workspaceDocuments.findByMultipleWorkspaces).toHaveBeenCalledWith(['uploads'], { page: 2, limit: 10 });
+    expect(workspaceService.createSystemWorkspace).not.toHaveBeenCalled();
+  });
+  it.each(['foreign', 'invited', 'project-viewer'])('rejects %s upload listing without current membership', async userId => {
+    const conversation = record({ createdBy: 'owner', members: [], systemWorkspaceId: 'uploads', invitedUsers: [{ email: 'invited@example.com' }], projectId: 'project' });
+    conversationStore.findById.mockResolvedValue(conversation);
+    await expect(service.getUploadedDocuments(conversation.id, {}, userId)).rejects.toThrow('current membership');
+    expect(workspaceDocuments.findByMultipleWorkspaces).not.toHaveBeenCalled();
+    expect(workspaceService.createSystemWorkspace).not.toHaveBeenCalled();
+  });
+  it('returns an empty upload page without creating a missing workspace', async () => {
+    const conversation = record({ createdBy: 'owner' });
+    conversationStore.findById.mockResolvedValue(conversation);
+    expect(await service.getUploadedDocuments(conversation.id, { page: 3, limit: 10 }, 'owner')).toEqual({ documents: [], pagination: { page: 3, limit: 10, total: 0, totalPages: 0 } });
+    expect(workspaceDocuments.findByMultipleWorkspaces).not.toHaveBeenCalled();
+    expect(workspaceService.createSystemWorkspace).not.toHaveBeenCalled();
+    expect(conversationStore.setSystemWorkspace).not.toHaveBeenCalled();
+  });
+  it('fails closed for governed upload listing without a current audience grant', async () => {
+    const conversation = record({ createdBy: 'owner', runtimeMode: 'governed', governanceContext: { scopeId: 'scope' }, systemWorkspaceId: 'uploads' });
+    conversationStore.findById.mockResolvedValue(conversation);
+    await expect(service.getUploadedDocuments(conversation.id, {}, 'owner')).rejects.toThrow('Governed scope');
+    expect(workspaceDocuments.findByMultipleWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it('resolves current group recipients in owner-first order without display hydration', async () => {
+    const group = record({ createdBy: 'owner', isGroup: true, rootAgentId: 'root',
+      members: [{ userId: 'member-2' }, { userId: 'owner' }, { userId: 'member-1' }, { userId: 'member-2' }] });
+    conversationStore.findById.mockResolvedValueOnce(group)
+      .mockResolvedValueOnce({ ...group, members: [{ userId: 'member-1' }] });
+    expect(await service.getBroadcastMemberIds(group.id)).toEqual(['owner', 'member-2', 'member-1']);
+    expect(await service.getBroadcastMemberIds(group.id)).toEqual(['owner', 'member-1']);
+    // Both lookups retain the same default visibility/initialization filters
+    // as findById; no includeInitializing override or recipient cache.
+    expect(conversationStore.findById.mock.calls).toEqual([[group.id], [group.id]]);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
+    expect(agentRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts a non-group conversation only to its owner', async () => {
+    const single = record({ createdBy: 'owner', rootAgentId: 'root', members: [{ userId: 'other' }] });
+    conversationStore.findById.mockResolvedValue(single);
+    expect(await service.getBroadcastMemberIds(single.id)).toEqual(['owner']);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
+    expect(agentRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it('preserves not-found behavior and propagates recipient lookup failures', async () => {
+    conversationStore.findById.mockResolvedValueOnce(null);
+    await expect(service.getBroadcastMemberIds('missing')).rejects.toMatchObject({ response: 'Conversation not found' });
+    const failure = new Error('recipient lookup failed');
+    conversationStore.findById.mockRejectedValueOnce(failure);
+    await expect(service.getBroadcastMemberIds('failed')).rejects.toBe(failure);
+    expect(userLookup.byIds).not.toHaveBeenCalled();
   });
 
   it('fails closed when workspace authorization is unavailable for a requester', async () => {
@@ -537,5 +603,20 @@ describe('ConversationService neutral persistence', () => {
       await svc.cleanupOrphanedConversations();
       expect(client.release).toHaveBeenCalledWith(undefined);
     });
+  });
+});
+
+describe('Conversation system workspace configured quota', () => {
+  it('uses the admin default for new workspaces and preserves existing quota', async () => {
+    const service = Object.create(ConversationService.prototype) as ConversationService;
+    const conversationStore = { findById: jest.fn().mockResolvedValue({ id: 'conversation', systemWorkspaceId: null }), setSystemWorkspace: jest.fn() };
+    const workspaceService = { createSystemWorkspace: jest.fn().mockResolvedValue({ id: 'new-workspace' }) };
+    const workspaceUploadSettings = { getSettings: jest.fn().mockResolvedValue({ conversationWorkspaceStorageMb: 200 }) };
+    Object.assign(service, { conversationStore, workspaceService, workspaceUploadSettings });
+    await expect(service.ensureSystemWorkspace('owner', 'conversation')).resolves.toBe('new-workspace');
+    expect(workspaceService.createSystemWorkspace).toHaveBeenCalledWith('owner', 'conversation', 209715200);
+    conversationStore.findById.mockResolvedValue({ systemWorkspaceId: 'existing-workspace' });
+    await expect(service.ensureSystemWorkspace('owner', 'conversation')).resolves.toBe('existing-workspace');
+    expect(workspaceService.createSystemWorkspace).toHaveBeenCalledTimes(1);
   });
 });

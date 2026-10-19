@@ -22,6 +22,31 @@ MAX_MATERIALIZED_ENTITIES = 5000
 MAX_ASSERTIONS = 20000
 
 
+def provenance_source_key(source: dict[str, Any]) -> str:
+    """Stable identity of one source reference, excluding its row-level evidence."""
+    return json.dumps({"assetRef": source.get("assetRef") or {},
+                       "mappingVersion": source.get("mappingVersion")},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def merge_provenance_source(sources: list[dict[str, Any]], source: dict[str, Any]) -> None:
+    """Keep one source reference while merging its filename and row-level evidence."""
+    marker = provenance_source_key(source)
+    existing = next((item for item in sources if provenance_source_key(item) == marker), None)
+    if existing is None:
+        existing = dict(source)
+        existing["rowNumbers"] = list(source.get("rowNumbers") or [])
+        sources.append(existing)
+        return
+    for key in ("documentId", "filename"):
+        if source.get(key) and not existing.get(key):
+            existing[key] = source[key]
+    row_numbers = existing.setdefault("rowNumbers", [])
+    for number in source.get("rowNumbers") or []:
+        if number not in row_numbers:
+            row_numbers.append(number)
+
+
 def normalize_identity_value(value: Any) -> str | None:
     """Mirror ``normalizeIdentityValue``: trim + lowercase, empty stays empty."""
     if value is None:
@@ -77,7 +102,7 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                           source_ref: dict[str, Any], observer: Any = None) -> dict[str, Any]:
     """Map prepared rows to entities and source assertions for one concept.
 
-    ``source_ref`` carries ``assetRef``, ``mappingVersion`` and an optional
+    ``source_ref`` carries ``assetRef``, ``mappingVersion``, optional ``filename`` and an optional
     ``labelField`` naming the attribute used as the human label; otherwise the
     first identity component labels the entity. A row may carry ``_ai_limited``, the fields the
     AI never read because of its row limit: an empty key field among them is no missing value
@@ -138,13 +163,15 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
             label_value = row.get(label_field) if isinstance(label_field, str) else None
             if label_value is None:
                 label_value = row.get(key_components[0])
+            source = {"assetRef": source_ref.get("assetRef"),
+                      "mappingVersion": source_ref.get("mappingVersion"), "rowNumbers": []}
+            if isinstance(source_ref.get("filename"), str) and source_ref["filename"]:
+                source["filename"] = source_ref["filename"]
             entity = {"entityId": key, "conceptId": compiled["conceptId"],
                       "namespace": compiled["namespace"], "identity": dict(identity),
                       "label": str(label_value) if label_value is not None else key,
                       "attributes": {}, "materialized": True,
-                      "provenance": {"sources": [{"assetRef": source_ref.get("assetRef"),
-                                                  "mappingVersion": source_ref.get("mappingVersion"),
-                                                  "rowNumbers": []}]}}
+                      "provenance": {"sources": [source]}}
             entities[key] = entity
             counts["materialized"] += 1
         numbers = entity["provenance"]["sources"][0]["rowNumbers"]
@@ -214,21 +241,8 @@ def merge_concept_results(results: list[dict[str, Any]]) -> dict[str, Any]:
                                  "conceptId": entity.get("conceptId"),
                                  "rowNumber": None,
                                  "detail": f"attribute '{field}' has competing source values"})
-            seen = {(s.get("assetRef", {}).get("assetVersionId"), s.get("mappingVersion"))
-                    for s in current["provenance"]["sources"]}
             for source in entity.get("provenance", {}).get("sources", []):
-                marker = (source.get("assetRef", {}).get("assetVersionId"),
-                          source.get("mappingVersion"))
-                if marker in seen:
-                    numbers = next(s["rowNumbers"] for s in current["provenance"]["sources"]
-                                   if (s.get("assetRef", {}).get("assetVersionId"),
-                                       s.get("mappingVersion")) == marker)
-                    for number in source.get("rowNumbers", []):
-                        if number not in numbers:
-                            numbers.append(number)
-                else:
-                    current["provenance"]["sources"].append(dict(source))
-                    seen.add(marker)
+                merge_provenance_source(current["provenance"]["sources"], source)
         assertions.extend(result.get("assertions", []))
     counts["materialized"] = len(entities)
     counts["gaps"] = len(gaps)

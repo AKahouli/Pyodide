@@ -83,6 +83,43 @@ export class UpdateSemanticModelDto {
   description?: string;
 }
 
+export class MyJobsQueryDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  modelId?: string;
+
+  @ApiPropertyOptional({ enum: ['active', 'history'], default: 'active' })
+  @IsIn(['active', 'history'])
+  view: 'active' | 'history' = 'active';
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 20;
+}
+
+export class RemoveMyQueuedJobsDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  modelId?: string;
+}
+
+export class StopMyJobDto {
+  @ApiPropertyOptional({ default: false, description: 'Remove from queue without stopping a job claimed meanwhile' })
+  @IsBoolean()
+  onlyQueued = false;
+}
+
 export class SemanticModelQueryDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -431,6 +468,23 @@ export class DocumentLabelsDto {
   @ApiProperty({ type: [String], minItems: 1, maxItems: 10, description: 'A few of the source\'s documents to read labels from' })
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(10) @IsString({ each: true }) @MinLength(1, { each: true })
   documentIds!: string[];
+}
+
+/** Read-only proposals; normal graph and mapping commands apply the reviewed selection. */
+export class DocumentFieldSuggestionsDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(128)
+  conceptId!: string;
+
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(128)
+  workspaceId!: string;
+
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5) @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(200, { each: true })
+  documentIds!: string[];
+
+  @ApiPropertyOptional({ maxLength: 2000, description: 'Concept purpose used for this discovery' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  description?: string;
 }
 
 /** One part of a joined input: an input (as a single input names it) or a fixed text. */

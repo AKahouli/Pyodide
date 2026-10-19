@@ -60,11 +60,11 @@ describe('ProfileCompletionPage', () => {
 
     renderPage();
 
-    await userEvent.type(screen.getByLabelText('profileCompletion.firstName.label'), 'John');
-    await userEvent.type(screen.getByLabelText('profileCompletion.lastName.label'), 'Doe');
-    await userEvent.type(screen.getByLabelText('profileCompletion.company.label'), 'Acme');
-    await userEvent.type(screen.getByLabelText('profileCompletion.role.label'), 'Engineer');
-    await userEvent.type(screen.getByLabelText('profileCompletion.description.label'), 'Builds things');
+    await userEvent.type(screen.getByLabelText(/profileCompletion\.firstName\.label/), 'John');
+    await userEvent.type(screen.getByLabelText(/profileCompletion\.lastName\.label/), 'Doe');
+    await userEvent.type(screen.getByLabelText(/profileCompletion\.company\.label/), 'Acme');
+    await userEvent.type(screen.getByLabelText(/profileCompletion\.role\.label/), 'Engineer');
+    await userEvent.type(screen.getByLabelText(/profileCompletion\.description\.label/), 'Builds things');
     await userEvent.click(screen.getAllByRole('checkbox')[0]);
     await userEvent.click(screen.getByRole('button', { name: 'profileCompletion.submit' }));
 

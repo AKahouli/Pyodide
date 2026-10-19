@@ -98,9 +98,13 @@ async def test_grpc_start_failure_stops_orchestrator_runtime():
         server_module.grpc.aio, "server", return_value=grpc_server
     ), patch.object(server_module, "get_agent_team_service", return_value=MagicMock()), patch.object(
         server_module, "ChatbotServicer", return_value=MagicMock()
-    ), patch.object(server_module, "chatbot_pb2_grpc", MagicMock()), patch.object(
-        server_module, "pf_grpc", None
-    ), patch.object(server_module, "close_checkpointer", new=AsyncMock()), patch(
+    ), patch.object(server_module, "chatbot_pb2_grpc", MagicMock()    ), patch.object(
+        # pf_grpc is imported unconditionally in production; registration must
+        # be mocked so the test isolates the bind-failure teardown path.
+        server_module, "pf_grpc", MagicMock()
+    ), patch.object(server_module, "init_checkpointer", new=AsyncMock()), patch.object(
+        server_module, "close_checkpointer", new=AsyncMock()
+    ), patch(
         "src.companion_ai.bootstrap.OrchestratorRuntime", return_value=runtime
     ):
         with pytest.raises(RuntimeError, match="bind failed"):

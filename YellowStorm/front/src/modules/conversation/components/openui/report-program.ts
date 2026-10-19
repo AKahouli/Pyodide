@@ -1,17 +1,17 @@
 /**
  * An answer can carry two OpenUI Lang programs: the chat program (`root = Card(...)`) and, after
- * it, a report (`root = Report(...)`). The two libraries share component names with different
+ * it, a report (`root = Report(...)`) or slides (`root = Presentation(...)`). The libraries share names with different
  * schemas (InlineHeader, TextContent, Table...), so each program is parsed on its own.
  */
-const REPORT_ROOT = /^[ \t]*root[ \t]*=[ \t]*Report[ \t]*\(/m;
-const REPORT_ROOT_TEXT = 'root=Report(';
+const REPORT_ROOT = /^[ \t]*root[ \t]*=[ \t]*(?:Report|Presentation)[ \t]*\(/m;
+const ARTIFACT_ROOTS = ['root=Report(', 'root=Presentation('];
 /** "root" is the shortest prefix held back: shorter ones are indistinguishable from any chat statement name. */
 const MIN_PARTIAL_LENGTH = 'root'.length;
 
 export interface SplitProgram {
   /** The chat program; empty when the answer is only a report. */
   chat: string;
-  /** The report program, from its `root = Report(` line to the end; null when the answer has none. */
+  /** The report or presentation program from its root line; null when the answer has no artifact. */
   report: string | null;
 }
 
@@ -24,7 +24,7 @@ function partialReportStart(content: string): number | null {
   const lineStart = content.lastIndexOf('\n') + 1;
   if (lineStart === 0) return null;
   const compact = content.slice(lineStart).replaceAll(/\s+/g, '');
-  const isPrefix = compact.length >= MIN_PARTIAL_LENGTH && compact.length < REPORT_ROOT_TEXT.length && REPORT_ROOT_TEXT.startsWith(compact);
+  const isPrefix = compact.length >= MIN_PARTIAL_LENGTH && ARTIFACT_ROOTS.some((root) => compact.length < root.length && root.startsWith(compact));
   return isPrefix ? lineStart : null;
 }
 

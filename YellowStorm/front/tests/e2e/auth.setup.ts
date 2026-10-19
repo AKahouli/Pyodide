@@ -9,8 +9,7 @@
  */
 import { test as setup, expect } from '@playwright/test';
 import { API_BASE_URL, FRONTEND_BASE_URL } from './fixtures';
-
-const STORAGE_PATH = 'tests/e2e/.auth/storage-state.json';
+import { AUTH_STORAGE_PATH } from './run-context';
 
 setup('login and persist storageState', async ({ page }) => {
   const email = process.env.PLAYWRIGHT_USER_EMAIL;
@@ -37,5 +36,5 @@ setup('login and persist storageState', async ({ page }) => {
   );
   expect(result.ok, `login failed: ${result.ok ? 'ok' : result.detail}`).toBeTruthy();
 
-  await page.context().storageState({ path: STORAGE_PATH });
+  await page.context().storageState({ path: AUTH_STORAGE_PATH });
 });

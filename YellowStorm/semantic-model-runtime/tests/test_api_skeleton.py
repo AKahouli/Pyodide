@@ -58,7 +58,7 @@ def _population_body() -> dict:
         "workspaceId": "6512f0a1c9e77a001234aaa1",
         "payload": {
             "modelVersionId": "v1", "specHash": canonical_spec_hash(spec),
-            "purpose": "build", "specification": spec,
+            "purpose": "build", "scope": {"kind": "model"}, "specification": spec,
             "sources": [{
                 "conceptId": "c1",
                 "source": {"workspaceId": "6512f0a1c9e77a001234aaa1",

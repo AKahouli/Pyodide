@@ -30,7 +30,8 @@ import {
 } from './dto';
 import { ImportConnectorItemDto, ExportToConnectorDto } from './dto/connector-transfer.dto';
 import { InspectConnectorDto } from './dto/inspect-connector.dto';
-import { IConnectorResponse, IConnectorCredentialResponse } from './interfaces/connector.interface';
+import { PublicConnectorDto } from './dto/public-connector.dto';
+import { IConnectorCredentialResponse } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorTransferService } from './connector-transfer.service';
@@ -39,7 +40,7 @@ import { ConnectedAppOAuthService } from '../connected-app/services/connected-ap
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from './services/mcp-jwt.service';
 
 @ApiTags('Connectors')
 @ApiBearerAuth()
@@ -52,12 +53,12 @@ export class ConnectorController {
     private readonly transferService: ConnectorTransferService,
     private readonly oauthService: ConnectedAppOAuthService,
     private readonly connectorUserService: ConnectorUserService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {}
 
   @Get()
   @ApiOperation({ summary: 'List active connectors available for binding' })
-  async listActive(): Promise<IConnectorResponse[]> {
+  async listActive(): Promise<PublicConnectorDto[]> {
     return this.connectorService.findAllActive();
   }
 
@@ -80,7 +81,7 @@ export class ConnectorController {
   @Get(':id')
   @ApiOperation({ summary: 'Get a connector by ID' })
   @ApiParam({ name: 'id', description: 'Connector ID' })
-  async findById(@Param('id') id: string): Promise<IConnectorResponse> {
+  async findById(@Param('id') id: string): Promise<PublicConnectorDto> {
     return this.connectorService.findById(id);
   }
 
@@ -91,11 +92,13 @@ export class ConnectorController {
   @RateLimit({ limit: 30, windowMs: 60000, keyPrefix: 'connector:mcp-token' })
   @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for the authenticated user' })
   async issueMcpToken(@Param('connectorId') connectorId: string, @CurrentUser() user: AuthUser) {
-    const connector = await this.connectorService.findById(connectorId);
+    // SERVER-ONLY runtime lookup: the URL/transport config stays off the
+    // public response shape (WP-02).
+    const connector = await this.connectorService.getRuntimeById(connectorId);
     if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
     }
-    return this.mcpJwt!.issue(connector.mcpServerUrl, user._id.toString());
+    return this.mcpJwt!.issue(connector.id, user._id.toString());
   }
 
   @Get(':connectorId/credentials')
@@ -173,7 +176,7 @@ export class ConnectorController {
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
   ) {
-    const connector = await this.connectorService.findById(id);
+    const connector = await this.connectorService.getRuntimeById(id);
 
     if (!connector.connectedAppKey) {
       throw new BadRequestException(
@@ -199,7 +202,11 @@ export class ConnectorController {
     @CurrentUser() user: AuthUser,
     @Body() dto: InspectConnectorDto,
   ) {
-    const connector = await this.connectorService.findById(id);
+    // SERVER-ONLY runtime lookup: stored credentials never travel through the
+    // public projection (WP-02); non-remote transports are denied before the
+    // OAuth token fetch inside inspectMcp (WP-01).
+    const connector = await this.connectorService.getRuntimeById(id);
+    this.connectorService.assertInspectableTransport(connector.mcpTransportType);
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(

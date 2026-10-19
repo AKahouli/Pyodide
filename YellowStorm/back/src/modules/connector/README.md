@@ -21,10 +21,10 @@ The Connector module enables integration with external Model Context Protocol (M
 
 Connectors provide a standardized way to integrate with external MCP servers that expose tools for AI agents. Key features include:
 
-- **Multiple Transport Types**: Streamable HTTP, SSE (Server-Sent Events), and stdio (local command)
+- **Multiple Transport Types**: Streamable HTTP and SSE (Server-Sent Events) over HTTP. Legacy `stdio` rows remain readable but are rejected for inspection and runtime binding (see Security)
 - **Flexible Authentication**: Credential-based token, OAuth 2.0 via Connected Apps, or no authentication
-- **Runtime Auth Config**: Support for custom headers and environment variable mappings
-- **MCP Inspection**: Discover and import tools from MCP servers
+- **Runtime Auth Config**: Support for custom headers and environment variable mappings (stored server-side, never returned by any API)
+- **MCP Inspection**: Discover and import tools from remote MCP servers
 - **Admin OAuth Flow**: Separate OAuth connections for admin-level access
 - **Token Management**: Automatic token refresh and encrypted storage
 
@@ -216,10 +216,10 @@ Main connector configuration storage.
   authType: string;              // 'oauth2', 'token', 'none'
   authSourceType: string;        // 'connected_app', 'credential', 'none'
   connectedAppKey: string;       // Connected app reference
-  runtimeAuthConfig: object;     // Runtime auth configuration
-  mcpTransportType: string;      // 'streamable_http', 'sse', 'stdio'
-  mcpServerUrl: string;          // MCP server URL
-  mcpServerConfig: object;       // Server configuration
+  runtimeAuthConfig: object;     // Runtime auth configuration (server-side only; never returned by APIs)
+  mcpTransportType: string;      // 'streamable_http', 'sse' (stdio is legacy/unsupported)
+  mcpServerUrl: string;          // MCP server URL (remote http/https; credential-bearing URLs are rejected)
+  mcpServerConfig: object;       // Server configuration (server-side only; never returned by APIs)
   actions: [];                   // Connector actions/tools
   referencedSkillIds: [];        // Linked skill IDs
   isActive: boolean;             // Active status
@@ -422,6 +422,26 @@ async inspectMcp(
 ---
 
 ## Security
+
+### Remote-only MCP inspection (SEC-01)
+
+Only `sse` and `streamable_http` transports can be inspected, imported or executed over HTTP. `stdio` and any unknown transport are denied at the service boundary (`ConnectorService.inspectMcp`, error `ERR_3102`) before any credential resolution, network I/O or process construction — no API request can start a caller-selected OS process. Stored legacy `stdio` connectors are marked `unsupported_for_http_inspection` in responses, are skipped for gRPC agent bindings, and cannot be re-created through the create/update/import DTOs. Admin UI shows a neutral notice for them.
+
+### Destination/egress policy (SEC-06)
+
+Every server-side probe of a user-configured MCP destination passes `McpDestinationPolicy` (`utils/mcp-destination-policy.util.ts`) before any transport is constructed: https-only outside the `MCP_EGRESS_ALLOW_INSECURE_HTTP` development opt-in, `MCP_EGRESS_ALLOWED_PORTS` (default 80/443/8443), no userinfo/fragment/malformed percent-encoding, all A/AAAA records resolved with loopback, link-local (incl. cloud metadata), RFC1918, ULA, CGNAT, benchmark, multicast and reserved ranges denied (IPv4 and IPv6, literal and mapped spellings), and redirects refused on every hop — including the SSE `eventsource` layer through a fetch override. Denials are deterministic 400 `ERR_3103` with actor/normalized-host/reason telemetry only. Admin inspection runs the policy before any OAuth token retrieval or dynamic-header resolution.
+
+The egress exception is limited to exact admin-configured service endpoints whose MCP auth mode is JWT (`PLAYBOOK_MCP_SERVER_URL`, `AGENT_MCP_SERVER_URL`, `SEMANTIC_MODEL_MCP_SERVER_URL`, each gated on its `*_MCP_AUTH_MODE`), because the exception contract requires service-issued JWT authentication — a fixed private-network rule. Bearer-mode internal servers satisfy the public rules like any other endpoint; `TRUSTED_MCP_SERVER_URLS` grants identity headers only, never an egress bypass; lookalike URLs inherit nothing.
+
+### MCP-token issuance auth (SEC-08)
+
+`POST /connectors/internal/mcp-token` authenticates the scoped `semantic-model-mcp` service principal (headers `X-Yellowstorm-Service-Principal` + `X-Yellowstorm-Service-Token`, secret `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`). The legacy `X-Internal-Token` secret and the app-runtime bind token cannot mint MCP JWTs. The ADK renewal adapter (`yellowstorm-adk/src/flow_engine/mcp/jwt_auth.py`) sends the same principal headers; `connectors/internal/transfer/import` keeps the legacy internal guard as the bounded compatibility path.
+
+### Secret-free public responses (SEC-02)
+
+Every user-facing and admin-facing connector response uses the allowlisted `PublicConnectorDto`: `runtimeAuthConfig` and `mcpServerConfig` never appear in connector read/write API responses. Responses expose `credentialConfigured` (boolean) and `inspectionStatus` instead, and endpoint URLs are stripped of embedded userinfo. Server-side consumers (gRPC bindings, MCP tool runtime, transfer adapters, MCP-token issuance) resolve credentials through the server-only `RuntimeConnectorDefinition` accessors (`getRuntimeById`, `findRuntimeById(s)`, `findRuntimeBySlug`). The admin editor shows "Configured"/"Not configured" and can replace or clear credentials without reading them (`clearRuntimeAuthConfig: true` clears; omitted fields preserve). Endpoint URLs that embed credentials are rejected on create/update/catalog import.
+
+The one credential-bearing export is the admin catalog backup: `includeSecurity=true` requires the separate `CONNECTORS_TRANSFER_SECURITY` permission, a mandatory passphrase (scrypt/AES-GCM encrypted archive) and a `no-store` response; unencrypted (`includeSecurity=false`) exports carry no credential config at all and preserve target secrets on import. Inspection errors are projected client-safe (credential-bearing URL userinfo and bearer tokens scrubbed) and logs carry hosts and error names only.
 
 ### Token Encryption
 

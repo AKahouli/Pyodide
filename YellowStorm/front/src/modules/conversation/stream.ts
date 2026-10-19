@@ -44,7 +44,7 @@ function normalizeChartPayload(data: unknown): unknown {
  * and event distribution to subscribers.
  */
 class ConversationStreamService {
-  private eventSource: EventSource | null = null;
+  private eventSource: AbortController | null = null;
   private listeners: Set<StreamListener> = new Set();
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -69,6 +69,7 @@ class ConversationStreamService {
 
     const token = getAccessToken();
     if (!token) {
+      this.disconnect();
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
       return;
     }
@@ -76,32 +77,28 @@ class ConversationStreamService {
     if (this.eventSource && this.connectionToken === token) return;
     if (this.eventSource) {
       // Another singleton may have refreshed the shared token. Never let the
-      // browser keep retrying an EventSource URL carrying the revoked token.
+      // stream keep running with a revoked token.
       // The cursor belongs to the previous identity context — drop it.
-      this.eventSource.close();
+      this.eventSource.abort();
       this.eventSource = null;
       this.isConnected = false;
       this.connectionId = null;
       this.lastSeenCursor = null;
     }
 
-    const cursorParam = this.lastSeenCursor ? `&cursor=${encodeURIComponent(this.lastSeenCursor)}` : '';
-    const url = `${API_CONFIG.baseURL}/conversations/stream?token=${encodeURIComponent(token)}${cursorParam}`;
-    try {
-      this.eventSource = new EventSource(url);
-      this.connectionToken = token;
-      this.setupEventHandlers();
-    } catch (error) {
-      console.error('[ConversationStream] Failed to create EventSource:', error);
-      this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.creationFailed') } });
-    }
+    const cursorParam = this.lastSeenCursor ? `?cursor=${encodeURIComponent(this.lastSeenCursor)}` : '';
+    const url = `${API_CONFIG.baseURL}/conversations/stream${cursorParam}`;
+    const controller = new AbortController();
+    this.eventSource = controller;
+    this.connectionToken = token;
+    void this.readStream(url, token, controller);
   }
 
   disconnect(): void {
     this.clearTimers();
 
     if (this.eventSource) {
-      this.eventSource.close();
+      this.eventSource.abort();
       this.eventSource = null;
     }
 
@@ -134,8 +131,19 @@ class ConversationStreamService {
   }
 
   reconnectWithNewToken(): void {
+    // Refreshes within the same authenticated session can resume; a session
+    // replacement must never carry the previous actor's cursor.
+    const identity = (token: string | null): string | null => {
+      try {
+        const payload = JSON.parse(atob((token ?? '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { sub?: unknown; sessionId?: unknown };
+        return typeof payload.sub === 'string' ? `${payload.sub}:${String(payload.sessionId ?? '')}` : null;
+      } catch { return null; }
+    };
+    const previous = identity(this.connectionToken);
+    const next = identity(getAccessToken());
+    if (previous && previous !== next) this.lastSeenCursor = null;
     this.clearTimers();
-    this.eventSource?.close();
+    this.eventSource?.abort();
     this.eventSource = null;
     this.isConnected = false;
     this.connectionId = null;
@@ -147,66 +155,91 @@ class ConversationStreamService {
 
   // ==================== Private Methods ====================
 
-  private setupEventHandlers(): void {
-    if (!this.eventSource) return;
-
-    this.eventSource.onopen = () => {
-      this.reconnectAttempts = 0;
-    };
-
-    this.eventSource.onerror = () => {
-      this.isConnected = false;
-      if (!this.eventSource) return;
-
-      if (this.eventSource.readyState === EventSource.CONNECTING) {
-        // Disable native retry because it reuses the original tokenized URL.
-        this.eventSource.close();
+  private async readStream(url: string, token: string, controller: AbortController): Promise<void> {
+    const current = () => this.eventSource === controller && !controller.signal.aborted;
+    const active = () => current() && getAccessToken() === token;
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      if (!active()) return;
+      if (response.status === 401) {
+        // Reuse the shared refresh lock/subscriber queue; it reconnects this
+        // singleton after success. Lazy import avoids the client's stream import cycle.
+        const { refreshAccessToken } = await import('@/lib/api/client');
+        if (!active()) return;
+        await refreshAccessToken(token);
+        return;
       }
-      if (this.eventSource.readyState === EventSource.CLOSED) {
-        this.eventSource = null;
-        this.connectionToken = null;
-        // Transient drop (e.g. backend restart): keep retrying with capped
-        // backoff — recovery must never require user action, so no failure
-        // dialog is emitted here.
+      if (!response.ok || !response.body ||
+          !response.headers.get('content-type')?.includes('text/event-stream')) {
+        throw new Error('SSE response unavailable');
+      }
+      this.reconnectAttempts = 0;
+      this.resetHeartbeatTimer();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let eventName = '';
+      let eventId = '';
+      let dataLines: string[] = [];
+      let frameLength = 0;
+      const line = (raw: string) => {
+        frameLength += raw.length + 1;
+        if (frameLength > 1100000) throw new Error('SSE frame limit exceeded');
+        if (raw === '') {
+          if (dataLines.length) {
+            const parsed = safeJsonParse(dataLines.join('\n'));
+            const payload = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+            this.captureReplayCursor(typeof payload.id === 'string' ? payload.id : eventId);
+            const type = eventName || payload.type;
+            if (typeof type === 'string') {
+              this.handleEvent(type as StreamSSEEvent['type'], eventName ? parsed : payload.data);
+            }
+          }
+          eventName = '';
+          dataLines = [];
+          frameLength = 0;
+          return;
+        }
+        if (raw.startsWith(':')) return;
+        const colon = raw.indexOf(':');
+        const field = colon < 0 ? raw : raw.slice(0, colon);
+        let value = colon < 0 ? '' : raw.slice(colon + 1);
+        if (value.startsWith(' ')) value = value.slice(1);
+        if (field === 'event') eventName = value;
+        if (field === 'data') dataLines.push(value);
+        if (field === 'id' && !value.includes('\0')) eventId = value;
+      };
+      try {
+        while (active()) {
+          const { value, done } = await reader.read();
+          if (!active() || done) break;
+          buffer += decoder.decode(value, { stream: true });
+          if (buffer.length > 1100000) throw new Error('SSE frame limit exceeded');
+          // Preserve a trailing CR until its possible LF arrives in the next chunk.
+          let match: RegExpExecArray | null;
+          while ((match = /\r\n|\r(?!$)|\n/.exec(buffer))) {
+            line(buffer.slice(0, match.index));
+            buffer = buffer.slice(match.index + match[0].length);
+            if (!active()) break;
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+    } catch {
+      // No token, URL, provider content or raw transport error in diagnostics.
+    } finally {
+      if (current()) {
+        if (getAccessToken() !== token) this.lastSeenCursor = null;
+        this.teardownForReconnect();
         this.scheduleReconnect();
       }
-    };
-
-    const namedEventTypes: StreamSSEEvent['type'][] = [
-      'connected',
-      'heartbeat',
-      'stream_start',
-      'stream_chunk',
-      'stream_complete',
-      'stream_error',
-      'conversation_name_generated',
-      'message_created',
-      'message_updated',
-      'mention_created',
-      'stream_resync_required',
-      'error',
-    ];
-    for (const type of namedEventTypes) {
-      this.eventSource.addEventListener(type, (rawEvent) => {
-        const data = safeJsonParse((rawEvent as MessageEvent<string>).data);
-        const payloadCursor = (data as { id?: unknown } | null)?.id;
-        this.captureReplayCursor(
-          typeof payloadCursor === 'string' ? payloadCursor : (rawEvent as MessageEvent<string>).lastEventId,
-        );
-        this.handleEvent(type, data);
-      });
     }
-
-    // Retain compatibility with deployments that wrap the type in a default event.
-    this.eventSource.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        this.captureReplayCursor(parsed?.id);
-        this.handleEvent(parsed.type, parsed.data);
-      } catch (error) {
-        console.error('[ConversationStream] Failed to parse SSE event:', error);
-      }
-    };
   }
 
   /**
@@ -270,14 +303,22 @@ class ConversationStreamService {
       case 'message_updated':
       case 'mention_created':
       case 'stream_resync_required':
+        if (type === 'stream_resync_required') {
+          // The server proved it cannot replay from this cursor (stale boot,
+          // swept window, overload). Keeping it would re-trigger the resync on
+          // every reconnect; the store reconciles canonical state instead, so
+          // the next connection must start cursor-less.
+          this.lastSeenCursor = null;
+        }
         this.resetHeartbeatTimer();
         this.emit({ type, data } as StreamSSEEvent);
         break;
       case 'error':
         if (data.code === 'TOO_MANY_TABS' || data.code === 'ERR_1405') {
+          this.clearTimers();
           this.isEvicted = true;
           this.isConnected = false;
-          this.eventSource?.close();
+          this.eventSource?.abort();
           this.eventSource = null;
           this.connectionToken = null;
           this.emit({ type, data: { code: String(data.code), message: typeof data.message === 'string' ? data.message : undefined } });
@@ -289,7 +330,7 @@ class ConversationStreamService {
   }
 
   private scheduleReconnect(): void {
-    if (this.isEvicted) return;
+    if (this.isEvicted || this.reconnectTimeout) return;
 
     const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
 
@@ -301,6 +342,7 @@ class ConversationStreamService {
     }
 
     this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null;
       this.connect();
     }, delay);
   }
@@ -323,7 +365,7 @@ class ConversationStreamService {
    */
   private teardownForReconnect(): void {
     this.clearTimers();
-    this.eventSource?.close();
+    this.eventSource?.abort();
     this.eventSource = null;
     this.isConnected = false;
     this.connectionId = null;

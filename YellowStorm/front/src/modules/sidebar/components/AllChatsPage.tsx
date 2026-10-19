@@ -62,7 +62,7 @@ export function AllChatsPage() {
         placeholder={t('allChats.searchPlaceholder')}
         className='mb-4 h-9 max-w-sm'
       />
-      <div className='min-h-0 flex-1 overflow-y-auto pr-1'>
+      <div className='min-h-0 flex-1 overflow-y-auto pe-1'>
         {!loading && filtered.length === 0 ? (
           <p className='py-8 text-sm text-muted-foreground'>{t('allChats.empty')}</p>
         ) : (

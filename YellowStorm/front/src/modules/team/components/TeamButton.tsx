@@ -33,7 +33,7 @@ export function TeamButton() {
         </DropdownMenuTrigger>
         <DropdownMenuContent side='right' align='start'>
           <DropdownMenuItem onClick={goToTeams} className='cursor-pointer'>
-            <Settings className='mr-2 h-4 w-4' />
+            <Settings className='me-2 h-4 w-4' />
             {t('button.manageTeams')}
           </DropdownMenuItem>
         </DropdownMenuContent>

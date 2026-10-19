@@ -179,7 +179,7 @@ export function TemplateStudio({ open, zipFile, onOpenChange, onValidated }: Tem
           '[&>button]:hover:bg-muted [&>button]:hover:opacity-100',
         )}
       >
-        <DialogHeader className='shrink-0 space-y-0 border-b border-border/60 px-5 py-4 pr-14 text-left sm:px-6'>
+        <DialogHeader className='shrink-0 space-y-0 border-b border-border/60 px-5 py-4 pe-14 text-start sm:px-6'>
           <DialogTitle className='text-base font-semibold tracking-tight sm:text-lg'>
             {t('templateStudio.title')}
           </DialogTitle>
@@ -209,7 +209,7 @@ export function TemplateStudio({ open, zipFile, onOpenChange, onValidated }: Tem
               <span className='size-2 rounded-full bg-border' />
               <span className='size-2 rounded-full bg-border' />
               <span className='size-2 rounded-full bg-border' />
-              <div className='ml-1 flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border/40 bg-background/70 px-2.5 py-1'>
+              <div className='ms-1 flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border/40 bg-background/70 px-2.5 py-1'>
                 {ready ? (
                   <>
                     <span className='size-1.5 shrink-0 rounded-full bg-ok ts-live-dot' />
@@ -295,7 +295,7 @@ export function TemplateStudio({ open, zipFile, onOpenChange, onValidated }: Tem
               disabled={!ready || confirming}
               onClick={() => void handleConfirm()}
             >
-              {confirming ? <Loader2 className='mr-2 size-4 animate-spin' aria-hidden /> : null}
+              {confirming ? <Loader2 className='me-2 size-4 animate-spin' aria-hidden /> : null}
               {confirming ? t('templateStudio.confirming') : t('templateStudio.confirm')}
             </Button>
           </div>

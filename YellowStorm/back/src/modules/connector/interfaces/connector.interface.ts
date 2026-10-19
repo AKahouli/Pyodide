@@ -45,37 +45,6 @@ export interface IGrpcConnector {
   actions: IGrpcConnectorAction[];
 }
 
-export interface IConnectorResponse {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  icon: string;
-  color: string;
-  iconColor: 'light' | 'dark';
-  categoryId: string | null;
-  /** Resolved category name (populated by findAllActive); used by clients to exclude "System" connectors. */
-  categoryName?: string | null;
-  authType: string;
-  authConfigSchema: Record<string, unknown>;
-  authSourceType: string;
-  connectedAppKey: string;
-  runtimeAuthConfig: Record<string, unknown>;
-  mcpTransportType: string;
-  mcpServerUrl: string;
-  mcpServerConfig: Record<string, unknown>;
-  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
-  dynamicHeaders: IConnectorDynamicHeader[];
-  actions: IConnectorActionResponse[];
-  referencedSkillIds: string[];
-  isActive: boolean;
-  isSystem?: boolean;
-  isHidden?: boolean;
-  createdBy: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface IConnectorCredentialResponse {
   id: string;
   connectorId: string;

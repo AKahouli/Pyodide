@@ -320,12 +320,13 @@ describe('StreamService root enrollment', () => {
       { question_message_id: 'sibling', assistant_message_ids: ['sibling-answer'], request_excerpt: 'Compare databases', submitted_at: '2026-10-10T11:59:00Z' },
     ] };
     const built = await h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
-      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', history, ongoing);
+      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', history, ongoing, undefined, 'turn_previous-answer');
     expect(built.payload.conversation_id).toBe('conversation-1');
     expect(built.payload.execution_scope).toEqual(expect.objectContaining({ native_session_id: 'turn_answer-1' }));
-    expect(seedConversationSession).toHaveBeenCalledWith('user-1', 'turn_answer-1', 'turn_answer-1', history);
+    expect(seedConversationSession).toHaveBeenCalledWith('user-1', 'turn_answer-1', 'turn_answer-1', history, 'turn_previous-answer');
     const state = h.recordNativeState.mock.calls[0][1];
     expect(state.sessionSeed.history).toEqual(history);
+    expect(state.sessionSeed.sourceSessionId).toBe('turn_previous-answer');
     expect(built.payload.root_context).toEqual(expect.objectContaining(ongoing));
     expect(state.rootContext).toEqual(expect.objectContaining(ongoing));
     state.invocationId = 'native-invocation';

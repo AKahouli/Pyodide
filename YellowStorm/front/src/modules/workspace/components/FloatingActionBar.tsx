@@ -74,11 +74,11 @@ export function FloatingActionBar({ selectedCount, selectedIds, onClearSelection
         <span className='text-xs md:text-sm font-medium whitespace-nowrap'>{t('floating.selected', { count: selectedCount })}</span>
         <Separator orientation='vertical' className='h-5 md:h-6' />
         <Button variant='outline' size='sm' onClick={handleBulkDownload} disabled={isDownloading} className='h-8 px-2 md:px-3'>
-          {isDownloading ? <Loader2 className='h-4 w-4 md:mr-2 animate-spin' /> : <Download className='h-4 w-4 md:mr-2' />}
+          {isDownloading ? <Loader2 className='h-4 w-4 md:me-2 animate-spin' /> : <Download className='h-4 w-4 md:me-2' />}
           <span className='hidden md:inline'>{t('floating.actions.download')}</span>
         </Button>
         <Button variant='destructive' size='sm' onClick={() => setIsDeleteDialogOpen(true)} className='h-8 px-2 md:px-3'>
-          <Trash2 className='h-4 w-4 md:mr-2' />
+          <Trash2 className='h-4 w-4 md:me-2' />
           <span className='hidden md:inline'>{t('floating.actions.delete')}</span>
         </Button>
         <Button variant='ghost' size='sm' onClick={onClearSelection} className='h-8 w-8 p-0'>

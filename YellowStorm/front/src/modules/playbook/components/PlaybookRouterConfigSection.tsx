@@ -223,7 +223,7 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
             onClick={addLabel}
             disabled={disabled}
           >
-            <Plus className="mr-1 h-3.5 w-3.5" />
+            <Plus className="me-1 h-3.5 w-3.5" />
             {t('routerEditor.addLabel')}
           </Button>
         </div>
@@ -293,7 +293,7 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
             onClick={addCondition}
             disabled={disabled}
           >
-            <Plus className="mr-1 h-3.5 w-3.5" />
+            <Plus className="me-1 h-3.5 w-3.5" />
             {t('routerEditor.addCondition')}
           </Button>
         </div>

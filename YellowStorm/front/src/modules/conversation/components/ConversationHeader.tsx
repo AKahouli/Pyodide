@@ -1,18 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share2, ShieldCheck, Trash2, Users, ListTree, ListTodo } from 'lucide-react';
+import { ArrowLeft, FileDown, FileText, FolderOpen, Globe, Loader2, Pencil, Share2, ShieldCheck, Trash2, Users, ListTree, ListTodo } from 'lucide-react';
 import { useConversationUiStore } from '../uiStore';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { fetchMessages } from '../api';
-import { buildExportBlocks, buildExportFilename, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
+import { buildExportFilename, buildStructuredExportBlocks, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
-import { exportBlocksToHtml } from '../utils/html-export';
+import { exportBlocksToHtml, exportUrlTransform } from '../utils/html-export';
+import { resolveOpenUiExportImage } from '../utils/openui-export-assets';
 import { showError, showInfo, showSuccess } from '@/lib/notifications';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
@@ -28,6 +29,7 @@ export function ConversationHeader() {
   const setContextPanel = useConversationUiStore((s) => s.setContextPanel);
   const conversation = useCurrentConversation();
   const { user } = useAuth();
+  const exportActor = useRef(user?.id); exportActor.current = user?.id;
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const typewriterConversationId = useConversationStore((s) => s.typewriterConversationId);
@@ -41,6 +43,12 @@ export function ConversationHeader() {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingHtml, setIsExportingHtml] = useState(false);
   const [pdfBlocks, setPdfBlocks] = useState<ExportBlock[] | null>(null);
+  const [pdfActor, setPdfActor] = useState<string>();
+  useEffect(() => {
+    exportActor.current = user?.id;
+    setPdfBlocks(null); setPdfActor(undefined);
+    return () => { exportActor.current = undefined; };
+  }, [user?.id]);
   const { t, language } = useModuleTranslation('conversation');
 
   // Typewriter effect for newly generated names
@@ -59,17 +67,22 @@ export function ConversationHeader() {
   const exportTitle = conversation?.title?.trim() || t('exportPdf.untitledConversation');
 
   const buildExportBlocksForConversation = async (): Promise<ExportBlock[]> => {
+    const selectedBranches = new Map(useConversationStore.getState().activeBranches);
     const messages = await fetchAllMessagesForExport(conversation.id, (id, params) => fetchMessages(id, params));
     const formatTimestamp = (iso: string) => {
       const date = new Date(iso);
       return Number.isNaN(date.getTime()) ? iso : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
     };
-    return buildExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp);
+    const actorId = user?.id;
+    const blocks = await buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage, messages, actorId, selectedBranches);
+    if (exportActor.current !== actorId) throw new Error('Export actor changed');
+    return blocks;
   };
 
   const handleExportDocx = async () => {
     if (isExportingDocx) return;
     setIsExportingDocx(true);
+    const actorId = user?.id;
     try {
       const blocks = await buildExportBlocksForConversation();
       if (!blocks.length) {
@@ -77,6 +90,7 @@ export function ConversationHeader() {
         return;
       }
       const blob = await exportBlocksToDocx(blocks, exportTitle);
+      if (exportActor.current !== actorId) throw new Error('Export actor changed');
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {
@@ -89,6 +103,7 @@ export function ConversationHeader() {
   const handleExportPdf = async () => {
     if (isExportingPdf || pdfBlocks) return;
     setIsExportingPdf(true);
+    setPdfActor(user?.id);
     try {
       const blocks = await buildExportBlocksForConversation();
       if (!blocks.length) {
@@ -188,6 +203,7 @@ export function ConversationHeader() {
 
         <div className='flex items-center gap-1'>
           {!conversation.groupMeta?.isGroup && <>
+            <Button variant={contextPanel === 'files' ? 'secondary' : 'ghost'} size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('assets.title')} title={t('assets.title')} aria-expanded={contextPanel === 'files'} aria-controls={contextPanel ? 'conversation-context-panel' : undefined} onClick={() => setContextPanel(contextPanel === 'files' ? null : 'files')}><FolderOpen className='size-4' /></Button>
             <Button variant={contextPanel === 'outline' ? 'secondary' : 'ghost'} size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('outline.title')} title={t('outline.title')} aria-expanded={contextPanel === 'outline'} aria-controls={contextPanel ? 'conversation-context-panel' : undefined} onClick={() => setContextPanel(contextPanel === 'outline' ? null : 'outline')}><ListTree className='size-4' /></Button>
             <Button variant={contextPanel === 'work' ? 'secondary' : 'ghost'} size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('contextPanel.work')} title={t('contextPanel.work')} aria-expanded={contextPanel === 'work'} aria-controls={contextPanel ? 'conversation-context-panel' : undefined} onClick={() => setContextPanel(contextPanel === 'work' ? null : 'work')}><ListTodo className='size-4' /></Button>
           </>}
@@ -217,20 +233,20 @@ export function ConversationHeader() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
                       {conversation.createdBy === user?.id && <><DropdownMenuItem onClick={handleShare}>
-                        <Share2 className='h-3.5 w-3.5 mr-2' />
+                        <Share2 className='h-3.5 w-3.5 me-2' />
                         {t('header.tooltips.share')}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator /></>}
                       <DropdownMenuItem onClick={() => void handleExportDocx()}>
-                        <FileText className='h-3.5 w-3.5 mr-2' />
+                        <FileText className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportDocx')}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => void handleExportPdf()}>
-                        <FileDown className='h-3.5 w-3.5 mr-2' />
+                        <FileDown className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportPdf')}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => void handleExportHtml()}>
-                        <Globe className='h-3.5 w-3.5 mr-2' />
+                        <Globe className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportHtml')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -261,7 +277,7 @@ export function ConversationHeader() {
 
       {conversation.createdBy === user?.id && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} governed={isGoverned} />}
 
-      {pdfBlocks && (
+      {pdfBlocks && pdfActor === user?.id && (
         <PdfExportPortal
           title={exportTitle}
           contentKey={JSON.stringify(pdfBlocks)}
@@ -275,7 +291,7 @@ export function ConversationHeader() {
               <h3 style={{ color: '#6b7280', fontSize: '12px', margin: '24px 0 8px', textTransform: 'uppercase' }}>
                 {block.label}{block.timestamp ? ` · ${block.timestamp}` : ''}
               </h3>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.markdown}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={exportUrlTransform}>{block.markdown}</ReactMarkdown>
             </div>
           ))}
         </PdfExportPortal>

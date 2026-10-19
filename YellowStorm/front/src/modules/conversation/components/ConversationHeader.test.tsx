@@ -1,11 +1,12 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockNavigate } from '@/test/setup';
 import { ConversationHeader } from './ConversationHeader';
 
-vi.mock('@/modules/auth', () => ({ useAuth: () => ({ user: { id: 'owner-1' } }) }));
+const authActor = vi.hoisted(() => ({ id: 'owner-1' }));
+vi.mock('@/modules/auth', () => ({ useAuth: () => ({ user: { id: authActor.id } }) }));
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -50,19 +51,20 @@ const clearTypewriterMock = vi.fn();
 
 vi.mock('../store', () => ({
   useCurrentConversation: () => currentConversation.value,
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
+  useConversationStore: Object.assign((selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       updateConversation: updateConversationMock,
       deleteConversation: deleteConversationMock,
       typewriterConversationId: null,
       typewriterName: '',
       clearTypewriter: clearTypewriterMock,
-    }),
+    }), { getState: () => ({ activeBranches: new Map() }) }),
 }));
 
 describe('ConversationHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authActor.id = 'owner-1';
     currentConversation.value = { id: 'conv-1', title: 'Conversation title', createdBy: 'owner-1', workspaces: [] };
     fetchMessagesMock.mockResolvedValue({
       items: [
@@ -145,6 +147,29 @@ describe('ConversationHeader', () => {
     });
   });
 
+  it.each(['actor change', 'unmount'])('does not download a whole-conversation DOCX after %s during construction', async transition => {
+    let finish!: (blob: Blob) => void;
+    exportBlocksToDocxMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const mounted = render(<ConversationHeader />);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportDocx/ }));
+    await waitFor(() => expect(exportBlocksToDocxMock).toHaveBeenCalled());
+    if (transition === 'unmount') mounted.unmount();
+    else { authActor.id = 'other'; mounted.rerender(<ConversationHeader />); }
+    await act(async () => finish(new Blob(['private docx'])));
+    expect(downloadBlobMock).not.toHaveBeenCalled();
+    expect(showSuccessMock).not.toHaveBeenCalled();
+  });
+  it('closes a private conversation PDF on actor change and does not restore it on return', async () => {
+    const mounted = render(<ConversationHeader />);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportPdf/ }));
+    expect(await screen.findByText('conversation-pdf-export')).toBeInTheDocument();
+    authActor.id = 'other'; mounted.rerender(<ConversationHeader />);
+    expect(screen.queryByText('conversation-pdf-export')).toBeNull();
+    authActor.id = 'owner-1'; mounted.rerender(<ConversationHeader />);
+    expect(screen.queryByText('conversation-pdf-export')).toBeNull();
+  });
   it('shows the shared badge and passes shared state to the delete dialog', async () => {
     currentConversation.value = {
       id: 'conv-1',

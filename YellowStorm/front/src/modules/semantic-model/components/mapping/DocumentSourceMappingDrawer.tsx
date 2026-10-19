@@ -21,7 +21,7 @@ import { isMappableDocument, isStructuredDocument } from '../knowledge/Knowledge
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
-import { useSemanticModelEditorStore } from '../../store';
+import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
 import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
@@ -32,6 +32,7 @@ import { computedPayload, computedProblem } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
+import { DocumentFieldSuggestions } from './DocumentFieldSuggestions';
 import { adaptToDocument } from './sheetMapping';
 import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
@@ -47,6 +48,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const graph = useSemanticModelEditorStore((state) => state.graph);
+  const graphSaved = useSemanticModelEditorStore((state) => state.saveStatus === 'saved' && state.pending.length === 0);
   const [conceptId, setConceptId] = useState('');
   const [mappings, setMappings] = useState<SourceFieldMapping[]>([]);
   // Concept fields added after this mapping was saved: shown until it is saved, then read by the next run.
@@ -173,7 +175,13 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
   const selectedAssets = workspace ? samplesQuery.data ?? [] : pickedAssets;
   const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore');
   // Ignored fields are saved too, so a field left out on purpose is not offered again as a new one.
-  const savedMappings = mappings.map((mapping) => mapping.mode === 'computed' && mapping.computed ? { ...mapping, sourceField: null, computed: computedPayload(mapping.computed) } : mapping);
+  const savedMappings = mappings.map((mapping) => {
+    const shaped = mapping.mode === 'computed' && mapping.computed
+      ? { ...mapping, sourceField: null, computed: computedPayload(mapping.computed) } : mapping;
+    if (shaped.mode === 'extract') return shaped;
+    const { extractionStrategy: _strategy, semanticDefinition: _definition, agentId: _agent, rules: _rules, ...rest } = shaped;
+    return rest;
+  });
 
   // A preset or the last mapping replaces the fields' settings; fields the concept no longer has are left out.
   const applySettings = (settings: MappingSettings, exact: boolean) => {
@@ -190,6 +198,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
 
   const preview = useMutation({
     mutationFn: async (): Promise<PreviewItem[]> => {
+      await waitForGraphSave();
       const results: PreviewItem[] = [];
       for (const asset of selectedAssets.slice(0, 2)) {
         results.push({
@@ -209,7 +218,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
     },
   });
   const saveWorkspace = useMutation({
-    mutationFn: () => semanticModelApi.createWorkspaceSourceMapping(modelId, {
+    mutationFn: async () => { await waitForGraphSave(); return semanticModelApi.createWorkspaceSourceMapping(modelId, {
       conceptId,
       workspaceId: workspace!.workspaceId,
       ...(coverage.whole ? {} : coverage.pick),
@@ -217,7 +226,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
       fieldMappings: savedMappings,
       identityFields,
       aiSettings,
-    }),
+    }); },
     onSuccess: async (result) => {
       useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       onSaved?.();
@@ -236,6 +245,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
   });
   const save = useMutation({
     mutationFn: async () => {
+      await waitForGraphSave();
       setSavedCount(0);
       let revision: number | undefined;
       let rest = selectedAssets;
@@ -309,7 +319,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
   const computedValid = !computedProblems.length;
   const saving = save.isPending || saveWorkspace.isPending;
   const canSave = Boolean(conceptId && (workspace ? coverage.whole || pickCount > 0 : selectedAssets.length) && activeMappings.length && identityValid && rulesValid && limitsValid && computedValid) && !saving;
-  const canPreview = canSave && selectedAssets.length > 0;
+  const canPreview = canSave && graphSaved && selectedAssets.length > 0;
   // File names the computed fields are tried on: the picked or sample documents first, then the others known here.
   // A workspace mapping is tried on its own files only; its name is a folder, not a file.
   const fileSamples = workspace ? selectedAssets.map((asset) => asset.name).slice(0, 20)
@@ -415,7 +425,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
 
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && <SheetContent side='right' className={cn('flex w-full flex-col gap-0 p-0 transition-[max-width] duration-200', splitOpen ? 'sm:max-w-[min(96vw,1680px)]' : 'sm:max-w-2xl')} onInteractOutside={(event) => event.preventDefault()}>
-      <SheetHeader className='relative border-b p-5 pr-24'>
+      <SheetHeader className='relative border-b p-5 pe-24'>
         {!narrow && <Button type='button' size='sm' variant='ghost' className='absolute right-12 top-3.5 h-8 px-2 text-xs' aria-pressed={!prefs.collapsed}
           aria-label={prefs.collapsed ? t('mapping.live.showDocument') : t('mapping.live.hideDocument')} title={prefs.collapsed ? t('mapping.live.showDocument') : t('mapping.live.hideDocument')}
           onClick={() => savePrefs({ collapsed: !prefs.collapsed })}>
@@ -426,8 +436,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
       </SheetHeader>
       {narrow && <Tabs value={narrowTab} onValueChange={(value) => setNarrowTab(value as 'document' | 'fields')} className='border-b px-4 py-2'>
         <TabsList className='w-full'>
-          <TabsTrigger value='document' className='flex-1 text-xs'><FileText className='mr-1.5 h-3.5 w-3.5' />{t('mapping.live.documentTab')}</TabsTrigger>
-          <TabsTrigger value='fields' className='flex-1 text-xs'><ListChecks className='mr-1.5 h-3.5 w-3.5' />{t('mapping.live.fieldsTab')}</TabsTrigger>
+          <TabsTrigger value='document' className='flex-1 text-xs'><FileText className='me-1.5 h-3.5 w-3.5' />{t('mapping.live.documentTab')}</TabsTrigger>
+          <TabsTrigger value='fields' className='flex-1 text-xs'><ListChecks className='me-1.5 h-3.5 w-3.5' />{t('mapping.live.fieldsTab')}</TabsTrigger>
         </TabsList>
       </Tabs>}
       {(() => {
@@ -438,7 +448,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
             {live.reading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <FileText className='h-3.5 w-3.5 shrink-0' />}
             <span className='min-w-0 flex-1 truncate'>{!canPreview ? t('mapping.live.incomplete') : live.reading ? t('mapping.live.readingDocument', { name: shown.name }) : live.result ? t('mapping.live.readDocument', { name: shown.name }) : usesAi ? t('mapping.live.aiManual') : t('mapping.live.readingDocument', { name: shown.name })}</span>
             {canPreview && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.reading && !usesAi} onClick={() => void live.run()}>
-              <RefreshCw className='mr-1 h-3 w-3' />{usesAi && !live.result ? t('mapping.live.readNow') : t('mapping.live.readAgain')}
+              <RefreshCw className='me-1 h-3 w-3' />{usesAi && !live.result ? t('mapping.live.readNow') : t('mapping.live.readAgain')}
             </Button>}
           </div>
           {canPreview && !live.result && live.reading && !live.error && <div className='space-y-1.5' aria-hidden><Skeleton className='h-3 w-2/3' /><Skeleton className='h-3 w-1/2' /></div>}
@@ -462,7 +472,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
         </FormField>
 
         {workspace && <section className={cn(FORM_SECTION, 'text-xs')}>
-          <SectionHeader title={t('mapping.coverage')} help={t('mapping.workspaceHelp')} icon={<FolderOpen className='mr-0.5 h-4 w-4 text-muted-foreground' />} />
+          <SectionHeader title={t('mapping.coverage')} help={t('mapping.workspaceHelp')} icon={<FolderOpen className='me-0.5 h-4 w-4 text-muted-foreground' />} />
           <WorkspaceFilePicker workspaceId={workspace.workspaceId} name={workspace.workspaceName ?? workspace.name} whole={coverage.whole} pick={coverage.pick}
             onChange={(next) => { setCoverage(next); preview.reset(); }} />
           {usesAi && <p className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.workspaceAiCost')}</p>}
@@ -489,6 +499,30 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
             {!filteredDocuments.length && <p className='p-3 text-xs text-muted-foreground'>{t('dataWorkflow.noDocumentsMatch')}</p>}
           </div>
         </section>}
+
+        {concept && <DocumentFieldSuggestions
+          key={`${concept.id}:${target.documentId}:${[...selectedDocuments].sort().join('|')}:${coverage.whole}:${JSON.stringify(coverage.pick)}`}
+          modelId={modelId} concept={concept} sources={selectedAssets} disabled={saving}
+          onEvidence={(evidence) => { showDocument(evidence.documentId); navigate({ page: evidence.page, highlightText: evidence.quote }); }}
+          onApply={(suggestions, purpose) => {
+            const current = useSemanticModelEditorStore.getState().graph?.nodes.find((node) => node.id === concept.id);
+            if (!current) return;
+            const attributes = [...current.attributes, ...suggestions.filter((item) => !current.attributes.some((attribute) => attribute.key === item.key))
+              .map((item) => ({ key: item.key, label: item.label.trim(), type: item.type, description: item.description.trim(), required: false }))];
+            const changes = { attributes, description: purpose };
+            useSemanticModelEditorStore.getState().commit({ type: 'node_type.update', id: current.id, changes },
+              (value) => ({ ...value, nodes: value.nodes.map((node) => node.id === current.id ? { ...node, ...changes } : node) }));
+            const chosen = new Map(suggestions.map((item) => {
+              const { extractionStrategy, semanticDefinition: _definition, agentId, rules, ...base } = item.mapping;
+              return [item.key, { ...base, targetAttribute: item.key,
+                ...(item.mapping.mode === 'extract' ? { extractionStrategy, rules, agentId, semanticDefinition: item.description.trim() } : {}),
+              }] as const;
+            }));
+            const next = withConceptFields(mappings, attributes).mappings.map((mapping) => chosen.get(mapping.targetAttribute) ?? mapping);
+            rowsBuiltFor.current = `${current.id}:${attributes.map((attribute) => attribute.key).join('|')}`;
+            setAddedFields(attributes.filter((attribute) => !current.attributes.some((existing) => existing.key === attribute.key)).map((attribute) => attribute.key));
+            changeMappings(next);
+          }} />}
 
         {concept && !concept.attributes.length && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('mapping.noFields', { name: concept.label })}</p>}
 
@@ -542,7 +576,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
         {preview.isError && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-3 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{isRetiredSearchFailure(preview.error) ? t('mapping.previewUnavailable') : `${t('mapping.previewError')}: ${parseApiError(preview.error).message}`}</p>}
 
         {preview.data?.map(({ asset, result }) => <section key={asset.documentId} className={FORM_SECTION}>
-          <SectionHeader title={asset.name} icon={<FileText className='mr-0.5 h-4 w-4 text-muted-foreground' />} />
+          <SectionHeader title={asset.name} icon={<FileText className='me-0.5 h-4 w-4 text-muted-foreground' />} />
           {result.warnings.map((warning) => <p key={warning} className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{warning}</p>)}
           {result.aiSent && <p className='text-[11px] text-muted-foreground'>{t(result.aiSent.longDocument ? 'mapping.reading.aiSentLong' : 'mapping.reading.aiSent', {
             blocks: result.aiSent.blocksSent, characters: result.aiSent.charactersSent.toLocaleString(), total: result.aiSent.documentCharacters.toLocaleString() })}</p>}
@@ -556,7 +590,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
             const source = entity.provenance.fields?.[field];
             return <div key={field} className='rounded-lg bg-muted/50 p-2 text-xs'>
               <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{concept?.attributes.find((attribute) => attribute.key === field)?.label ?? field}</p><p>{String(value ?? '')}</p></div>{source?.confidence !== undefined && <span className='text-muted-foreground'>{Math.round(source.confidence * 100)}%</span>}</div>
-              {source?.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline' onClick={() => void useFileViewerStore.getState().openFile(asset.workspaceId, asset.documentId, asset.path, asset.name, asset.mimeType, { page: Number.parseInt(source.page ?? '1', 10) || 1, highlightText: source.quote })}><ExternalLink className='mt-0.5 h-3 w-3 shrink-0' />{source.quote}</button>}
+              {source?.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-start text-[11px] text-primary hover:underline' onClick={() => void useFileViewerStore.getState().openFile(asset.workspaceId, asset.documentId, asset.path, asset.name, asset.mimeType, { page: Number.parseInt(source.page ?? '1', 10) || 1, highlightText: source.quote })}><ExternalLink className='mt-0.5 h-3 w-3 shrink-0' />{source.quote}</button>}
             </div>;
           }))}
         </section>)}
@@ -575,10 +609,10 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
       })()}
       <Separator />
       {computedProblems.length > 0 && <p role='status' className='px-4 pt-3 text-xs text-amber-700 dark:text-amber-400'>{t('mapping.computed.saveBlocked', { fields: computedProblems.map((item) => attributeLabel(item.field)).join(', ') })}</p>}
-      <div className='flex items-center justify-end gap-2 p-4'>
+      <div className='flex flex-wrap items-center justify-end gap-2 p-4 pe-20'>
         <Button variant='outline' onClick={onClose}>{t('action.cancel')}</Button>
-        <Button variant='outline' disabled={!canPreview || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('mapping.previewButton')}</Button>
-        <Button disabled={!canSave} onClick={() => (workspace ? saveWorkspace.mutate() : save.mutate())}>{saving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{workspace ? (editingWorkspaceMapping ? t('mapping.save') : t('mapping.workspaceSave')) : target.bulkEdit ? selectedAssets.length === 1 ? t('dataWorkflow.applyToOne') : t('dataWorkflow.applyToSources', { count: selectedAssets.length }) : t('mapping.save')}</Button>
+        <Button variant='outline' disabled={!canPreview || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='me-2 h-4 w-4 animate-spin' />}{t('mapping.previewButton')}</Button>
+        <Button disabled={!canSave} onClick={() => (workspace ? saveWorkspace.mutate() : save.mutate())}>{saving && <Loader2 className='me-2 h-4 w-4 animate-spin' />}{workspace ? (editingWorkspaceMapping ? t('mapping.save') : t('mapping.workspaceSave')) : target.bulkEdit ? selectedAssets.length === 1 ? t('dataWorkflow.applyToOne') : t('dataWorkflow.applyToSources', { count: selectedAssets.length }) : t('mapping.save')}</Button>
         {save.isPending && selectedAssets.length > 50 && <span className='text-xs text-muted-foreground'>{t('dataWorkflow.saveProgress', { saved: savedCount, total: selectedAssets.length })}</span>}
       </div>
     </SheetContent>}
@@ -599,7 +633,7 @@ function RecordsTable({ entities, total, fields, label }: Readonly<{
   return <div className='rounded-lg border' role='region' aria-label={t('mapping.manyRecords.found', { count: total })}>
     <p className='border-b bg-muted/30 px-2.5 py-1 text-[11px] font-medium'>{t('mapping.manyRecords.found', { count: total })}</p>
     <div className='max-h-64 overflow-auto'>
-      <table className='w-full text-left text-xs'>
+      <table className='w-full text-start text-xs'>
         <thead className='sticky top-0 bg-background'><tr>
           <th className='px-2 py-1 font-medium text-muted-foreground'>#</th>
           {shown.map((field) => <th key={field} className='px-2 py-1 font-medium text-muted-foreground'>{label(field)}</th>)}

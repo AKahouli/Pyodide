@@ -2,7 +2,7 @@ import { GoneException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { IS_PUBLIC_KEY } from '@modules/auth/decorators/public.decorator';
-import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
+import { AppRuntimeServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 import { SKIP_RESPONSE_WRAP_KEY } from '@modules/response/decorators/skip-response-wrap.decorator';
 import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
 import { RuntimeBindingService } from '../services/runtime-binding.service';
@@ -22,22 +22,22 @@ describe('AppRuntimeInternalController', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('is service-authenticated and bypasses the user JWT guard', () => {
+  it('is service-authenticated by the app-runtime principal and bypasses the user JWT guard', () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       AppRuntimeInternalController,
     ) as unknown[];
 
     expect(Reflect.getMetadata(IS_PUBLIC_KEY, AppRuntimeInternalController)).toBe(true);
-    expect(guards).toContain(InternalServiceGuard);
+    expect(guards).toContain(AppRuntimeServiceGuard);
   });
 
-  it('applies InternalServiceGuard to bind and tool-invoke (class-level)', () => {
+  it('applies the app-runtime principal guard to bind and tool-invoke (class-level)', () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       AppRuntimeInternalController,
     ) as unknown[];
-    expect(guards).toContain(InternalServiceGuard);
+    expect(guards).toContain(AppRuntimeServiceGuard);
     // Class-level guard covers every handler — including bind + invokeTool.
     expect(typeof controller.bind).toBe('function');
     expect(typeof controller.invokeTool).toBe('function');

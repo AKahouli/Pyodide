@@ -201,7 +201,7 @@ export function CoverFocusDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='flex max-h-[92vh] w-full max-w-4xl flex-col gap-0 overflow-hidden p-0'>
-        <DialogHeader className='space-y-1 border-b px-5 py-4 text-left'>
+        <DialogHeader className='space-y-1 border-b px-5 py-4 text-start'>
           <DialogTitle>{t('coverFocus.title')}</DialogTitle>
           <DialogDescription>{t('coverFocus.description')}</DialogDescription>
         </DialogHeader>

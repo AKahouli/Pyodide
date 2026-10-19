@@ -187,14 +187,20 @@ export class S3StorageBackend implements StorageBackend {
 
   async signedUrl(key: string, options: SignedUrlOptions): Promise<string> {
     const command = options.write
-      ? new PutObjectCommand({ Bucket: this.config.bucket, Key: key })
+      ? new PutObjectCommand({ Bucket: this.config.bucket, Key: key,
+          ...(options.createOnly ? { IfNoneMatch: '*' } : {}),
+        })
       : new GetObjectCommand({
           Bucket: this.config.bucket,
           Key: key,
           ResponseContentDisposition: options.contentDisposition,
         });
 
-    return getSignedUrl(this.requireClient(), command, { expiresIn: options.expirySeconds });
+    return getSignedUrl(this.requireClient(), command, {
+      expiresIn: options.expirySeconds,
+      // A caller cannot remove or change the precondition without invalidating the signature.
+      ...(options.write && options.createOnly ? { signableHeaders: new Set(['if-none-match']) } : {}),
+    });
   }
 
   publicUrl(key: string): string {

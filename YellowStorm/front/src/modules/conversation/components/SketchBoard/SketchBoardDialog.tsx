@@ -103,7 +103,7 @@ export function SketchBoardDialog({ open, onOpenChange, onDone }: SketchBoardDia
               {tCommon('actionCancel')}
             </Button>
             <Button onClick={handleDone} disabled={drawing.isEmpty}>
-              <Check className='mr-1 size-4' />
+              <Check className='me-1 size-4' />
               {t('sketch.buttons.done')}
             </Button>
           </div>

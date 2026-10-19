@@ -435,7 +435,7 @@ export function CreateEditAgentDialog({
               </TooltipProvider>
               <ScrollArea className="flex-1 min-h-0 mt-4">
                 <fieldset disabled={readOnly} className="contents">
-                <div className="pr-4">
+                <div className="pe-4">
                   {/* Identity Tab */}
                   <TabsContent value="identity" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <div className="grid gap-4">
@@ -631,7 +631,7 @@ export function CreateEditAgentDialog({
                             {t('createEdit.fields.genUiEnabled')}
                           </label>
                         </div>
-                        <p className="pl-6 text-xs text-muted-foreground">{t('createEdit.fields.genUiEnabledHint')}</p>
+                        <p className="ps-6 text-xs text-muted-foreground">{t('createEdit.fields.genUiEnabledHint')}</p>
                       </div>
 
                       {/* Model */}
@@ -817,7 +817,7 @@ export function CreateEditAgentDialog({
               {!readOnly && <Button type="submit" disabled={saving}>
                 {saving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
                     {t('createEdit.actions.saving')}
                   </>
                 ) : agent ? (

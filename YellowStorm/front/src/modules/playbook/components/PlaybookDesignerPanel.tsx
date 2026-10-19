@@ -1194,7 +1194,7 @@ export function PlaybookDesignerPanel({
                               className="h-6 px-2 text-xs"
                               onClick={() => handleRevert(msg.id)}
                             >
-                              <RotateCcw className="h-3 w-3 mr-1" />
+                              <RotateCcw className="h-3 w-3 me-1" />
                               {t('designer.revert')}
                             </Button>
                           </div>
@@ -1235,10 +1235,10 @@ export function PlaybookDesignerPanel({
                         key={choice}
                         type="button"
                         variant={selectedDesignChoice === choice ? 'default' : 'outline'}
-                        className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                        className="h-auto justify-start whitespace-normal px-3 py-2 text-start"
                         onClick={() => handleSelectDesignChoice(choice)}
                       >
-                        <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{index + 1}.</span>
+                        <span className="me-2 shrink-0 text-xs font-semibold opacity-80">{index + 1}.</span>
                         <span>{choice}</span>
                       </Button>
                     ))}
@@ -1246,21 +1246,21 @@ export function PlaybookDesignerPanel({
                       <Button
                         type="button"
                         variant={selectedDesignChoice === '__resource__' ? 'default' : 'outline'}
-                        className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                        className="h-auto justify-start whitespace-normal px-3 py-2 text-start"
                         onClick={() => setResourcePickerOpen(true)}
                       >
-                        <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + 1}.</span>
-                        <FolderOpen className="mr-2 h-4 w-4 shrink-0" />
+                        <span className="me-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + 1}.</span>
+                        <FolderOpen className="me-2 h-4 w-4 shrink-0" />
                         <span>{selectedDesignResource ? selectedDesignResource.name : t(`intentBar.design.resource.${currentDesignQuestion.resourceSelector}`)}</span>
                       </Button>
                     ) : null}
                     <Button
                       type="button"
                       variant={selectedDesignChoice === '__custom__' ? 'default' : 'outline'}
-                      className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
+                      className="h-auto justify-start whitespace-normal px-3 py-2 text-start"
                       onClick={() => handleSelectDesignChoice('__custom__')}
                     >
-                      <span className="mr-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + (currentDesignQuestion.resourceSelector ? 2 : 1)}.</span>
+                      <span className="me-2 shrink-0 text-xs font-semibold opacity-80">{(currentDesignQuestion.choices?.length ?? 0) + (currentDesignQuestion.resourceSelector ? 2 : 1)}.</span>
                       <span>{t('intentBar.design.other')}</span>
                     </Button>
                   </div>
@@ -1411,7 +1411,7 @@ export function PlaybookDesignerPanel({
               <div className="flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 text-amber-600" />
                 <p className="text-sm font-medium">{t('intentBar.diagnostics.title')}</p>
-                <Badge variant="outline" className="ml-auto text-[10px]">{constructionDiagnostics.length}</Badge>
+                <Badge variant="outline" className="ms-auto text-[10px]">{constructionDiagnostics.length}</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.diagnostics.description')}</p>
               <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
@@ -1435,7 +1435,7 @@ export function PlaybookDesignerPanel({
                         </div>
                         {target?.nodeRef && onReviewConstructionDiagnostic ? (
                           <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => onReviewConstructionDiagnostic(diagnostic)}>
-                            <Eye className="mr-1 h-3.5 w-3.5" />
+                            <Eye className="me-1 h-3.5 w-3.5" />
                             {t('intentBar.diagnostics.reviewNode')}
                           </Button>
                         ) : null}
@@ -1506,7 +1506,7 @@ export function PlaybookDesignerPanel({
                   key={entry.id}
                   type="button"
                   variant="ghost"
-                  className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-left text-xs"
+                  className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-start text-xs"
                   disabled={constructionActive || assistantOperationPending || !onApplyHistorySuggestion}
                   onClick={() => handleApplyHistory(entry)}
                 >
@@ -1675,7 +1675,7 @@ export function PlaybookDesignerPanel({
                   }}
                   disabled={isInterruptBusy || !activeInterruptEntry}
                 >
-                  <XCircle className="h-4 w-4 mr-1" />
+                  <XCircle className="h-4 w-4 me-1" />
                   {t('interrupt.reject')}
                 </Button>
                 <Button
@@ -1686,12 +1686,12 @@ export function PlaybookDesignerPanel({
                 >
                   {isInterruptBusy ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      <Loader2 className="h-4 w-4 me-1 animate-spin" />
                       {t('interrupt.thinking')}
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="h-4 w-4 mr-1" />
+                      <CheckCircle2 className="h-4 w-4 me-1" />
                       {t('interrupt.approveAndContinue')}
                     </>
                   )}
@@ -1718,7 +1718,7 @@ export function PlaybookDesignerPanel({
                     onClick={() => void handleInterruptSubmit('reply', { message: response || undefined, feedback: response || undefined })}
                     disabled={isInterruptBusy || !activeInterruptEntry || !response.trim()}
                   >
-                    <XCircle className="h-4 w-4 mr-1" />
+                    <XCircle className="h-4 w-4 me-1" />
                     {t('interrupt.submit')}
                   </Button>
                 )}
@@ -1746,12 +1746,12 @@ export function PlaybookDesignerPanel({
                 >
                     {isInterruptBusy ? (
                       <>
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        <Loader2 className="h-4 w-4 me-1 animate-spin" />
                         {t('interrupt.thinking')}
                       </>
                     ) : composerInterruptEntry.interruptType === 'review_request' ? (
                       <>
-                        <CheckCircle2 className="h-4 w-4 mr-1" />
+                        <CheckCircle2 className="h-4 w-4 me-1" />
                         {t('interrupt.approveAndContinue')}
                       </>
                     ) : (

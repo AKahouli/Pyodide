@@ -22,6 +22,7 @@ import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
 import { ManageCategoriesDialog } from './ManageCategoriesDialog';
 import { IconDisplay } from './IconDisplay';
 import type { ConnectorFormValues } from './connector-form-schema';
+import { serializeConnectorSecretFields } from './connector-form-schema';
 import { CatalogTransferDialog } from '../../components/CatalogTransferDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -138,6 +139,8 @@ export function ConnectorsPage() {
         parsedActions = JSON.parse(data.actionsJson);
       }
       const payload = {
+        ...(data.mcpSecurityPolicy ? { mcpSecurityPolicy: data.mcpSecurityPolicy } : {}),
+        ...(editingConnector ? { expectedSecurityRevision: data.expectedSecurityRevision } : {}),
         slug: data.slug,
         name: data.name,
         description: data.description,
@@ -145,13 +148,12 @@ export function ConnectorsPage() {
         color: data.color || undefined,
         iconColor: data.iconColor || undefined,
         categoryId: data.categoryId ? data.categoryId : null,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'none' ? 'none' : 'token',
+        authType: data.authType,
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
-        runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
+        ...serializeConnectorSecretFields(data),
         mcpTransportType: data.mcpTransportType || undefined,
         mcpServerUrl: data.mcpServerUrl || undefined,
-        mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),
         dynamicHeaders: data.dynamicHeaders
           .map((row) => ({
             headerName: row.headerName.trim(),
@@ -243,7 +245,7 @@ export function ConnectorsPage() {
       <div className='flex flex-col items-center justify-center h-96 gap-4'>
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
-        <Button onClick={() => fetchConnectors()} variant='outline'><RefreshCw className='mr-2 h-4 w-4' />Retry</Button>
+        <Button onClick={() => fetchConnectors()} variant='outline'><RefreshCw className='me-2 h-4 w-4' />Retry</Button>
       </div>
     );
   }
@@ -257,18 +259,18 @@ export function ConnectorsPage() {
         </div>
         <div className='flex flex-wrap gap-2'>
           <Button onClick={() => fetchConnectors()} variant='outline' size='icon' aria-label={t('catalogTransfer.refreshConnectors')}><RefreshCw className='h-4 w-4' /></Button>
-          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
-          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='mr-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
-          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='mr-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
-          <Button variant='outline' onClick={() => { setMcpTransportType('streamable_http'); setMcpServerUrl(''); setMcpTools([]); setMcpError(null); setShowMcpDialog(true); }}><Zap className='mr-2 h-4 w-4' />Inspect MCP</Button>
-          <Button onClick={() => { setEditingConnector(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Connector</Button>
+          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='me-2 h-4 w-4' />Manage Categories</Button>
+          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='me-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
+          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='me-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
+          <Button variant='outline' onClick={() => { setMcpTransportType('streamable_http'); setMcpServerUrl(''); setMcpTools([]); setMcpError(null); setShowMcpDialog(true); }}><Zap className='me-2 h-4 w-4' />Inspect MCP</Button>
+          <Button onClick={() => { setEditingConnector(null); setShowDialog(true); }}><Plus className='me-2 h-4 w-4' />Add Connector</Button>
         </div>
       </div>
 
       <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
         <div className='relative w-full sm:max-w-sm'>
           <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-          <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+          <Input placeholder='Search connectors' value={search} onChange={(e) => setSearch(e.target.value)} className='ps-9' />
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
           <SelectTrigger className='w-full sm:w-[220px]'>
@@ -364,7 +366,7 @@ export function ConnectorsPage() {
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              const updated = await updateConnector(conn.id, { isActive: !conn.isActive });
+                               const updated = await updateConnector(conn.id, { isActive: !conn.isActive, expectedSecurityRevision: conn.securityRevision });
                               setConnectors((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
                             } catch (err) {
                               toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });
@@ -399,7 +401,7 @@ export function ConnectorsPage() {
                           </Button>
                         </div>
 
-                        <div className='flex items-start gap-3 pl-6 pr-12'>
+                        <div className='flex items-start gap-3 ps-6 pe-12'>
                           <div
                             className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
                             style={{ backgroundColor: conn.color || 'transparent' }}
@@ -495,11 +497,11 @@ export function ConnectorsPage() {
             </div>
             <div className='flex gap-2'>
               <Button onClick={handleInspectMcp} disabled={!mcpServerUrl.trim() || mcpInspecting}>
-                {mcpInspecting ? <Loader2 className='h-4 w-4 animate-spin mr-2' /> : <Zap className='h-4 w-4 mr-2' />}
+                {mcpInspecting ? <Loader2 className='h-4 w-4 animate-spin me-2' /> : <Zap className='h-4 w-4 me-2' />}
                 Inspect
               </Button>
               <Button onClick={handleImportMcp} disabled={mcpTools.length === 0 || mcpImporting}>
-                {mcpImporting ? <Loader2 className='h-4 w-4 animate-spin mr-2' /> : null}
+                {mcpImporting ? <Loader2 className='h-4 w-4 animate-spin me-2' /> : null}
                 Import {mcpTools.length > 0 ? `(${mcpTools.length} tools)` : ''}
               </Button>
             </div>

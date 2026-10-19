@@ -136,7 +136,7 @@ export function ShareAgentDialog({ open, onOpenChange, agent }: ShareAgentDialog
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='w-[95vw] max-w-2xl p-0 gap-0 max-h-[80vh] flex flex-col'>
         <DialogHeader className='p-4 pb-3 border-b'>
-          <DialogTitle className='text-base pr-8'>
+          <DialogTitle className='text-base pe-8'>
             {t('share.title')} "{agent.name}"
           </DialogTitle>
         </DialogHeader>

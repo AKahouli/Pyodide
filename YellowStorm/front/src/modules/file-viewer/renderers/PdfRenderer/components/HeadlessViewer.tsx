@@ -116,7 +116,7 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
   if (!activeDocumentId) {
     return (
       <div className='flex h-full items-center justify-center text-muted-foreground'>
-        <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+        <Loader2 className='me-2 h-4 w-4 animate-spin' />
         <span>{t('pdf.preparing')}</span>
       </div>
     );
@@ -128,7 +128,7 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
         if (isLoading) {
           return (
             <div className='flex h-full items-center justify-center text-muted-foreground'>
-              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              <Loader2 className='me-2 h-4 w-4 animate-spin' />
               <span>{t('pdf.opening')}</span>
             </div>
           );

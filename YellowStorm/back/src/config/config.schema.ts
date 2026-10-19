@@ -1,5 +1,20 @@
 import * as Joi from 'joi';
 
+const scopedServiceSecret = () => Joi.string().when('NODE_ENV', {
+  is: 'production',
+  then: Joi.string().min(32).required(),
+  otherwise: Joi.string().allow('').optional(),
+}).custom((value: string, helpers) => value !== value.trim() ? helpers.error('any.invalid') : value)
+  .messages({ 'any.invalid': 'Scoped service credentials must not contain padding' });
+
+const independentServiceTokenKeys = [
+  'AGENT_MCP_BACKEND_SERVICE_TOKEN', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
+  'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
+  'APP_RUNTIME_BIND_TOKEN', 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN',
+  'ADK_ROOT_RUNTIME_SERVICE_TOKEN', 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN',
+  'INTERNAL_SERVICE_SECRET',
+] as const;
+
 export const configValidationSchema = Joi.object({
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
   // Application
@@ -127,10 +142,29 @@ export const configValidationSchema = Joi.object({
   STORAGE_PROVIDER: Joi.string().valid('ceph', 'azure').default('ceph'),
 
   // Azure Blob / Data Lake Gen2 — required when STORAGE_PROVIDER=azure.
-  // The connection string must carry an account key: SAS generation needs it.
+  // Two credentials, and exactly one source for the account in each:
+  //   key      -> AZURE_STORAGE_CONNECTION_STRING, which must carry an account
+  //               key because SAS generation signs with it.
+  //   identity -> AZURE_STORAGE_ACCOUNT_URL. An account with shared-key access
+  //               disabled has no connection string at all, and SAS URLs are
+  //               signed with a user delegation key instead.
+  AZURE_STORAGE_USE_MANAGED_IDENTITY: Joi.boolean().default(false),
   AZURE_STORAGE_CONNECTION_STRING: Joi.string().when('STORAGE_PROVIDER', {
     is: 'azure',
-    then: Joi.required(),
+    then: Joi.when('AZURE_STORAGE_USE_MANAGED_IDENTITY', {
+      is: true,
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.required(),
+    }),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  AZURE_STORAGE_ACCOUNT_URL: Joi.string().uri({ scheme: ['http', 'https'] }).when('STORAGE_PROVIDER', {
+    is: 'azure',
+    then: Joi.when('AZURE_STORAGE_USE_MANAGED_IDENTITY', {
+      is: true,
+      then: Joi.required(),
+      otherwise: Joi.string().allow('').optional(),
+    }),
     otherwise: Joi.string().allow('').optional(),
   }),
   AZURE_STORAGE_CONTAINER_NAME: Joi.string().default('documents'),
@@ -397,12 +431,23 @@ export const configValidationSchema = Joi.object({
   AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
+  ADK_RUNTIME_MCP_RENEWAL_TOKEN: scopedServiceSecret(),
+  AGENT_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
+  ADK_ROOT_RUNTIME_SERVICE_TOKEN: scopedServiceSecret(),
+  ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN: scopedServiceSecret(),
+  // Legacy consumers are inventoried separately; never a scoped-principal fallback.
+  INTERNAL_SERVICE_SECRET: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
+  // Scoped internal service principal for the semantic MCP server (WP07.2):
+  // semantic assistant + MCP token renewal only; distinct from the legacy
+  // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).
+  SEMANTIC_MODEL_MCP_SERVICE_TOKEN: scopedServiceSecret(),
   // Browser Pyodide MCP relay (mcp-pyodide). Connectors pointing at this URL receive the acting user's identity.
   PYODIDE_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8027/mcp'),
   // Browser Pyodide runtime relay. Disabled outside development until qualified.
@@ -415,6 +460,12 @@ export const configValidationSchema = Joi.object({
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
+  // Egress policy for server-side MCP probes of user-configured destinations (SEC-06).
+  MCP_EGRESS_ALLOWED_PORTS: Joi.string().pattern(/^\d+(,\d+)*$/).default('80,443,8443'),
+  MCP_EGRESS_ALLOW_INSECURE_HTTP: Joi.boolean().default(false),
+  // Scoped internal service principal for the app runtime bind surface (WP07.3):
+  // valid ONLY for app-runtime bind/tool-invoke, never for other internal routes.
+  APP_RUNTIME_BIND_TOKEN: scopedServiceSecret(),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),
@@ -490,4 +541,9 @@ export const configValidationSchema = Joi.object({
   WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
 })
   // Auth throttling/lockout overrides (see auth.config.ts): AUTH_RATE_LIMIT_<KEY>_LIMIT|_WINDOW_SECONDS, AUTH_LOCKOUT_*
-  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1));
+  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1))
+  .custom((value: Record<string, unknown>, helpers) => {
+    const configured = independentServiceTokenKeys.map(key => value[key])
+      .filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
+    return new Set(configured).size === configured.length ? value : helpers.error('any.invalid');
+  }).messages({ 'any.invalid': 'Internal service credentials must be independently provisioned' });

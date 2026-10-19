@@ -15,8 +15,8 @@ from app.workers.population_tasks import run_population_for_payload, run_populat
 from test_cell_fields import MemoryCache, _fake_agent
 from test_derived import SOURCE, fake_fetch, fake_prepare
 
-# The execution fingerprint of test_derived's command([derivation()]) before the field modes existed.
-OLD_FINGERPRINT = "sha256:f20c47fc272a46120610cd9055e3d81b523ae0a0d3d8feeef731d947d998fdca"
+# Baseline r1-mvp-8 fingerprint, verified before moving AI ownership into the runtime.
+OLD_FINGERPRINT = "sha256:f074b65ec59926e8a69806bc985a3b46d3161d73ed2c54d2a6931e65d9acf4c9"
 
 NOTES_1 = "Client: Acme\nPays: France\nSiège à Paris"
 NOTES_2 = "Le client Globex est installé en Belgique."

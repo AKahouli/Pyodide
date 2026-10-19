@@ -72,7 +72,7 @@ export class WorkspaceDocumentWrite {
     const documentId = newObjectId();
     let blobPath = '';
     const document = await this.support.createWithUniqueName(workspaceId, data.filename, (effectiveName) => {
-      const sanitizedName = this.support.sanitizeFilename(effectiveName);
+      const sanitizedName = this.support.uploadFilename(documentId, effectiveName);
       blobPath = `${pathPrefix}/${sanitizedName}`;
       return {
         id: documentId,
@@ -88,10 +88,7 @@ export class WorkspaceDocumentWrite {
       };
     });
 
-    const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
-      permissions: 'cw',
-      expiryMinutes: this.sasUrlExpiryMinutes,
-    });
+    const uploadUrl = await this.generateReservedUploadUrl(workspaceId, document.id, blobPath);
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
@@ -194,10 +191,10 @@ export class WorkspaceDocumentWrite {
     const documentId = newObjectId();
     let blobPath = '';
     const document = await this.support.createWithUniqueName(workspaceId, data.filename, (effectiveName) => {
-      blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
+      blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, this.support.uploadFilename(documentId, effectiveName));
       return {
         id: documentId,
-        filename: this.support.sanitizeFilename(effectiveName),
+        filename: this.support.uploadFilename(documentId, effectiveName),
         originalName: effectiveName,
         mimeType: data.mimeType,
         size: data.size,
@@ -210,10 +207,7 @@ export class WorkspaceDocumentWrite {
     });
 
     // Generate presigned URL with write permission
-    const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
-      permissions: 'cw', // Create and Write
-      expiryMinutes: this.sasUrlExpiryMinutes,
-    });
+    const uploadUrl = await this.generateReservedUploadUrl(workspaceId, document.id, blobPath);
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
@@ -249,20 +243,18 @@ export class WorkspaceDocumentWrite {
       );
     }
 
+    if (document.status === DocumentStatus.COMPLETED) return this.support.mapToResponse(document);
     if (document.status !== DocumentStatus.PENDING) {
       throw new BadRequestException(
         'Document is not in pending state',
       );
     }
 
-    // Verify object exists in Ceph S3 (skip for folders)
-    if (!document.isFolder && document.path) {
-      const exists = await this.documentService.exists(document.path);
-      if (!exists) {
-        throw new BadRequestException(
-          'Document was not uploaded to storage',
-        );
-      }
+    if (!document.isFolder) {
+      const stored = document.path ? await this.documentService.getMetadata(document.path) : null;
+      if (!stored) throw new BadRequestException('Unable to verify uploaded document in storage; retry confirmation');
+      if (stored.size !== document.size) throw new BadRequestException('Uploaded document size does not match the reserved size');
+      await this.support.validateFile(document.originalName, document.mimeType, stored.size);
     }
 
     // Update document status
@@ -276,6 +268,11 @@ export class WorkspaceDocumentWrite {
         autoIndexRequested: String(options?.autoIndex !== false),
       },
     });
+    if (!updated) {
+      const completed = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
+      if (completed?.status === DocumentStatus.COMPLETED) return this.support.mapToResponse(completed);
+      throw new BadRequestException('Document is not in pending state');
+    }
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
 
@@ -290,9 +287,6 @@ export class WorkspaceDocumentWrite {
         });
       });
     }
-
-    // Update workspace storage usage
-    await this.workspaceService.updateStorageUsage(workspaceId, updated!.size, 1);
 
     // Send notification
     await this.support.sendUploadNotification(userId, {
@@ -516,6 +510,10 @@ export class WorkspaceDocumentWrite {
     workspaceId: string,
     dto: IngestUrlDto,
   ): Promise<DocumentResponse> {
+    // Provenance, tombstones and staging receipts are written only by their platform owners.
+    if (dto.sourceMeta && Object.keys(dto.sourceMeta).some(key => key.startsWith('asset') || ['__proto__', 'constructor', 'prototype'].includes(key))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Source metadata contains reserved keys');
+    }
     this.logger.log('Ingesting file from URL', {
       workspaceId,
       userId: dto.userId,
@@ -578,7 +576,7 @@ export class WorkspaceDocumentWrite {
     );
 
     if (dto.sourceMeta) {
-      await this.documentStore.updateById(doc.id, { metadata: dto.sourceMeta });
+      await this.documentStore.mergeMetadata(workspaceId, doc.id, dto.sourceMeta);
     }
 
     this.logger.debug('File ingested from URL', {
@@ -793,12 +791,30 @@ export class WorkspaceDocumentWrite {
     };
   }
 
+  private async generateReservedUploadUrl(workspaceId: string, documentId: string, blobPath: string): Promise<string> {
+    try {
+      const url = await this.documentService.generateSasUrl(blobPath, {
+        permissions: 'cw', createOnly: true, expiryMinutes: this.sasUrlExpiryMinutes,
+      });
+      await this.documentStore.mergeMetadata(workspaceId, documentId, {
+        uploadExpiresAt: new Date(Date.now() + (this.sasUrlExpiryMinutes + 1) * 60000).toISOString(),
+      });
+      return url;
+    } catch (error) {
+      await this.documentStore.deleteById(documentId).catch((cleanupError: unknown) => {
+        this.logger.warn('Failed to release document reservation after upload URL failure', {
+          documentId, error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
+      throw error;
+    }
+  }
+
   /**
-   * Second half of a direct upload: write the blob under the name reserved by an
-   * UPLOADING row, then complete the row. Blob keys are name-based
-   * (generateUniqueName: false), so uploading before the row existed let the loser
-   * of a concurrent same-name upload overwrite the winner's object. On failure the
-   * reservation is released so the name is free again.
+   * Reserve the row before writing, and include its ID in the object filename.
+   * Distinct display names can sanitize identically, so display-name uniqueness
+   * alone cannot prevent one upload from overwriting another. On failure both
+   * the newly written blob and the document reservation are released.
    */
   private async completeDirectUpload(
     reserved: Awaited<ReturnType<DocumentStore['create']>>,
@@ -806,23 +822,36 @@ export class WorkspaceDocumentWrite {
     mimeType: string,
     folder: string,
   ): Promise<Awaited<ReturnType<DocumentStore['create']>>> {
+    const objectPath = `${folder}/${this.support.uploadFilename(reserved.id, reserved.originalName)}`;
+    // Persist the immutable object key before PUT so a crashed worker's blob is recoverable.
+    await this.documentStore.updateById(reserved.id, { path: objectPath });
+    let uploadedPath: string | undefined;
     try {
-      const uploaded = await this.documentService.upload(file, reserved.originalName, mimeType, {
-        folder,
-        generateUniqueName: false,
-        customFileName: this.support.sanitizeFilename(reserved.originalName),
+      return await this.documentStore.withUploadingDocument(reserved.id, async () => {
+        uploadedPath = objectPath;
+        const uploaded = await this.documentService.upload(file, reserved.originalName, mimeType, {
+          folder,
+          generateUniqueName: false,
+          customFileName: this.support.uploadFilename(reserved.id, reserved.originalName),
+        });
+        uploadedPath = uploaded.blobPath;
+        const completed = await this.documentStore.updateById(reserved.id, {
+          filename: uploaded.storedName,
+          path: uploaded.blobPath,
+          url: uploaded.url,
+          contentHash: uploaded.contentHash,
+          status: DocumentStatus.COMPLETED,
+          uploadedAt: new Date(),
+        });
+        if (!completed) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document removed during upload');
+        return completed;
       });
-      const completed = await this.documentStore.updateById(reserved.id, {
-        filename: uploaded.storedName,
-        path: uploaded.blobPath,
-        url: uploaded.url,
-        contentHash: uploaded.contentHash,
-        status: DocumentStatus.COMPLETED,
-        uploadedAt: new Date(),
-      });
-      if (!completed) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document removed during upload');
-      return completed;
     } catch (error) {
+      if (uploadedPath) await this.documentService.delete(uploadedPath).catch((cleanupError: unknown) => {
+        this.logger.warn('Failed to delete blob after direct upload registration failure', {
+          documentId: reserved.id, error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
       await this.documentStore.deleteById(reserved.id).catch((cleanupError: unknown) => {
         this.logger.warn('Failed to release document reservation after upload failure', {
           documentId: reserved.id,

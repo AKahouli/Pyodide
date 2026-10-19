@@ -67,6 +67,14 @@ export class ConversationAttachmentService {
     );
   }
 
+  /** Read-only extraction after the caller has resolved current document authorization. */
+  async readAuthorizedText(document: DocumentResponse, maxIndexedTabularRows: number): Promise<AttachmentTextProfileV1 | undefined> {
+    if (document.metadata?.[ATTACHMENT_POLICY_METADATA_KEY] === 'CODE_ONLY') return undefined;
+    const cached = document.metadata?.[ATTACHMENT_PROFILE_PATH_METADATA_KEY];
+    return (cached ? await this.readProfile(cached, document.id) : undefined)
+      ?? this.requestProfile(document, maxIndexedTabularRows);
+  }
+
   private async prepareOne(
     userId: string,
     conversationId: string,
@@ -181,8 +189,13 @@ export class ConversationAttachmentService {
   }
 
   /** Policy recommendation is computed here from the profile; ADK only extracts. */
+  /** Caller supplies a persisted, currently authorized output reference, never a model path. */
+  async readAuthorizedArtifactText(document: Pick<DocumentResponse, 'id' | 'path' | 'originalName' | 'mimeType'>): Promise<AttachmentTextProfileV1> {
+    return this.requestProfile(document, 1000);
+  }
+
   private async requestProfile(
-    document: DocumentResponse,
+    document: Pick<DocumentResponse, 'id' | 'path' | 'originalName' | 'mimeType'>,
     maxIndexedTabularRows: number,
   ): Promise<AttachmentTextProfileV1> {
     const adkUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(/\/$/, '');

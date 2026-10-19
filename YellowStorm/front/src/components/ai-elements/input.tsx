@@ -66,12 +66,15 @@ interface InputProps {
   disabled?: boolean;
   submitDisabled?: boolean;
   requireContent?: boolean;
+  /** Existing, scoped context selections can submit without draft text or uploads. */
+  hasSelectedContext?: boolean;
   placeholder?: string;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
   uploadingFiles?: FileUploadInfo[];
   accept?: string;
   maxFiles?: number;
+  maxFileSize?: number;
   /** Hides the add-attachments entry (admin attachment feature off). */
   attachmentsDisabled?: boolean;
   members?: Array<{ id: string; name: string }>;
@@ -85,6 +88,8 @@ interface InputProps {
   enableTeamMentions?: boolean;
   workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
   onWorkspaceSelectionChange?: (workspaceIds: string[]) => void;
+  /** Rendered inside PromptInputProvider before the textarea (e.g. selected context). */
+  aboveTextarea?: ReactNode;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
   belowTextarea?: ReactNode;
   /** Rendered inside PromptInputTools, after built-in tools. */
@@ -95,7 +100,7 @@ interface InputProps {
   autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, hasSelectedContext = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, aboveTextarea, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -488,7 +493,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
       const hasText = Boolean(message.text);
       const hasAttachments = Boolean(message.files?.length);
 
-      if (!(hasText || hasAttachments)) {
+      if (!(hasText || hasAttachments || hasSelectedContext)) {
         return false;
       }
 
@@ -526,20 +531,21 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, preserveWorkspaceSelectionOnSubmit, resetSelectedWorkspaceIds, selectedConnectorRepo],
+    [submitDisabled, derivedStatus, hasSelectedContext, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, preserveWorkspaceSelectionOnSubmit, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
     <div>
       {/* maxFiles 0 also blocks drag-drop when attachments are disabled */}
-      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} onError={(err) => toast.error(err.message)}>
-        <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} maxFileSize={maxFileSize} onError={(err) => toast.error(err.message)}>
+        <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles} maxFileSize={maxFileSize}>
           <PromptInputAttachments>
             {(attachment) => {
               const uploadInfo = uploadingFiles?.find((f) => f.localId === attachment.id);
               return <PromptInputAttachment data={attachment} uploadStatus={uploadInfo?.status} uploadProgress={uploadInfo?.progress} />;
             }}
           </PromptInputAttachments>
+          {aboveTextarea}
           <PromptInputBody>
             {governedMode
               ? <PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
@@ -553,7 +559,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
                 <PromptInputActionMenuContent>
                   {!attachmentsDisabled && <PromptInputActionAddAttachments />}
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
-                    <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
+                    <Pencil className='me-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>
                   {!governedMode && <RecentConnectorsMenu
                     connectors={connectors}
@@ -584,7 +590,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
                />}
               {extraTools}
             </PromptInputTools>
-            <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
+            <div className='ms-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
               <Usage />
 
               {requireContent

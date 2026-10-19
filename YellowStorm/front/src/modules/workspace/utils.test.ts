@@ -33,6 +33,20 @@ describe('workspace utils', () => {
     expect(toastMock.error).toHaveBeenCalledWith(`Maximum ${MAX_FILES_PER_UPLOAD} files allowed per upload`);
   });
 
+  it('accepts the configured boundary and rejects one byte above it', () => {
+    const atLimit = new File(['x'], 'at.pdf', { type: 'application/pdf' });
+    const aboveLimit = new File(['x'], 'above.pdf', { type: 'application/pdf' });
+    const limit = 50 * 1024 * 1024;
+    Object.defineProperty(atLimit, 'size', { value: limit, configurable: true });
+    Object.defineProperty(aboveLimit, 'size', { value: limit + 1 });
+    expect(validateFiles([atLimit, aboveLimit], limit)).toEqual({
+      validFiles: [atLimit], errors: ['above.pdf: File too large (max 50 MB)'],
+    });
+    expect(validateFiles([aboveLimit], 200 * 1024 * 1024).validFiles).toEqual([aboveLimit]);
+    Object.defineProperty(atLimit, 'size', { value: 600 * 1024 * 1024, configurable: true });
+    expect(validateFiles([atLimit], 700 * 1024 * 1024).validFiles).toEqual([atLimit]);
+  });
+
   it('accepts valid files and reports rejected files', () => {
     const validFile = new File(['hello'], 'notes.txt', { type: 'text/plain' });
     const invalidTypeFile = new File(['abc'], 'script.exe', { type: 'application/x-msdownload' });

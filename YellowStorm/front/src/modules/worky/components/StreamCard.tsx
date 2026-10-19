@@ -43,9 +43,9 @@ export function StreamCard({ stream, onOpen, onDelete, onShare, isDeleting }: St
         type="button"
         data-testid="stream-card-open"
         onClick={onOpen}
-        className="flex flex-col gap-3 text-left"
+        className="flex flex-col gap-3 text-start"
       >
-        <div className="flex items-center justify-between gap-2 pr-16">
+        <div className="flex items-center justify-between gap-2 pe-16">
           <StatusBadge status={stream.status} />
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="size-3.5" aria-hidden />

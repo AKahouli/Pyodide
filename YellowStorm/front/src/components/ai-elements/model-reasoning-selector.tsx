@@ -98,7 +98,7 @@ export function ModelReasoningSelector({
                   <ModelSelectorLogoGroup>
                     {candidate.providers.map((provider) => <ModelSelectorLogo key={provider} provider={provider} />)}
                   </ModelSelectorLogoGroup>
-                  {model?.id === candidate.id && <CheckIcon className='ml-auto size-4 text-muted-foreground' />}
+                  {model?.id === candidate.id && <CheckIcon className='ms-auto size-4 text-muted-foreground' />}
                 </ModelSelectorItem>
               ))}
             </ModelSelectorGroup>

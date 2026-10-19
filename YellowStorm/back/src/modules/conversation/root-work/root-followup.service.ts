@@ -13,6 +13,8 @@ export class RootFollowupService {
   private readonly logger = new Logger(RootFollowupService.name);
   private reservationCursor?: string;
   private publicationCursor?: string;
+  private readonly loggedReservationBlocks = new Map<string, string>();
+  private readonly loggedPublicationBlocks = new Map<string, string>();
   constructor(private readonly store: RootFollowupStore, private readonly work: RootWorkService,
     private readonly results: RootResultService, private readonly conversations: ConversationService,
     private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService) {}
@@ -53,7 +55,9 @@ export class RootFollowupService {
         if (!actorId) continue;
         const authorized = await this.authorize(root.id, actorId);
         await this.store.reserve(root.id, actorId, authorized.state.schedulingSeal!.digest);
-      } catch (error) { this.logger.debug(`Synthesis reservation remains blocked (${error instanceof Error ? error.name : 'unknown'})`); }
+        this.loggedReservationBlocks.delete(root.id);
+      } catch (error) { this.debugOnce(this.loggedReservationBlocks, root.id,
+        `Synthesis reservation remains blocked root=${root.id} reason=${(error instanceof Error ? error.message : 'unknown').slice(0, 512)}`); }
     }
     const completed = await this.store.completed(this.publicationCursor);
     this.publicationCursor = completed.at(-1)?.id;
@@ -63,8 +67,17 @@ export class RootFollowupService {
           (await this.work.getExecution(followup.id))!.resultPayload!.nativeState!.actorId);
         const state = execution.resultPayload!.nativeState!;
         await this.store.publish(execution.id, state.actorId, state.followup!.manifestDigest);
-      } catch (error) { this.logger.debug(`Synthesis publication remains blocked (${error instanceof Error ? error.name : 'unknown'})`); }
+        this.loggedPublicationBlocks.delete(followup.id);
+      } catch (error) { this.debugOnce(this.loggedPublicationBlocks, followup.id,
+        `Synthesis publication remains blocked followup=${followup.id} reason=${(error instanceof Error ? error.message : 'unknown').slice(0, 512)}`); }
     }
+  }
+
+  private debugOnce(seen: Map<string, string>, key: string, message: string) {
+    if (seen.get(key) === message) return;
+    if (seen.size >= 1000) seen.clear();
+    seen.set(key, message);
+    this.logger.debug(message);
   }
 
   async definition(executionId: string, request: RootBackgroundAuthorityDto) {

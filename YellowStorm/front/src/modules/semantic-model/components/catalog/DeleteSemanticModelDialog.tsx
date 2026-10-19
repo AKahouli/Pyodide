@@ -56,7 +56,7 @@ export function DeleteSemanticModelDialog({ model, open, onOpenChange, onDeleted
         <div className='space-y-3 text-sm'>
           <div className='rounded-lg border border-destructive/40 bg-destructive/5 p-3'>
             <p className='font-medium text-destructive'>{t('deleteModel.willDelete')}</p>
-            <ul className='mt-2 list-disc space-y-1 pl-5 text-muted-foreground'>{items.map((item) => <li key={item}>{item}</li>)}</ul>
+            <ul className='mt-2 list-disc space-y-1 ps-5 text-muted-foreground'>{items.map((item) => <li key={item}>{item}</li>)}</ul>
           </div>
           <p className='text-muted-foreground'>{t('deleteModel.filesStay')}</p>
           {(['data', 'irreversible'] as const).map((key) => (
@@ -70,7 +70,7 @@ export function DeleteSemanticModelDialog({ model, open, onOpenChange, onDeleted
         <DialogFooter>
           <Button variant='outline' disabled={action.isLoading} onClick={() => onOpenChange(false)}>{t('action.cancel')}</Button>
           <Button variant='outline' className={DELETE_BUTTON} disabled={!matches || action.isLoading} onClick={() => void action.execute()}>
-            {action.isLoading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Trash2 className='mr-2 h-4 w-4' />}
+            {action.isLoading ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <Trash2 className='me-2 h-4 w-4' />}
             {action.isLoading ? t('deleteModel.deleting') : t('deleteModel.submit')}
           </Button>
         </DialogFooter>

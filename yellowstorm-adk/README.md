@@ -2,6 +2,34 @@
 
 AI-powered multi-agent backend API built on [Google's Agent Development Kit (ADK)](https://github.com/google/adk-python). It orchestrates teams of specialized AI agents that collaborate to handle complex user queries via both REST/SSE and gRPC interfaces.
 
+## Conversation asset tools
+
+With trusted platform/user/conversation runtime context, the existing native-tool
+assembly includes `list_conversation_assets`, `inspect_conversation_asset`,
+`read_conversation_asset` and `prepare_conversation_asset`. They discover persisted uploads, generated outputs and
+accessible workspace sources by stable reference, including after reload. Read is
+bounded text/program content or an image through the existing multimodal buffer;
+it never grants access from a filename, path, URL or model-provided actor ID.
+Backend membership/workspace/evidence checks remain authoritative. File contents
+are untrusted data. Prepare all selected refs before `sandbox_create`, then use
+the returned paths verbatim; mount validation and receipts are invocation-scoped.
+Only the existing interpreter's successful output delivery registers durable
+files through workspace storage/quota checks. Deleted sources fail current read and
+prepare checks; interpreter actions verify the trusted deletion epoch and input
+receipts, discard stale sandboxes and fence registration against concurrent deletion.
+UI-only cleanup retries are excluded from agent discovery. Focused tests:
+`src/smart_rag/tools/tests/test_conversation_assets.py`.
+
+Private image hydration verifies the exact prepared path and SHA after binary
+transfer. A failed remote read reports only its bounded OS error class/number,
+never a traceback with file paths or contents. Interpreter upload success must
+mean the actual write succeeded, including the coordinator's nested result;
+the interpreter client creates the exact destination parent before upload.
+The mount guard remains closed until exact-path verification passes.
+The existing `code-interpretor-aga` connector and legacy `code-interpreort-aga`
+alias use the same guarded interpreter and trusted output-registration paths as
+`code-interpreter`; recognizing an alias does not grant connector access.
+
 ## Architecture Overview 
 
 ```
@@ -20,12 +48,156 @@ Client (Web UI / gRPC client)
 
 The core of the system is a **Manager Agent** that receives user queries and dynamically delegates tasks to specialized sub-agents (search, operator, report writer, HTML diagram, etc.), each equipped with domain-specific tools.
 
+Semantic-model AI inference belongs to the standalone
+[`semantic-model-runtime`](../YellowStorm/semantic-model-runtime/README.md), which
+calls LiteLLM directly. ADK has no semantic-model extraction package, dedicated
+endpoint or configuration. The generic `/agentic/attribute_extraction` and batch
+document extraction features below are separate capabilities.
+
+## Native Responses for the conversation agent
+
+Single-agent conversation parents advertise a compact complete connector catalog
+through `load_connector_tools`, loading original schemas on demand for both APIs.
+All authorized actions remain reachable through their existing execution wrappers;
+first use can add a loading step. Worker and manager/team declarations are unchanged.
+Responses replay fingerprints the complete catalog, preserving reasoning and provider
+chains when a subset is loaded. No migration or new setting is required. Gateway
+qualification supports `--deferred-tools` in `tests/wp10/qualify_native_responses.py`.
+Capacity diagnostics separately record admission and dispatch-to-first-response time;
+the existing public provider TTFT metric keeps its original meaning.
+
+Responses clients now borrow loop-owned HTTP/2-capable connections while retaining
+separate per-turn headers, credentials and cookies. SDK connection counts are retained;
+shared connections expire after 30 seconds idle, qualified through this gateway at
+six/15/25 seconds reuse and 31 seconds reconnect. Lifespan shutdown closes the pool
+after gRPC stops. Install
+the pinned `httpx[http2]` requirement. Chat Completions keeps its existing transport.
+Numeric HTTP and usage diagnostics distinguish gateway overhead, connection setup,
+cached input and model response time. No reasoning, tool, history or capacity setting
+changes; warm connection reuse saves roughly 180 ms, not the entire provider delay.
+The longer reuse window avoids this setup cost on more human turns without restarting
+or reconfiguring the gateway. Idle peer failures still propagate without overlapping
+retries; uncertain capacity remains occupied until reconciled.
+
+`conversation_latency_diag.provider_stream` further separates upload, headers,
+first body bytes, native lifecycle/reasoning/text/tool events and useful ADK output
+for the first Responses stream. It records numeric durations without buffering or
+logging payloads. Client-side timings do not measure remote queue time; use gateway
+queue/TTFT metrics for that attribution. The current gateway returned 404 at
+`/metrics`. Luna profiling measured only 0.2–0.5 ms useful-event-to-ADK delivery;
+remaining seconds are not a local useful-output buffer. Model settings are unchanged.
+
+The single-agent conversation parent uses the model's **Admin > Models > Conversation API**
+selection: Chat Completions (the default, including existing models) retains
+`InstrumentedLiteLlm`; Responses uses ADK `OpenAIResponsesLlm` through the configured
+LiteLLM gateway. Selection is explicit, with no model-name heuristic or automatic
+fallback after dispatch. Custom gateway aliases can use either API when supported.
+The catalog's `conversationApi` travels in existing agent parameters as
+`conversation_api`. Apply backend migration `0050_model_conversation_api.sql` before
+deploying the backend. No dependency upgrade is required. Library-selected aliases,
+tools, callbacks and sessions stay unchanged; leaf workers and manager/team
+execution retain their existing adapters.
+
+`LLMFactory.for_conversation()` adapts the built model at the single-agent runner
+boundary. Admin Models also controls history mode, reasoning replay and summaries.
+Application mode uses `store=false` and original ordered encrypted reasoning items
+from private ADK session state. Auto/Last preserve the current tool loop; All
+retains compatible cross-turn reasoning; None excludes reasoning. Provider mode
+requires Auto and uses stored response-ID chains with delta input. The local
+transcript remains available; API/model/agent/configuration/history changes rebase
+lineage. Summaries are independent of replay and render in existing activity rows
+only when the provider returns them. Opaque state is never yielded with answers.
+Apply `0051_model_responses_history_controls.sql` before deploying these controls.
+
+The instrumented adapter preserves latency diagnostics and empty-response recovery.
+When `ROOT_WORK_LLM_CAPACITY_ENABLED` is enabled, native requests use the existing
+durable slot pool and disable SDK retries. A slot remains occupied through the
+stream tail; cancellation, transport failure or EOF without a terminal Responses
+event retains `outcome_unknown`. Stream handles and per-turn SDK clients are closed
+on teardown. Existing gRPC/SSE message components and MCP security are unchanged.
+
+Focused checks: `conda run -n meta pytest tests/test_native_responses.py -q`.
+An opt-in live check uses only synthetic inputs, an in-memory ADK session and a
+local tool, through the real configured gateway and capacity pool:
+
+```powershell
+conda run -n meta python tests/wp10/qualify_native_responses.py --env-file <private-runtime-env> --model gpt-5.4-mini --capacity
+```
+
+It never resets shared slots or edits application conversations. Treat an uncertain
+slot according to the existing capacity recovery process; never steal it to make
+a test pass. Add `--api chat_completions` to run the same tool/history/capacity
+scenario through the completion adapter.
+
+Replay qualification must use a reasoning workload: add `--require-replay`
+with `--replay none|last|all|auto`. It verifies actual encrypted-item replay
+and the next-user boundary independently of optional native summary generation.
+`--require-summary` remains a separate summary capability check.
+Use `--history provider --replay auto` to verify stored response chaining.
+Add `--switch-model gpt-5.4-mini --model gpt-6-luna --effort high` for a
+ten-turn, five-tool sequence through application Responses, provider Responses,
+a different model, Chat Completions and back to Responses. Each boundary checks
+context recall, chain rebasing, streaming, instrumentation and capacity release.
+
+## Shared MCP connections and authentication
+
+Conversation connector tools and Playbook factories share `src/mcp/`; the client is
+not owned by `flow_engine`. Import `src.mcp` with the project root on `PYTHONPATH`,
+not `src/`, to avoid shadowing the installed `mcp` SDK. Each tool call creates a
+client protocol session; application conversation history remains independently
+persisted. Semantic Model MCP uses stateless HTTP and per-request actor isolation.
+
+Authentication follows each connector's approved profile, not a universal JWT rule.
+For YellowStorm internal JWT delegation, the backend supplies the initial token
+bound to the connector and security revision. Provision
+`ADK_RUNTIME_MCP_RENEWAL_TOKEN` in deployment secrets on both ADK and backend.
+`src/mcp/jwt_auth.py` renews with the `adk-runtime` principal and current signed
+assertion; a user ID alone or an expired token cannot bootstrap delegation. Rebind
+authenticated execution after expiry or policy changes. Never put the renewal
+secret in connector JSON or tool arguments.
+
+Apply backend migration `0049_connector_mcp_security.sql` using the existing
+operational process before deploying the new backend. Configure approved connector
+IDs explicitly through the Connector UI and provision the receiving MCP's trusted
+issuer/audience/verifier separately. See
+[ADR-0017](../docs/agent-context/decisions/ADR-0017-mcp-security-and-authentication-baseline.md)
+and [ADR-0018](../docs/agent-context/decisions/ADR-0018-connector-managed-mcp-security.md).
+Design acceptance and passing focused tests do not certify a deployed integration.
+
+### Private native execution authority (P1 integration)
+
+Native backend tools also require their own dispatch authority; an MCP assertion
+or generic internal key cannot substitute for it. Provision distinct
+`ADK_ROOT_RUNTIME_SERVICE_TOKEN` and `ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN` on ADK
+and their backend verifiers, separate from the MCP renewal credential. Root and
+ordinary conversation dispatch use different signed purposes bound to canonical
+message/job lease generations; Playbook uses its live execution and lease
+generation. These proofs travel in private gRPC metadata and request-local state,
+not agent parameters, model arguments or public events.
+
+`native_actor_headers()` selects the current private Root/native or Playbook
+context. Missing/stale authority fails closed for conversation assets, generated
+images, workspace ingest, connector transfer and Telegram validation; the latter
+also requires the exact conversation and current integration ownership/binding.
+Native-conversation authority cannot control Root executions. Renewal does not
+outlive the canonical attempt, and background ownership/renewal is independent of
+the RPC observer. Root/background and standalone single-agent dispatch
+qualification retains separate live-runtime gates: source presence is not
+readiness evidence. Foreground library/temporary children receive their own proof
+only in the internal `X-YellowStorm-Child-Authority` admission header; task-local
+native context is separate from parent controls, renews every 120 seconds and
+fails closed rather than using the parent token. Scoped required review passed
+after the role-aware source and private-transport corrections.
+See the [principal inventory](../docs/security/internal-principal-inventory.md)
+and [deployment gates](../docs/security/p1-deployment-change-manifest.yaml).
+
 ## Key Features
 
 - **Multi-Agent Orchestration** -- A manager agent dynamically creates and coordinates specialized sub-agents using Google ADK's `Runner` and `Agent` primitives. Supports sequential and parallel workflows.
 - **Dual API** -- FastAPI (REST/SSE) for web clients alongside a gRPC server for high-performance protobuf-based streaming.
 - **RAG Pipeline** -- Similarity search via Azure AI Search with hybrid (vector + keyword) and multilingual search support.
 - **Agent Tools** -- Search (document/web via Linkup), calculator, Snowflake SQL, DataViz charts, FormViz forms, Excel (MCP), HTML diagram generation.
+- **Generated images** -- Assign the native `generate_image` catalog tool to an agent. Its `model` attribute selects the image model (default `gpt-image-2.5-flare`). The platform stamps the model and acting user/agent/conversation into trusted runtime parameters. The LLM supplies only `prompt` and `aspectRatio` (`square`, `landscape`, `portrait`); the tool calls the authenticated platform generation endpoint and returns a durable `generated-image:<id>` receipt for Markdown, OpenUI images, and slides. Image bytes and internal credentials never enter tool output. Missing trusted conversation context omits the tool; provider failures return a sanitized error. The same closure is available through the ADK registry and the playbook LangChain adapter.
 - **Agent Memory** -- Persistent agent memory via [mem0](https://github.com/mem0ai/mem0) backed by Azure AI Search.
 - **Playbook Execution** -- Multi-step playbook workflows with per-step streaming.
 - **Attribute Extraction** -- Extract structured data from documents asynchronously with webhook delivery. Supports batch processing via Celery.

@@ -94,7 +94,7 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
                       event.dataTransfer.effectAllowed = 'move';
                     }}
                     onClick={() => onTaskClick?.(task)}
-                    className='w-full text-left'
+                    className='w-full text-start'
                   >
                     <KanbanCard
                       task={task}

@@ -445,12 +445,10 @@ async def test_stopping_needs_runtime_writes(monkeypatch: pytest.MonkeyPatch) ->
     assert os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") is None
 
 
-def test_a_search_workers_lease_owner_names_its_node_and_its_boot() -> None:
+def test_a_search_workers_lease_owner_names_its_role_instance_and_run() -> None:
     from app.workers import graph_search_tasks as tasks
 
-    owner = tasks.lease_owner_for("semantic-search@host")
-    prefix = tasks.node_lease_prefix("semantic-search@host")
-    # What a restarted worker matches (node) and spares (its own boot) to hand back its old builds.
-    assert owner.startswith(f"{prefix}{tasks.WORKER_BOOT_ID}:")
-    assert tasks.lease_owner_for("semantic-search@host") != owner
-    assert tasks.node_lease_prefix(None) == "search-worker:unknown:"
+    owner = tasks.IDENTITY.lease_owner()
+    # Unique per process and per run: another instance on the same host can never
+    # collide with it, and no boot-time cleanup may match a prefix of it.
+

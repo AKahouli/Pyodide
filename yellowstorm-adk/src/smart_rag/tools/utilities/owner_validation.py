@@ -54,19 +54,20 @@ def create_request_owner_validation_tool(runtime_context: Dict[str, Any] | None 
         )
         try:
             settings = get_settings()
-        except Exception as e:
-            logger.warning("request_owner_validation: settings unavailable: %s", e)
+        except Exception:
+            logger.warning("request_owner_validation: settings unavailable")
             return {"status": "unavailable", "detail": "platform API is not configured"}
 
         url = (getattr(settings, "API_URL", "") or "").rstrip("/")
-        token = getattr(settings, "INTERNAL_SERVICE_SECRET", "") or ""
-        if not url or not token:
-            logger.warning(
-                "request_owner_validation unavailable: API_URL configured=%s internal token configured=%s",
-                bool(url),
-                bool(token),
-            )
+        if not url:
+            logger.warning("request_owner_validation unavailable: API_URL missing")
             return {"status": "unavailable", "detail": "platform API is not configured"}
+
+        from src.root_runtime.delegate_resolver import native_actor_headers
+        try:
+            headers = {**await native_actor_headers(), "Content-Type": "application/json"}
+        except (ValueError, RuntimeError):
+            return {"status": "unavailable", "detail": "authenticated dispatch authority is not available"}
 
         if url.endswith("/api/v1"):
             api_base = url
@@ -86,16 +87,12 @@ def create_request_owner_validation_tool(runtime_context: Dict[str, Any] | None 
                 resp = await client.post(
                     f"{api_base}/telegram/internal/validations",
                     json=payload,
-                    headers={
-                        "X-Internal-Token": token,
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                 )
-                if resp.status_code != 200:
+                if resp.status_code not in (200, 201):
                     logger.warning(
-                        "request_owner_validation failed status=%s body=%s",
+                        "request_owner_validation failed status=%s",
                         resp.status_code,
-                        resp.text[:1000],
                     )
                     return {
                         "status": "error",
@@ -116,8 +113,8 @@ def create_request_owner_validation_tool(runtime_context: Dict[str, Any] | None 
                         "end your reply — the response will arrive automatically."
                     ),
                 }
-        except Exception as e:
-            logger.warning("request_owner_validation error: %s", e)
+        except Exception:
+            logger.warning("request_owner_validation failed")
             return {
                 "status": "error",
                 "detail": "the request could not be sent to your owner — propose alternatives to the caller",

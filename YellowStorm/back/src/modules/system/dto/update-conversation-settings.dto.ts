@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDefined, IsInt, IsMongoId, IsNumber, IsObject, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { IsBoolean, IsDefined, IsIn, IsInt, IsMongoId, IsNumber, IsObject, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 export class UpdateComposerSuggestionSettingsDto {
   @ApiProperty()
@@ -101,7 +101,20 @@ export class UpdateAttachmentIntelligenceSettingsDto {
   maxIndexedTabularRows!: number;
 }
 
+export class UpdateGenerativeUiSettingsDto {
+  @ApiProperty({ type: String, enum: ['strict', 'interactive'], default: 'strict' })
+  @IsIn(['strict', 'interactive'])
+  htmlMode!: 'strict' | 'interactive';
+}
+
 export class UpdateConversationSettingsDto {
+  @ApiPropertyOptional({ type: UpdateGenerativeUiSettingsDto })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => UpdateGenerativeUiSettingsDto)
+  generativeUi?: UpdateGenerativeUiSettingsDto;
+
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()

@@ -89,6 +89,7 @@ import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
 import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
 import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
+import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { PlaybookInputContractService } from './playbook-input-contract.service';
 
 export interface EvaluationQueryRunResult {
@@ -333,8 +334,8 @@ interface RuntimeHitlMemory {
 export class PlaybookFlowExecutionService implements OnModuleInit {
   private readonly logger = new Logger(PlaybookFlowExecutionService.name);
   private playbookFlowClient?: {
-    Run?: (request: Record<string, unknown>) => any;
-    RunFromCheckpoint?: (request: Record<string, unknown>) => any;
+    Run?: (request: Record<string, unknown>, metadata: import('@grpc/grpc-js').Metadata) => any;
+    RunFromCheckpoint?: (request: Record<string, unknown>, metadata: import('@grpc/grpc-js').Metadata) => any;
     Cancel?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
     ResumeApproval?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
     ResumeFromStep?: (request: Record<string, unknown>, callback: (err: Error | null) => void) => void;
@@ -645,12 +646,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return this.runtimeClient.isAvailable() || this.isGrpcAvailable;
   }
 
-  private runRuntime(request: Record<string, unknown>): any {
-    return this.playbookFlowClient?.Run?.(request) ?? this.runtimeClient.run(request);
+  private async runRuntime(request: Record<string, unknown>): Promise<any> {
+    if (!this.artifactService) throw new Error('Artifact execution authority unavailable');
+    const authority = await this.artifactService.issuePublicationAuthority(String(request.execution_id), String(request.owner_id));
+    const metadata = createGrpcMetadata(this.configService);
+    metadata.set('x-yellowstorm-artifact-authority', authority);
+    return this.playbookFlowClient?.Run?.(request, metadata) ?? this.runtimeClient.run(request, authority);
   }
 
-  private runFromCheckpointRuntime(request: Record<string, unknown>): any {
-    return this.playbookFlowClient?.RunFromCheckpoint?.(request) ?? this.runtimeClient.runFromCheckpoint(request);
+  private async runFromCheckpointRuntime(request: Record<string, unknown>): Promise<any> {
+    if (!this.artifactService) throw new Error('Artifact execution authority unavailable');
+    const authority = await this.artifactService.issuePublicationAuthority(String(request.execution_id), String(request.owner_id));
+    const metadata = createGrpcMetadata(this.configService);
+    metadata.set('x-yellowstorm-artifact-authority', authority);
+    return this.playbookFlowClient?.RunFromCheckpoint?.(request, metadata) ?? this.runtimeClient.runFromCheckpoint(request, authority);
   }
 
   private cancelRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
@@ -1475,7 +1484,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }),
         })),
       };
-    const call = this.runRuntime(request);
+    const call = await this.runRuntime(request);
     let finalized = false;
     let completionEmitted = false;
     let lastHandlePromise = Promise.resolve();
@@ -1814,7 +1823,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
   }
 
-  private collectEvaluationStream(
+  private async collectEvaluationStream(
     request: Record<string, unknown>,
     opts: { captureTarget?: boolean; captureJudge?: boolean; timeoutMs?: number },
   ): Promise<EvaluationStreamResult> {
@@ -1822,7 +1831,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     // No implicit deadline: only enforce a timeout when a caller passes one, so
     // evaluation runs can be investigated without being cut at 10 minutes.
     const timeoutMs = typeof opts.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : null;
-    const call = this.runRuntime(request);
+    const call = await this.runRuntime(request);
     return new Promise<EvaluationStreamResult>((resolve) => {
       let targetAnswer = '';
       let judgeScore: number | undefined;
@@ -2623,7 +2632,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       target_iteration: targetIteration,
     };
 
-    const call = this.runFromCheckpointRuntime(request);
+    const call = await this.runFromCheckpointRuntime(request);
     this.executionLeaseService?.startHeartbeat(executionId);
     let finalized = false;
     let completionEmitted = false;

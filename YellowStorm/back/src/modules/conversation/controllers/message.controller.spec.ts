@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { MessageController } from './message.controller';
 import { ConflictException } from '../../exceptions';
+import { OpenUiSubmissionDto } from '../dto/send-message.dto';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 describe('MessageController.sendMessage sticky routing', () => {
@@ -17,6 +18,8 @@ describe('MessageController.sendMessage sticky routing', () => {
     markStreamFailed: jest.Mock;
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
+    findByIdInConversation: jest.Mock;
+    getOpenUiAppState: jest.Mock;
     findById: jest.Mock;
     findToolActivityResult: jest.Mock;
     reportFrontendLatency: jest.Mock;
@@ -51,6 +54,8 @@ describe('MessageController.sendMessage sticky routing', () => {
     error: jest.Mock;
   };
   let controller: MessageController;
+  let attachmentResolver: { resolve: jest.Mock };
+  let conversationSettings: { isLatencyInstrumentationEnabledCached: jest.Mock; isAttachmentIntelligenceEnabled: jest.Mock };
 
   const user = {
     _id: userId,
@@ -85,7 +90,9 @@ describe('MessageController.sendMessage sticky routing', () => {
       markStreamFailed: jest.fn(),
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),
+      getOpenUiAppState: jest.fn().mockResolvedValue({programDigest: 'd'.repeat(64),stateRevision: 2}),
       findById: jest.fn(),
+      findByIdInConversation: jest.fn(),
       findToolActivityResult: jest.fn(),
       reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     };
@@ -104,7 +111,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       resolvePlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
       findPlatformCopilotAgentId: jest.fn().mockResolvedValue(null),
     };
-    modelsService = { validateModelActive: jest.fn() };
+    modelsService = { validateModelActive: jest.fn().mockResolvedValue({ valid: true }) };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
@@ -122,6 +129,11 @@ describe('MessageController.sendMessage sticky routing', () => {
       error: jest.fn(),
     };
 
+    conversationSettings = {
+      isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true),
+      isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(true),
+    };
+    attachmentResolver = {resolve: jest.fn().mockResolvedValue([{id: 'b'.repeat(24), originalName: 'plan.docx', filename: 'storage.docx', workspaceId: 'c'.repeat(24), path: '/private/file', url: 'https://private.invalid/file'}])};
     controller = new MessageController(
       messageService as any,
       streamService as any,
@@ -136,8 +148,38 @@ describe('MessageController.sendMessage sticky routing', () => {
       semanticModelService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
-      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true), isAttachmentIntelligenceEnabledCached: jest.fn().mockReturnValue(true) } as any,
+      conversationSettings as any,
+      attachmentResolver as any,
+      { findUserAgentBootstrap: jest.fn().mockResolvedValue({}) } as any,
     );
+  });
+
+  it('waits for refreshed attachment settings before accepting an attachment turn', async () => {
+    let resolveEnabled!: (enabled: boolean) => void;
+    conversationSettings.isAttachmentIntelligenceEnabled.mockReturnValue(new Promise<boolean>((resolve) => { resolveEnabled = resolve; }));
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    const pending = controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] });
+    expect(conversationSettings.isAttachmentIntelligenceEnabled).toHaveBeenCalledTimes(1);
+    expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    resolveEnabled(true);
+    await pending;
+    expect(streamService.startStream).toHaveBeenCalled();
+  });
+
+  it('rejects attachments when refreshed settings disable them', async () => {
+    conversationSettings.isAttachmentIntelligenceEnabled.mockResolvedValue(false);
+    await expect(controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] })).rejects.toThrow('Conversation file attachments are disabled');
+    expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
+  it('does not accept attachments when settings cannot be loaded', async () => {
+    conversationSettings.isAttachmentIntelligenceEnabled.mockRejectedValue(new Error('Settings unavailable'));
+    await expect(controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] })).rejects.toThrow('Settings unavailable');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
   });
 
   it('forwards scoped citation URL resolution', async () => {
@@ -156,7 +198,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves governed root authority for an exact bound-root mention', async () => {
     conversationService.getConversationDocument.mockResolvedValue({ createdBy: userId.toString(),
       runtimeMode: 'governed', runtimePurpose: 'chat', rootAgentId: stickyAgentId,
-      isFirstMessage: false, isGroup: false, taggedAgentIds: [] });
+      isFirstMessage: false, isGroup: false, taggedAgentIds: [], members: [] });
     const runtime = { rootWork: {}, primaryAgentId: stickyAgentId, allowedAgentIds: [stickyAgentId],
       workspaceIds: [], revisionId: 'revision', scopeId: 'scope' };
     (controller as any).governedRuntimeService.resolveRuntime.mockResolvedValue(runtime);
@@ -462,6 +504,120 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(result).toEqual(expect.objectContaining({ aiMessageId }));
   });
 
+  const openUiSubmission = (): OpenUiSubmissionDto => ({ type: 'openui', schemaVersion: 1,
+    sourceMessageId: 'a'.repeat(24), componentId: 'text-form', actionType: 'continue_conversation',
+    formName: 'travel', label: 'Plan the trip', formState: { enabled: false, days: 0, budget: 1.5,
+      empty: '', optional: null, choices: ['a', 2], field: { componentType: 'Input', value: '' } }, params: {} });
+  const openUiSource = () => ({ conversationId, conversationType: 'ai', isStreaming: false, isComplete: true,
+    components: [{ id: 'text-form', type: 'text', data: { content: 'root = Card([])' } }] });
+
+  it('persists and streams exact typed OpenUI submission values using canonical content', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockResolvedValue(openUiSource());
+    const interaction = openUiSubmission();
+    await controller.sendMessage(user, conversationId, { content: 'untrusted display text', openUiSubmission: interaction });
+    const saved = messageService.createUserMessage.mock.calls[0][0];
+    expect(saved.interaction).toEqual(interaction);
+    expect(saved.content).toBe(`Plan the trip\n\n${JSON.stringify(interaction, null, 2)}`);
+    expect(saved.replayContext.content).toBe(saved.content);
+    expect(streamService.startStream.mock.calls[0][3].content).toBe(saved.content);
+    expect(choiceInteractionService.canonicalize).not.toHaveBeenCalled();
+  });
+
+  it.each([{ interaction: { type: 'choice' } }, { interactions: [{ type: 'choice' }] },
+    { rootContinuation: {} }, { playbookHandoffId: 'handoff' }])('rejects mixed OpenUI turns: %p', async patch => {
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission(), ...patch } as never)).rejects.toThrow('mixed OpenUI');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([{ conversationId: 'b'.repeat(24) }, { conversationType: 'user' }, { isStreaming: true }, { isComplete: false },
+    { components: [] }, { components: [{ id: 'foreign', type: 'text', data: { content: 'root = Card([])' } }] },
+    { components: [{ id: 'text-form', type: 'text', data: { content: 'Ordinary markdown' } }] },
+  ])('rejects foreign, incomplete or non-OpenUI source: %p', async patch => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockResolvedValue({ ...openUiSource(), ...patch });
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('Invalid OpenUI source');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown sources and idle/governance violations', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockRejectedValueOnce(new Error('not found'));
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('Invalid OpenUI source');
+    streamService.isConversationStreaming.mockReturnValue(true);
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('idle standard');
+    streamService.isConversationStreaming.mockReturnValue(false);
+    conversationService.getConversationDocument.mockResolvedValue({ runtimeMode: 'governed', createdBy: userId, members: [] });
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('idle standard');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates identical OpenUI retries and conflicts when typed values change', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    const dto = { content: '', requestId: 'openui-retry', openUiSubmission: openUiSubmission() };
+    const fingerprint = (controller as unknown as { fingerprintTurn: (value: typeof dto) => string }).fingerprintTurn(dto);
+    messageService.findTurnByRequestId.mockResolvedValue({ requestFingerprint: fingerprint,
+      userMessage: { id: 'saved-user', interaction: dto.openUiSubmission }, aiMessageId: 'saved-ai' });
+    expect(await controller.sendMessage(user, conversationId, dto)).toEqual({ userMessage: expect.objectContaining({ id: 'saved-user' }), aiMessageId: 'saved-ai' });
+    await expect(controller.sendMessage(user, conversationId,
+      { ...dto, openUiSubmission: { ...dto.openUiSubmission, formState: { days: '0' } } })).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  const appTaskSubmission = (): OpenUiSubmissionDto => ({ ...openUiSubmission(),
+    params: {instruction: 'Summarize the selected documents.', inputs: { count: 0, bullets: false }},
+    appTask: {schemaVersion: 1,programDigest:'d'.repeat(64),stateRevision:2,documentIds:['b'.repeat(24)]}});
+  const prepareAppTask = () => {
+    conversationService.getConversationDocument.mockResolvedValue({isFirstMessage:false,taggedAgentIds:[],systemWorkspaceId:'workspace-1'});
+    messageService.getMessageDocument.mockResolvedValue(openUiSource());
+  };
+  it('binds a mini-app task to an authorized saved revision and scoped documents', async () => {
+    prepareAppTask();const interaction=appTaskSubmission();
+    await controller.sendMessage(user,conversationId,{content:'forged result',requestId:'app-1',openUiSubmission:interaction});
+    expect(messageService.getOpenUiAppState).toHaveBeenCalledWith(userId.toString(),conversationId,'a'.repeat(24),'text-form');
+    expect(attachmentResolver.resolve).toHaveBeenCalledWith('workspace-1',['b'.repeat(24)]);
+    const saved=messageService.createUserMessage.mock.calls[0][0];
+    expect(saved.attachedFileIds).toEqual(['b'.repeat(24)]);expect(saved.interaction).toEqual(interaction);
+    expect(saved.content).toContain('untrusted source data');expect(saved.content).toContain('partial coverage');
+    expect(saved.content).not.toContain('forged result');expect(saved.content).toContain('"count":0');
+    expect(saved.content).toContain(JSON.stringify([{documentId:'b'.repeat(24),filename:'plan.docx',workspaceId:'c'.repeat(24)}]));
+    expect(saved.content).toContain('bounded extraction is valid source material');
+    expect(saved.content).not.toContain('/private/file');expect(saved.content).not.toContain('https://private.invalid/file');
+  });
+  it.each([{programDigest:'e'.repeat(64),stateRevision:2},{programDigest:'d'.repeat(64),stateRevision:3}])('rejects stale mini-app inputs %p', async snapshot => {
+    prepareAppTask();messageService.getOpenUiAppState.mockResolvedValue(snapshot);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();expect(attachmentResolver.resolve).not.toHaveBeenCalled();
+  });
+  it('rejects revoked, foreign and incomplete/folder task selections before creating a turn', async () => {
+    prepareAppTask();messageService.getOpenUiAppState.mockRejectedValueOnce(new Error('access revoked'));
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('access revoked');
+    attachmentResolver.resolve.mockRejectedValueOnce(new Error('outside this conversation'));
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('outside this conversation');
+    attachmentResolver.resolve.mockResolvedValueOnce([]);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('completed files');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+  it('rejects disabled attachments, missing request IDs and mixed client attachments', async () => {
+    prepareAppTask();conversationSettings.isAttachmentIntelligenceEnabled.mockResolvedValue(false);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('attachments are disabled');
+    for(const patch of [{requestId:undefined},{attachedFileIds:[]}]) await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission(),...patch})).rejects.toThrow('stable request ID');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+  it('replays accepted app tasks without document access or inference and rejects changed descriptors', async () => {
+    prepareAppTask();const dto={content:'',requestId:'app-replay',openUiSubmission:appTaskSubmission()};
+    const fingerprint=(controller as unknown as {fingerprintTurn:(value:typeof dto)=>string}).fingerprintTurn(dto);
+    messageService.findTurnByRequestId.mockResolvedValue({requestFingerprint:fingerprint,userMessage:{id:'saved-user'},aiMessageId:'saved-ai'});
+    expect(await controller.sendMessage(user,conversationId,dto)).toEqual({userMessage:{id:'saved-user'},aiMessageId:'saved-ai'});
+    await expect(controller.sendMessage(user,conversationId,{...dto,openUiSubmission:{...dto.openUiSubmission,appTask:{...dto.openUiSubmission.appTask!,documentIds:[]}}})).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.getOpenUiAppState).not.toHaveBeenCalled();expect(attachmentResolver.resolve).not.toHaveBeenCalled();expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
   it('uses canonical choice content for persistence and agent streaming', async () => {
     conversationService.getConversationDocument.mockResolvedValue({
       isFirstMessage: false,
@@ -669,11 +825,27 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
   });
 
+  it('rejects a foreign regeneration before a placeholder, ADK call or broadcast', async () => {
+    messageService.getMessageDocument.mockRejectedValue(new Error('Message not found'));
+    await expect(controller.regenerate(user, conversationId, 'foreign')).rejects.toThrow('Message not found');
+    expect(messageService.getMessageDocument).toHaveBeenCalledWith('foreign', conversationId);
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed regeneration parent before creating a turn', async () => {
+    messageService.getMessageDocument.mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: 'parent' })
+      .mockResolvedValueOnce({ conversationType: 'ai' });
+    await expect(controller.regenerate(user, conversationId, 'answer')).rejects.toThrow('Message not found');
+    expect(messageService.getMessageDocument).toHaveBeenCalledWith('parent', conversationId);
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+  });
+
   it('regenerates a platform copilot turn without a conversation-level playbook permission gate', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
-      .mockResolvedValueOnce({ content: 'original question' });
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'user', content: 'original question' });
     conversationService.getConversationDocument.mockResolvedValue({
       runtimePurpose: 'platform_copilot',
       pinnedAgentId: new Types.ObjectId(stickyAgentId),
@@ -721,8 +893,8 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves model reasoning metadata on regenerated placeholders', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
-      .mockResolvedValueOnce({ content: 'original question', modelId: 'model-1', reasoningEffort: 'high' });
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'user', content: 'original question', modelId: 'model-1', reasoningEffort: 'high' });
     conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
 
     await controller.regenerate(user, conversationId, 'ai-1');
@@ -737,9 +909,9 @@ describe('MessageController.sendMessage sticky routing', () => {
     const questionId = new Types.ObjectId();
     const currentAgentId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
       .mockResolvedValueOnce({
-        content: 'edited question',
+        conversationType: 'user', content: 'edited question',
         modelId: 'model-current',
         reasoningEffort: 'high',
         agentIds: [currentAgentId],
@@ -779,9 +951,9 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves a replay task summary when the prompt was not edited', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
       .mockResolvedValueOnce({
-        content: 'choose option b',
+        conversationType: 'user', content: 'choose option b',
         replayContext: {
           content: 'choose option b',
           taskSummary: 'The user selected option B',

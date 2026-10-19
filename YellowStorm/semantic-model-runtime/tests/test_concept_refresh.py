@@ -107,3 +107,55 @@ def test_admission_takes_a_refresh_of_a_concept_made_from_another_without_source
     for scope, derivations in (({"kind": "model"}, [derivation]), ({"kind": "concept", "conceptId": "x"}, [])):
         with pytest.raises(ValidationError):
             PopulationPayload.model_validate({**base, "scope": scope, "derivations": derivations})
+
+
+def test_carry_over_reads_use_a_transaction_local_bulk_budget(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from app.persistence import population_store as store
+    from app.workers.population_tasks import load_carried_data
+
+    events = []
+
+    class Connection:
+        execute = AsyncMock()
+
+        @asynccontextmanager
+        async def transaction(self):
+            events.append("transaction_started")
+            try:
+                yield
+            finally:
+                events.append("transaction_finished")
+
+    connection = Connection()
+
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield connection
+
+    pool = Pool()
+    binding = AsyncMock(return_value={"data_revision_id": "dr_existing"})
+    reading = AsyncMock(return_value={"completeEnumeration": True})
+    entities = AsyncMock(return_value=[_entity("m1", "message", {})])
+    assertions = AsyncMock(return_value=[_value("m1", "subject", "value")])
+    relationships = AsyncMock(return_value=[])
+    for name, reader in (("get_active_binding", binding), ("get_revision_reading", reading),
+                         ("list_revision_entities", entities), ("list_revision_assertions", assertions),
+                         ("list_revision_relationships", relationships)):
+        monkeypatch.setattr(store, name, reader)
+
+    result = asyncio.run(load_carried_data(pool, {"modelId": "model", "payload": {
+        "scope": {"kind": "concept", "conceptId": "fact"}}}))
+
+    binding.assert_awaited_once_with(pool, "model", "draft")
+    connection.execute.assert_awaited_once_with("SET LOCAL statement_timeout = '120s'")
+    entities.assert_awaited_once_with(connection, "dr_existing", limit=1_000_000, timeout=120)
+    assertions.assert_awaited_once_with(connection, "dr_existing", timeout=120)
+    relationships.assert_awaited_once_with(connection, "dr_existing", limit=1_000_000, timeout=120)
+    assert events == ["transaction_started", "transaction_finished"]
+    assert result["conceptId"] == "fact" and result["entities"][0]["entityId"] == "m1"
+    assert result["assertions"][0]["value"] == "value" and result["completeEnumeration"] is True

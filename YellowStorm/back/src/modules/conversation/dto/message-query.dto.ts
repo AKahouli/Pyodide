@@ -1,4 +1,4 @@
-import { IsOptional, IsInt, Min, Max, IsIn, IsString } from 'class-validator';
+import { IsOptional, IsInt, Min, Max, IsIn, IsString, Length } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -32,4 +32,26 @@ export class MessageQueryDto {
   @IsOptional()
   @IsIn(['user', 'ai'])
   conversationType?: 'user' | 'ai';
+}
+
+export class MessageSearchDto {
+  @IsString()
+  @Length(1, 200)
+  q!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 20;
+}
+
+export class MessageAroundDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit: number = 50;
 }

@@ -27,6 +27,18 @@ describe('TimingIndicator', () => {
     cost: { usd: 0.287, complete: true },
     carbon: { gramsCo2e: 6.2, estimated: true as const, complete: true },
   };
+  it('shows all root stages including overlapping readiness', async () => {
+    render(<TimingIndicator latencyMetrics={{ ...fullMetrics, backendPreAdkBreakdown: {
+      rootDelegationResolutionMs: 146, rootBackgroundReadinessMs: 113,
+      rootExecutionAdmissionMs: 131, rootNativeStateRecordMs: 132, rootSessionSeedMs: 255,
+    } }} />);
+    await userEvent.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    for (const key of ['rootDelegationResolution', 'rootBackgroundReadiness', 'rootExecutionAdmission', 'rootNativeStateRecord', 'rootSessionSeed']) {
+      expect(screen.getByText(`latency.backendBreakdown.${key}`)).toBeInTheDocument();
+    }
+    expect(screen.getByText('255 ms')).toBeInTheDocument();
+  });
+
   it('renders nothing when no timing data exists', () => {
     const { container } = render(<TimingIndicator />);
     expect(container.firstChild).toBeNull();

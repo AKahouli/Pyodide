@@ -1,5 +1,13 @@
 # Workspace Module (Frontend)
 
+Admin → Workspace separates maximum per-file upload size, the default total quota
+for new conversation workspaces, and the quota of an existing workspace loaded by
+ID (including hidden conversation system workspaces). Values use MiB. Existing
+quota changes preserve files and require administrator permission; the server
+rejects stale allocations and reductions below current usage. Ordinary new
+workspaces continue to follow plan storage limits. Upload controls and the chat
+composer read the same public upload policy, with authoritative backend validation.
+
 The workspace module provides comprehensive workspace and document management, enabling users to create workspaces, upload documents, and configure AI settings for document processing.
 
 ## Table of Contents

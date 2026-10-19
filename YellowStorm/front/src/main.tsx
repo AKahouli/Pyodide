@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import './modules/conversation/components/openui/devtools-off';
 import { initI18n } from './modules/localization';
 
 // Initialize i18n before rendering the app

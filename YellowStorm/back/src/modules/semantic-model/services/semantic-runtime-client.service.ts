@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { SemanticAssetGrantService } from './semantic-asset-grant.service';
 import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import {
@@ -9,7 +10,8 @@ import {
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { GraphExposure } from '../domain/semantic-graph-exposure';
-import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
+import type { ResolvedEntity, SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import type { AttributeDefinition } from '../domain/semantic-model.types';
 import { runtimeErrorMessage, runtimeUnreachableMessage } from '../domain/runtime-error-messages';
 import type { ModelCheckIssue } from '../domain/semantic-model-check';
 
@@ -47,6 +49,24 @@ export interface RuntimeJobQueue {
   workersOnline: number | null;
 }
 
+/** Sanitized runtime diagnostic projection; never an exception body or raw input. */
+export interface RuntimeErrorDetails {
+  code: string;
+  errorType: string;
+  message: string;
+  occurredAt: string;
+  phase?: string;
+  attempt?: number;
+  jobId?: string;
+  taskId?: string;
+  indexId?: string;
+  sqlState?: string;
+  httpStatus?: number;
+  frames?: Array<{ file: string; function: string; line: number }>;
+  causes?: Array<{ errorType: string; message: string; sqlState?: string; httpStatus?: number }>;
+  legacy?: boolean;
+}
+
 export interface RuntimeJob {
   jobId: string;
   jobType: string;
@@ -56,11 +76,21 @@ export interface RuntimeJob {
   progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
   /** Present only while the job is `queued`. */
   queue?: RuntimeJobQueue;
+  scope?: { kind: 'model' | 'concept'; conceptId?: string };
+  purpose?: string | null;
+}
+
+export interface RuntimeMyJobsPage {
+  items: RuntimeJob[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+  activeCount: number;
+  queuedCount: number;
 }
 
 export interface RuntimeValueOrigin {
@@ -92,6 +122,10 @@ export interface RuntimeDataSummary {
 export interface RuntimeCloneDataCommand {
   targetModelId: string;
   targetModelVersionId: string;
+  /** The workspaces the cloning actor is authorized for: the runtime refuses to copy
+   *  revision data whose source observations or entity provenance fall outside this
+   *  scope (WP04.5 defense in depth). */
+  allowedWorkspaceIds: string[];
   idMap: { concepts: Record<string, string>; relations: Record<string, string>; mappings: Record<string, string> };
   /** The clone's own build plan, when the source data is current: the copy then reads as current. */
   homeWorkspaceId?: string;
@@ -294,12 +328,21 @@ export interface RuntimeActivateRevisionCommand {
 
 const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
 
+/** Non-secret runtime-owned identity bound into previews and execution fingerprints. */
+export interface AiExtractionIdentity {
+  profileId: 'semantic-runtime';
+  model: string;
+  contractVersion: 'ai-attribute-v2';
+  promptVersion: 'semantic-attributes-v1' | 'semantic-attributes-v2';
+  maxTokens: number;
+}
+
 export interface RuntimeDocumentPreviewRequest {
   actorUserId: string;
   modelId: string;
   /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
   entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
-  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  aiExtraction?: AiExtractionIdentity | null;
 }
 
 /** How each extracted field was read, or why it was not. */
@@ -354,7 +397,7 @@ export interface RuntimeSheetPreviewRequest {
     unit?: 'row' | 'record';
   };
   rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
-  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  aiExtraction?: AiExtractionIdentity | null;
   expand?: Record<string, unknown>;
 }
 
@@ -387,6 +430,19 @@ export interface RuntimeDocumentLabels {
   documentsRead: number;
   unread: { assetId: string; status: string }[];
   labels: { label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }[];
+}
+
+export interface RuntimeDocumentFieldSuggestions {
+  documentsRead: number;
+  documentsRequested: number;
+  unread: { assetId: string; status: string }[];
+  truncated: boolean;
+  suggestions: Array<{
+    key: string; label: string; type: 'text' | 'number' | 'boolean' | 'date'; description: string;
+    mapping: SourceFieldMapping;
+    evidence: Array<{ documentId: string; filename: string; page?: number; quote: string }>;
+    matchedDocuments: number;
+  }>;
 }
 
 /** What a build would send, for the runtime to check without running it (`POST .../population/check`). */
@@ -432,6 +488,10 @@ export type RuntimeSearchIndexState = 'ready' | 'queued' | 'indexing' | 'failed'
 export interface RuntimeRecordProvenance {
   assetId: string;
   workspaceId?: string;
+  documentId?: string;
+  filename?: string;
+  assetVersionId?: string;
+  mappingVersion?: string;
   rowNumbers?: number[];
 }
 
@@ -629,6 +689,7 @@ export interface RuntimeGraphSearchIndex {
   /** When the build last made progress (ISO); null before its first step. */
   lastProgressAt?: string | null;
   lastErrorCode: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
   completedAt: string | null;
   embeddingFingerprint: string | null;
 }
@@ -685,6 +746,7 @@ export interface RuntimeQueriedRecord {
   name: string;
   keyFields: Record<string, unknown>;
   values: Record<string, unknown>;
+  provenance?: RuntimeRecordProvenance[];
   truncated?: boolean;
   truncatedFields?: string[];
 }
@@ -789,7 +851,10 @@ export interface RuntimeConnectResult {
     records: string[];
     steps: Array<{ fromEntityId: string; relationId: string; relationKey: string; direction: 'outgoing' | 'incoming'; toEntityId: string }>;
   }>;
-  records: Array<{ entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown> }>;
+  records: Array<{
+    entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown>;
+    provenance?: RuntimeRecordProvenance[];
+  }>;
   unknownRecords?: string[];
   morePaths?: boolean;
   /** The search stopped at a limit: a chain may exist that it did not reach. */
@@ -812,7 +877,7 @@ export interface RuntimeCitedRecord {
     conceptLabel: string;
     label: string;
     keyFields: Record<string, unknown>;
-    provenance: Array<{ assetId: string; workspaceId?: string; rowNumbers?: number[] }>;
+    provenance: RuntimeRecordProvenance[];
     values: Record<string, unknown>;
     truncatedFields: string[];
     origins: Record<string, RuntimeValueOrigin>;
@@ -883,7 +948,41 @@ export class SemanticRuntimeClientService {
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
+    @Optional() @Inject(forwardRef(() => SemanticAssetGrantService)) private readonly assetGrants?: SemanticAssetGrantService,
   ) { }
+
+  async getAiExtractionIdentity(): Promise<AiExtractionIdentity> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/ai-extraction/profile`, {
+        method: 'GET',
+        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch (error) {
+      throw this.translate(error);
+    }
+    if (!res.ok) throw new ServiceUnavailableException(
+      ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The semantic runtime AI extraction profile is unavailable',
+    );
+    let identity: Partial<AiExtractionIdentity> | null;
+    try {
+      identity = await res.json() as Partial<AiExtractionIdentity> | null;
+    } catch {
+      identity = null;
+    }
+    if (!identity || identity.profileId !== 'semantic-runtime' || typeof identity.model !== 'string' || !identity.model.trim()
+      || identity.contractVersion !== 'ai-attribute-v2'
+      || (identity.promptVersion !== 'semantic-attributes-v1' && identity.promptVersion !== 'semantic-attributes-v2')
+      || !Number.isSafeInteger(identity.maxTokens) || (identity.maxTokens ?? 0) <= 0) {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'The semantic runtime AI extraction profile is invalid');
+    }
+    // Only project the agreed identity, never credentials or unrelated configuration.
+    return { profileId: identity.profileId, model: identity.model, contractVersion: identity.contractVersion,
+      promptVersion: identity.promptVersion, maxTokens: identity.maxTokens! };
+  }
 
   private requireRuntime(): string {
     if (!this.config.runtimeEnabled || !this.config.runtimeUrl || !this.config.runtimeServiceKey) {
@@ -957,6 +1056,24 @@ export class SemanticRuntimeClientService {
       throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, `Semantic runtime could not read the document labels (${res.status})`);
     }
     return await res.json() as RuntimeDocumentLabels;
+  }
+
+  async suggestDocumentFields(body: RuntimeDocumentLabelsRequest & {
+    concept: { id: string; label: string; description: string; attributes: Array<Pick<AttributeDefinition, 'key' | 'label' | 'type' | 'description'>> };
+  }): Promise<RuntimeDocumentFieldSuggestions> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.requireRuntime()}/v1/semantic-model-population/document-field-suggestions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch (error) { throw this.translate(error); }
+    if (res.status === 422) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, this.errorDetail({ data: await this.readErrorPayload(res) }) || 'The documents could not be analyzed');
+    }
+    if (!res.ok) throw await this.failure(res);
+    return await res.json() as RuntimeDocumentFieldSuggestions;
   }
 
   async previewDocumentFields(body: RuntimeDocumentPreviewRequest): Promise<RuntimeDocumentPreview> {
@@ -1150,9 +1267,20 @@ export class SemanticRuntimeClientService {
     command: RuntimePopulationRunCommand,
     idempotencyKey: string,
   ): Promise<RuntimeAcceptedJob> {
-    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', command, {
+    const admitted = await this.admitAssets(command, 'population', idempotencyKey);
+    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', admitted, {
       'Idempotency-Key': idempotencyKey,
     });
+  }
+
+  private async admitAssets(command: RuntimePopulationRunCommand, purpose: 'discovery' | 'population', key: string): Promise<RuntimePopulationRunCommand> {
+    if (!this.assetGrants) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic asset admission is not configured');
+    const entries = purpose === 'discovery' ? [{ source: command.payload.source }] : command.payload.sources;
+    if (!Array.isArray(entries)) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Missing admitted sources');
+    const refs = entries.map((entry: { source?: { workspaceId: string; assetId: string } }) => entry.source)
+      .filter((source): source is { workspaceId: string; assetId: string } => !!source);
+    const assetAdmission = await this.assetGrants.admit(command.actorUserId, command.modelId, purpose, refs, key, command as unknown as Record<string, unknown>);
+    return { ...command, payload: { ...command.payload, assetAdmission, assetCommand: JSON.stringify(command) } };
   }
 
   /** Clear a model's built data (records, links, review items, finished builds); its settings stay. */
@@ -1274,7 +1402,8 @@ export class SemanticRuntimeClientService {
     command: RuntimeDiscoveryCommand,
     idempotencyKey: string,
   ): Promise<RuntimeAcceptedJob> {
-    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-datasource/discoveries', command, {
+    const admitted = await this.admitAssets(command, 'discovery', idempotencyKey);
+    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-datasource/discoveries', admitted, {
       'Idempotency-Key': idempotencyKey,
     });
   }
@@ -1293,6 +1422,14 @@ export class SemanticRuntimeClientService {
     return items;
   }
 
+  async listMyJobs(actorUserId: string, modelIds: string[], query: { view: 'active' | 'history'; page: number; limit: number }): Promise<RuntimeMyJobsPage> {
+    return this.readPost<RuntimeMyJobsPage>('/v1/semantic-model-jobs/read', actorUserId, { modelIds, ...query });
+  }
+
+  async cancelMyQueuedJobs(actorUserId: string, modelIds: string[]): Promise<{ cancelled: number; skipped: number }> {
+    return this.post('/v1/semantic-model-jobs/cancel-queued', { modelIds }, { 'X-Actor-User-Id': actorUserId });
+  }
+
   /** The actor's run for the model that has not ended yet, if any. */
   async getActiveJob(modelId: string, actorUserId: string, jobType = 'population.run'): Promise<RuntimeJob | null> {
     const params = new URLSearchParams({ modelId, jobType });
@@ -1301,8 +1438,8 @@ export class SemanticRuntimeClientService {
   }
 
   /** Stop a job: one not started yet ends at once, a running one stops at its next step. */
-  async cancelJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
-    return this.post<RuntimeJob>(`/v1/semantic-model-jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+  async cancelJob(jobId: string, actorUserId: string, onlyQueued = false): Promise<RuntimeJob> {
+    return this.post<RuntimeJob>(`/v1/semantic-model-jobs/${encodeURIComponent(jobId)}/cancel${onlyQueued ? '?onlyQueued=true' : ''}`, {}, {
       'X-Actor-User-Id': actorUserId,
     });
   }
@@ -1519,7 +1656,8 @@ export class SemanticRuntimeClientService {
   }
 
   /** Builds (or reuses) the search index of the data bound to one environment, in the background. */
-  async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
+  async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment;
+    expectedDataRevisionId?: string; expectedIndexId?: string }):
     Promise<RuntimeGraphSearchIndexStatus & { jobId: string | null }> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes', body.actorUserId, body, undefined, true);
   }

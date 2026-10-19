@@ -6,10 +6,11 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { isObjectId } from '@common/postgres';
-import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
+import { AdkNativeActorGuard, type AdkNativeRequest } from '../auth/guards/adk-native-actor.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { IngestUrlDto } from './dto/ingest-url.dto';
@@ -19,7 +20,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 
 @ApiTags('Workspace Ingest (Internal)')
 @Controller('workspaces/:workspaceId/documents')
-@UseGuards(InternalServiceGuard)
+@UseGuards(AdkNativeActorGuard)
 export class WorkspaceIngestController {
   constructor(
     private readonly workspaceDocService: WorkspaceDocumentService,
@@ -39,6 +40,7 @@ export class WorkspaceIngestController {
   async ingestFromUrl(
     @Param('workspaceId') workspaceId: string,
     @Body() dto: IngestUrlDto,
+    @Req() request: AdkNativeRequest,
   ) {
     workspaceId = workspaceId.toLowerCase();
     if (!isObjectId(workspaceId)) {
@@ -56,14 +58,15 @@ export class WorkspaceIngestController {
       );
     }
 
-    if (workspace.createdBy !== dto.userId) {
+    const actorId = request.nativeActor.sub;
+    if (workspace.createdBy !== actorId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'User does not own this workspace',
       );
     }
 
-    const document = await this.workspaceDocService.ingestFromUrl(workspaceId, dto);
+    const document = await this.workspaceDocService.ingestFromUrl(workspaceId, { ...dto, userId: actorId });
 
     return {
       success: true,

@@ -32,6 +32,7 @@ describe('looksLikeOpenUiProgram', () => {
   it('recognises a chat or report program root and nothing else', () => {
     expect(looksLikeOpenUiProgram('root = Card([a])\na = TextContent("x")')).toBe(true);
     expect(looksLikeOpenUiProgram('\n  root=Report({title: "x"}, [])')).toBe(true);
+    expect(looksLikeOpenUiProgram('root = Presentation({title: "Slides"}, [])')).toBe(true);
     expect(looksLikeOpenUiProgram('# Title\n\nroot = Card(')).toBe(false);
     expect(looksLikeOpenUiProgram('The root = Card( is the entry point')).toBe(false);
     expect(looksLikeOpenUiProgram('Plain markdown answer')).toBe(false);

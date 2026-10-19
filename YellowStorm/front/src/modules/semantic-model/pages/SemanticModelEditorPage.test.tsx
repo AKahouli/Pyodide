@@ -13,7 +13,9 @@ const apiMocks = vi.hoisted(() => ({
   stopPopulationJob: vi.fn(),
   stopSearchIndex: vi.fn(),
   restartSearchIndex: vi.fn(),
+  saveIdentityRule: vi.fn(),
 }));
+const identityMock = vi.hoisted(() => ({ rules: [] as Array<{ conceptId: string; fields: string[] }> }));
 // The state of the search index the page follows; undefined: nothing is being built.
 const indexMock = vi.hoisted(() => ({ state: undefined as string | undefined, stalled: false }));
 // The model check the page follows; undefined: it is still loading or could not be read.
@@ -32,6 +34,7 @@ vi.mock("../api", () => ({
     stopPopulationJob: apiMocks.stopPopulationJob,
     stopSearchIndex: apiMocks.stopSearchIndex,
     restartSearchIndex: apiMocks.restartSearchIndex,
+    saveIdentityRule: apiMocks.saveIdentityRule,
   },
 }));
 
@@ -81,7 +84,7 @@ vi.mock("../query/hooks", () => ({
   useModelHealth: () => ({ data: { state: 'no_data', dataRevisionId: null, verdict: null, concepts: [], setup: [],
     summary: { concepts: 0, healthy: 0, rowsRead: 0, recordsKept: 0, fixesNeeded: 0, limits: 0, setupItems: 0 } }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
-  useIdentityRules: () => ({ data: [], isLoading: false }),
+  useIdentityRules: () => ({ data: identityMock.rules, isLoading: false }),
   useLabelFields: () => ({ data: [], isLoading: false }),
   useCanvasPositions: () => ({ data: [], isLoading: false }),
   useSemanticVersions: () => ({ data: [], isLoading: false }),
@@ -113,11 +116,15 @@ vi.mock("../components/editor/EditorDialogs", () => ({
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
-  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void }) => <div>
+  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource, onDataConnectRequest, onSelectRelation, onSelectConcept, onToggleKey }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void; onDataConnectRequest?: (connection: { sourceId: string; targetId: string }) => void; onSelectRelation?: (relationId: string) => void; onSelectConcept?: (conceptId: string, details: boolean) => void; onToggleKey?: (conceptId: string, field: string) => void }) => <div>
     semantic-model-canvas
+    <button onClick={() => onToggleKey?.('customer', 'docid')}>toggle-docid-key</button>
     <button onClick={() => onMapStructuredDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-1', name: 'customers.xlsx', structured: true, mappable: true }, 'customer')}>map-source</button>
     <button onClick={() => onPaneDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-2', name: 'suppliers.xlsx', structured: true, mappable: true })}>drop-on-pane</button>
     <button onClick={() => onOpenSource?.({ id: 'typed:customer', kind: 'typed', mappings: [] })}>open-typed</button>
+    <button onClick={() => onDataConnectRequest?.({ sourceId: 'contract', targetId: 'customer' })}>open-derived-edge</button>
+    <button onClick={() => onSelectRelation?.('relation-1')}>select-relation-edge</button>
+    <button onClick={() => onSelectConcept?.('customer', false)}>select-concept</button>
   </div>,
 }));
 vi.mock("../components/records/ManualTableEditor", () => ({
@@ -141,6 +148,12 @@ vi.mock("../components/mapping/SourceMappingDrawer", () => ({
   }),
   SourceMappingDrawer: ({ target }: { target: { documentName: string } | null }) => target ? <div>{target.documentName}</div> : null,
 }));
+vi.mock('../components/mapping/DerivedSourceDrawer', () => ({
+  DerivedSourceDrawer: ({ target, pendingSwitch, onClose, onCancelPendingSwitch }: { target: { conceptId: string } | null; pendingSwitch?: boolean; onClose: () => void; onCancelPendingSwitch?: () => void }) => target ? <div data-testid="derived-drawer">
+    <span>{target.conceptId}</span><span>{pendingSwitch ? 'pending-switch' : 'no-pending-switch'}</span>
+    <button onClick={onClose}>resolve-derived-switch</button><button onClick={onCancelPendingSwitch}>cancel-derived-switch</button>
+  </div> : null,
+}));
 vi.mock('../components/mapping/SemanticMappingsView', () => ({
   SemanticMappingsView: ({ onPopulationAccepted }: { onPopulationAccepted?: (jobId: string) => void }) =>
     <button onClick={() => onPopulationAccepted?.('job-1')}>accept-population</button>,
@@ -155,9 +168,11 @@ vi.mock('../components/preview/SemanticDataPreview', () => ({
 describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    identityMock.rules = [];
+    apiMocks.saveIdentityRule.mockResolvedValue({ revision: 1 });
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
-    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
+    apiMocks.getPopulationJob.mockReset().mockResolvedValue({ jobId: 'job-1', state: 'completed' });
     apiMocks.stopPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'cancel_requested' });
     apiMocks.stopSearchIndex.mockResolvedValue({ stopped: true, index: { state: 'indexing' } });
     indexMock.state = undefined;
@@ -165,6 +180,23 @@ describe("SemanticModelEditorPage", () => {
     checkMock.result = undefined;
     apiMocks.restartSearchIndex.mockResolvedValue({ restarted: true, index: { state: 'queued' } });
     useSemanticModelEditorStore.getState().reset();
+  });
+
+  it('drops removed key fields when choosing a replacement from the canvas', async () => {
+    identityMock.rules = [{ conceptId: 'customer', fields: ['documentid'] }];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+    await screen.findByText('semantic-model-canvas');
+    act(() => useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{
+      id: 'customer', key: 'customer', label: 'Customer', description: '', category: 'business_object',
+      recordPolicy: 'optional', systemKey: null, aliases: [], position: { x: 0, y: 0 },
+      attributes: [{ key: 'docid', label: 'docid', type: 'text', required: false }],
+    }] }));
+    act(() => useSemanticModelEditorStore.getState().markSaving());
+    fireEvent.click(screen.getByRole('button', { name: 'toggle-docid-key' }));
+    expect(apiMocks.saveIdentityRule).not.toHaveBeenCalled();
+    act(() => useSemanticModelEditorStore.getState().markSaved(1, 0));
+    await waitFor(() => expect(apiMocks.saveIdentityRule).toHaveBeenCalledWith('model-1', 'customer', ['docid']));
   });
 
   it("autosaves graph operations", async () => {
@@ -243,6 +275,43 @@ describe("SemanticModelEditorPage", () => {
     expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
+  it('keeps relation selection pending until the derived inspector resolves the switch', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    expect(await screen.findByTestId('derived-drawer')).toHaveTextContent('no-pending-switch');
+
+    fireEvent.click(screen.getByRole('button', { name: 'select-relation-edge' }));
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'resolve-derived-switch' }));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().selectedId).toBe('relation-1'));
+    expect(screen.queryByTestId('derived-drawer')).not.toBeInTheDocument();
+  });
+
+  it('cancels a pending relation selection without closing the derived inspector', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'select-relation-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'cancel-derived-switch' }));
+
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('no-pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+  });
+
+  it('keeps a concept selection pending until the derived inspector resolves the switch', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'select-concept' }));
+
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'resolve-derived-switch' }));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().selectedId).toBe('customer'));
+    expect(screen.queryByTestId('derived-drawer')).not.toBeInTheDocument();
+  });
+
   it('opens model health in place of the canvas and goes back to it', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
@@ -251,9 +320,32 @@ describe("SemanticModelEditorPage", () => {
 
     expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /health.button/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByText('semantic-model-canvas')).not.toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
+    const canvasLayer = screen.getByText('semantic-model-canvas').closest('[aria-hidden]');
+    expect(canvasLayer).toHaveAttribute('aria-hidden', 'true');
+    expect(canvasLayer).toHaveAttribute('inert');
+    expect(canvasLayer).toHaveClass('opacity-0', 'pointer-events-none');
     fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
     expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas').closest('[aria-hidden]')).toBe(canvasLayer);
+    expect(canvasLayer).toHaveAttribute('aria-hidden', 'false');
+    expect(canvasLayer).not.toHaveAttribute('inert');
+    expect(canvasLayer).not.toHaveClass('opacity-0');
+  });
+
+  it('keeps records and sources inside Trust center and removes them from the Data menu', async () => {
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'dataWorkflow.dataGraph' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'mode.records' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'designer.sourceList' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /health.button/ }));
+    expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.records' }));
+    expect(screen.getByText('revision:none')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.sourcesLineage' }));
+    expect(screen.getByRole('button', { name: 'accept-population' })).toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
   it('establishes an origin workspace before opening source mapping', async () => {
@@ -272,17 +364,19 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     fireEvent.click(await screen.findByText('pin-revision'));
     expect(screen.getByText('revision:old-revision')).toBeInTheDocument();
-    act(() => useSemanticModelEditorStore.getState().setMode('mappings'));
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.sourcesLineage' }));
     fireEvent.click(await screen.findByText('accept-population'));
     await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'job-1'));
     act(() => useSemanticModelEditorStore.getState().setMode('structure'));
 
     completeJob({ jobId: 'job-1', state: 'completed' });
     await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'job-1'])).toMatchObject({ state: 'completed' }));
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     expect(await screen.findByText('revision:none')).toBeInTheDocument();
   });
 
@@ -291,19 +385,35 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     fireEvent.click(await screen.findByText('pin-revision'));
     act(() => useSemanticModelEditorStore.getState().setMode('structure'));
     fireEvent.click(await screen.findByText('start-dialog-population'));
 
     await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
     await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'dialog-job'])).toMatchObject({ state: 'completed' }));
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     expect(await screen.findByText('revision:none')).toBeInTheDocument();
   });
 
   const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><SemanticModelEditorPage /></QueryClientProvider>);
   const stopButtons = () => screen.getAllByRole('button', { name: /runStop\.stop/ });
+
+  it('replaces the queued admission status with the matching live job state', async () => {
+    let started!: (value: unknown) => void;
+    apiMocks.getPopulationJob.mockImplementationOnce(() => new Promise((resolve) => { started = resolve; }));
+    renderPage();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    expect(await screen.findByText('myJobs.queuedTitle')).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+
+    started({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
+    expect(await screen.findByText('population.started')).toBeInTheDocument();
+    expect(screen.queryByText('myJobs.queuedTitle')).not.toBeInTheDocument();
+    expect(screen.queryByText('myJobs.waitingWorker')).not.toBeInTheDocument();
+  });
 
   it('turns Run into Stop while a data update runs, and asks before stopping it', async () => {
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
@@ -381,7 +491,7 @@ describe("SemanticModelEditorPage", () => {
   it('keeps the last result one click away after the update ended and its panel was closed', async () => {
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'completed' });
     renderPage();
-    expect(screen.queryByRole('button', { name: /runStatus\./ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'runStatus.showIndex' })).toBeInTheDocument();
     fireEvent.click(await screen.findByText('start-dialog-population'));
     expect(await screen.findByText('population.done')).toBeInTheDocument();
 
@@ -403,6 +513,28 @@ describe("SemanticModelEditorPage", () => {
     // Stop is in the panel too, and asks first.
     fireEvent.click(stopButtons()[stopButtons().length - 1]);
     expect(await screen.findByText('runStop.indexConfirmTitle')).toBeInTheDocument();
+  });
+
+  it('reopens failed search-index diagnostics after a reload without starting another build', async () => {
+    indexMock.state = 'failed';
+    renderPage();
+    const failedIndexEntry = await screen.findByRole('button', { name: 'runStatus.showIndex' });
+    expect(failedIndexEntry).toHaveTextContent('searchIndexRetry.open');
+    expect(failedIndexEntry).toHaveAttribute('title', 'searchIndexRetry.openHint');
+    expect(failedIndexEntry).toHaveClass('text-destructive');
+    fireEvent.click(failedIndexEntry);
+    expect(await screen.findByText('index-progress')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'runStop.stop' })).not.toBeInTheDocument();
+    expect(apiMocks.restartSearchIndex).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'missing', 'unavailable', 'ready'])('keeps search-index status reachable when its state is %s', async (state) => {
+    indexMock.state = state;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'runStatus.showIndex' }));
+    expect(await screen.findByText('index-progress')).toBeInTheDocument();
+    expect(apiMocks.restartSearchIndex).not.toHaveBeenCalled();
+    expect(apiMocks.getPopulationJob).not.toHaveBeenCalled();
   });
 
   describe('model check', () => {

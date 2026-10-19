@@ -126,10 +126,10 @@ export function TemplateDetailDialog({
                 <span className='inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-muted-foreground'>
                   {template.categoryName}
                 </span>
-                <DialogTitle className='text-left text-xl font-semibold leading-tight tracking-tight sm:text-2xl'>
+                <DialogTitle className='text-start text-xl font-semibold leading-tight tracking-tight sm:text-2xl'>
                   {template.title}
                 </DialogTitle>
-                <DialogDescription className='text-left text-sm leading-relaxed text-muted-foreground'>
+                <DialogDescription className='text-start text-sm leading-relaxed text-muted-foreground'>
                   {template.description || t('templateModal.noDescription')}
                 </DialogDescription>
                 <Button
@@ -166,7 +166,7 @@ export function TemplateDetailDialog({
                       </p>
                     </div>
                     {isSending && !cloning ? (
-                      <Loader2 className='ml-auto size-5 shrink-0 animate-spin text-muted-foreground' aria-hidden />
+                      <Loader2 className='ms-auto size-5 shrink-0 animate-spin text-muted-foreground' aria-hidden />
                     ) : null}
                   </div>
 

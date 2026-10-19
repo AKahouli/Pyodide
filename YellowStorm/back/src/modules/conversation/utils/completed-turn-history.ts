@@ -5,6 +5,13 @@ import { completedSourceContext } from './completed-source-context';
 
 /** Seed only the visible transcript completed before this request was submitted. */
 export function completedTurnHistory(messages: MessageRecord[], assistantMessageId: string): ConversationHistoryEntry[] {
+  return completedTurnSeed(messages, assistantMessageId).history;
+}
+
+/** Source follows the exact frozen visible branch, never a newer concurrent turn. */
+export function completedTurnSeed(messages: MessageRecord[], assistantMessageId: string): {
+  history: ConversationHistoryEntry[]; sourceSessionId?: string;
+} {
   const origin = messages.find((message) => message.id === assistantMessageId);
   if (!origin) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Turn origin is unavailable');
   const submittedAt = messages.find((message) => message.id === origin.questionMessageId)?.createdAt ?? origin.createdAt;
@@ -23,6 +30,7 @@ export function completedTurnHistory(messages: MessageRecord[], assistantMessage
   const answeredQuestions = new Set(completed.map((message) => message.questionMessageId).filter(Boolean));
   const completedIds = new Set(completed.map((message) => message.id));
   const history: ConversationHistoryEntry[] = [];
+  let sourceSessionId: string | undefined;
   for (const message of messages) {
     if (message.id === origin.questionMessageId || message.id === origin.id) continue;
     if (message.conversationType === 'user' && answeredQuestions.has(message.id) && beforeSubmission(message)) {
@@ -34,8 +42,12 @@ export function completedTurnHistory(messages: MessageRecord[], assistantMessage
         .map((component) => typeof component.data.content === 'string' ? component.data.content
           : typeof component.data.text === 'string' ? component.data.text : '').filter(Boolean).join('\n\n').trim();
       const sources = completedSourceContext(components ?? []);
-      if (text) history.push({ role: 'CONVERSATION_HISTORY_ROLE_ASSISTANT', text: text.slice(0, 30_000 - sources.length) + sources });
+      if (text) {
+        history.push({ role: 'CONVERSATION_HISTORY_ROLE_ASSISTANT', text: text.slice(0, 30_000 - sources.length) + sources });
+        sourceSessionId = message.questionMessageId && !message.isEdited
+          && message.correctionWorkflow?.activeVersion !== 'corrected' ? `turn_${message.id}` : undefined;
+      }
     }
   }
-  return history.slice(-40);
+  return { history: history.slice(-40), ...(sourceSessionId ? { sourceSessionId } : {}) };
 }

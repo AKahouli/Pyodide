@@ -57,6 +57,17 @@ export class PgRoleStore implements RoleStore {
     return rows.length ? toRoleRecord(rows[0]) : null;
   }
 
+  async findActiveForUser(userId: string): Promise<RoleRecord[]> {
+    if (!isObjectId(userId)) return [];
+    const rows = await this.q.select({ role: schema.authzRoles })
+      .from(schema.identityUsers)
+      .innerJoin(schema.identityUserRoles, eq(schema.identityUserRoles.userId, schema.identityUsers.id))
+      .innerJoin(schema.authzRoles, eq(schema.authzRoles.id, schema.identityUserRoles.roleId))
+      .where(and(eq(schema.identityUsers.id, userId), eq(schema.authzRoles.isActive, true)))
+      .orderBy(asc(schema.identityUserRoles.position));
+    return rows.map(({ role }) => toRoleRecord(role));
+  }
+
   async findByIds(ids: string[]): Promise<Map<string, RoleRecord>> {
     const valid = ids.filter(isObjectId);
     if (valid.length === 0) return new Map();

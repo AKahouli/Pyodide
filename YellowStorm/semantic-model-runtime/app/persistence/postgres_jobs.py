@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -19,12 +21,38 @@ from app.jobs.models import (
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
+from app.jobs.error_details import public_details
 from app.jobs.worker_liveness import ONLINE_WINDOW_SECONDS
+from app.jobs.asset_admission import admission_candidate, without_asset_authority
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
 TERMINAL_JOB_STATES = {
     "completed", "completed_with_gaps", "failed", "cancelled", "superseded",
 }
+
+
+class CandidateRejected(Exception):
+    """The candidate to activate is stale against newer state. The finalization
+    transaction rolls back - no completed job, no binding swap - and the run is
+    retried fresh against the state that won."""
+
+
+def _terminal_event_sql() -> str:
+    return """
+        INSERT INTO semantic_jobs.events (job_id, task_id, event_type, payload)
+        VALUES ($1::uuid, $2, $3, jsonb_build_object('state', $4::text))
+    """
+
+# The fenced renewal: exact task, owner and epoch, still running, not yet
+# expired, PostgreSQL's clock authoritative. Shared by the repository and the
+# independent lease guard (P0-02) so both mean the same ownership test.
+RENEW_LEASE_SQL = """
+    UPDATE semantic_jobs.tasks
+    SET lease_expires_at = now() + make_interval(secs => $4), updated_at = now()
+    WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
+      AND state = 'running' AND lease_expires_at > now()
+    RETURNING id
+"""
 
 
 def _json(value: Any) -> str:
@@ -219,7 +247,10 @@ class PostgresJobRepository:
             "mimeType": mime,
             "sizeBytes": payload.get("sizeBytes"),
             "contentHash": payload.get("contentHash"),
-            "uploadedAt": payload.get("uploadedAt") or event.occurred_at.isoformat(),
+            # Match the backend's Date.toISOString() fallback exactly: the
+            # signed command compares timestamp text, not datetime equality.
+            "uploadedAt": payload.get("uploadedAt") or event.occurred_at.astimezone(timezone.utc)
+                .isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "indexingStatus": payload.get("indexingStatus"),
             "sourceEventId": event.event_id,
         }
@@ -238,22 +269,35 @@ class PostgresJobRepository:
         )
         for row in sheets:
             sheet_name = row["sheet_name"]
+            admissions = payload.get("assetAdmissions")
+            token = admissions.get(sheet_name or "") if isinstance(admissions, dict) else None
+            if not isinstance(token, str):
+                continue  # An unsigned event never creates asset execution authority.
             options = {"sheetName": sheet_name} if sheet_name else {}
             command = {"actorUserId": actor, "modelId": None,
                        "workspaceId": event.payload.workspace_id,
-                       "payload": {"source": source, "options": options}}
+                        "payload": {"source": source, "options": options,
+                                    "assetAdmission": token}}
+            try:
+                encoded = token.split(".")[1]
+                import base64
+                candidate_body = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))["body"]
+                command["payload"]["assetCommand"] = candidate_body["command"]
+                canonical_id = admission_candidate(JobCommand.model_validate(command), f"{event.event_id}:{sheet_name or ''}")
+            except (ValueError, TypeError, KeyError, IndexError, IdempotencyConflict):
+                continue
             command_json = _json(command)
-            command_hash = _fingerprint(command)
+            command_hash = _fingerprint(without_asset_authority(command))
             idempotency_key = f"source-event:{_fingerprint({'eventId': event.event_id, 'sheet': sheet_name})}"
             job = await connection.fetchrow(
                 """
                 INSERT INTO semantic_jobs.jobs
-                  (job_type, actor_user_id, workspace_id, idempotency_key, command_hash, command)
-                VALUES ('datasource.discovery', $1, $2, $3, $4, $5::jsonb)
-                ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                  (job_type, actor_user_id, workspace_id, idempotency_key, command_hash, command, id)
+                VALUES ('datasource.discovery', $1, $2, $3, $4, $5::jsonb, $6::uuid)
+                ON CONFLICT DO NOTHING
                 RETURNING id::text
                 """,
-                actor, event.payload.workspace_id, idempotency_key, command_hash, command_json,
+                actor, event.payload.workspace_id, idempotency_key, command_hash, command_json, canonical_id,
             )
             if job is None:
                 continue
@@ -288,6 +332,7 @@ class PostgresJobRepository:
         task_name: str,
         queue_name: str,
     ) -> Admission:
+        canonical_id = admission_candidate(command)
         command_json = _json(command.model_dump(by_alias=True, mode="json"))
         task_key = f"{job_type}:initial"
         effective_key = idempotency_key
@@ -297,10 +342,10 @@ class PostgresJobRepository:
                     row = await connection.fetchrow(
                         """
                         INSERT INTO semantic_jobs.jobs
-                          (job_type, actor_user_id, model_id, workspace_id,
-                           idempotency_key, command_hash, command)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-                        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                           (job_type, actor_user_id, model_id, workspace_id,
+                            idempotency_key, command_hash, command, id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8::uuid, gen_random_uuid()))
+                         ON CONFLICT DO NOTHING
                         RETURNING id::text, state
                         """,
                         job_type,
@@ -310,6 +355,7 @@ class PostgresJobRepository:
                         effective_key,
                         command_hash,
                         command_json,
+                        canonical_id,
                     )
                     if row is not None:
                         break
@@ -384,7 +430,7 @@ class PostgresJobRepository:
         row = await self.pool.fetchrow(
             """
             SELECT id::text, job_type, model_id, workspace_id, state, progress,
-                   result, error_code, created_at, started_at, completed_at, updated_at
+                   result, error_code, created_at, started_at, completed_at, updated_at, command
             FROM semantic_jobs.jobs
             WHERE id = $1::uuid AND actor_user_id = $2
             """,
@@ -407,6 +453,18 @@ class PostgresJobRepository:
             "completedAt": row["completed_at"],
             "updatedAt": row["updated_at"],
         }
+        payload = _object(_object(row["command"]).get("payload"))
+        details = public_details(job["progress"].get("errorDetails"))
+        if details and row["state"] != "cancelled":
+            job["errorDetails"] = details
+            job["progress"]["errorDetails"] = details
+        else:
+            job["progress"].pop("errorDetails", None)
+        scope = _object(payload.get("scope"))
+        job["scope"] = ({"kind": "concept", "conceptId": scope["conceptId"]}
+                        if scope.get("kind") == "concept" and isinstance(scope.get("conceptId"), str)
+                        else {"kind": "model"})
+        job["purpose"] = payload.get("purpose") if isinstance(payload.get("purpose"), str) else None
         if row["state"] == "queued":
             queue = await self.queue_position(job_id)
             if queue is not None:
@@ -490,16 +548,69 @@ class PostgresJobRepository:
         )
         return await self.get_job(job_id, actor_user_id) if job_id else None
 
-    async def request_cancel(self, job_id: str, actor_user_id: str) -> dict[str, Any] | None:
+    async def list_my_jobs(self, *, actor_user_id: str, model_ids: list[str],
+                           view: str, page: int, limit: int) -> dict[str, Any]:
+        """Own jobs within an explicit model allow-list, with complete paginated history."""
+        active = ["queued", "waiting_dependencies", "running", "cancel_requested"]
+        summary = await self.pool.fetchrow(
+            """SELECT count(*) FILTER (WHERE state = ANY($3::text[]))::int AS active,
+                      count(*) FILTER (WHERE state NOT IN ('queued','waiting_dependencies','running','cancel_requested'))::int AS history,
+                      count(*) FILTER (WHERE state IN ('queued','waiting_dependencies'))::int AS queued
+               FROM semantic_jobs.jobs WHERE actor_user_id = $1 AND model_id = ANY($2::text[])""",
+            actor_user_id, model_ids, active)
+        total = int(summary[view])
+        rows = await self.pool.fetch(
+            """SELECT id::text FROM semantic_jobs.jobs
+               WHERE actor_user_id = $1 AND model_id = ANY($2::text[])
+                 AND (state = ANY($3::text[])) = $4
+               ORDER BY created_at DESC, id DESC LIMIT $5 OFFSET $6""",
+            actor_user_id, model_ids, active, view == "active", limit, (page - 1) * limit)
+        jobs = [await self.get_job(row["id"], actor_user_id) for row in rows]
+        return {"items": [job for job in jobs if job is not None],
+                "pagination": {"page": page, "limit": limit, "total": total,
+                               "totalPages": (total + limit - 1) // limit},
+                "activeCount": int(summary["active"]), "queuedCount": int(summary["queued"])}
+
+    async def cancel_queued_jobs(self, *, actor_user_id: str, model_ids: list[str]) -> dict[str, int]:
+        """Cancel the queue snapshot, never a job that a worker claimed meanwhile."""
+        rows = await self.pool.fetch(
+            """SELECT id::text FROM semantic_jobs.jobs
+               WHERE actor_user_id = $1 AND model_id = ANY($2::text[])
+                 AND state IN ('queued','waiting_dependencies') ORDER BY created_at, id""",
+            actor_user_id, model_ids)
+        cancelled = 0
+        for row in rows:
+            job = await self.request_cancel(row["id"], actor_user_id, only_queued=True)
+            cancelled += int(job is not None and job["state"] == "cancelled")
+        return {"cancelled": cancelled, "skipped": len(rows) - cancelled}
+
+    async def request_cancel(self, job_id: str, actor_user_id: str, *, only_queued: bool = False) -> dict[str, Any] | None:
         """Stop a job. One nobody is working on ends at once: not started, or whose worker's lease
         has run out (it is gone, and could not be asked). One a worker holds is asked to stop and the
         worker ends it at its next progress report, keeping nothing it read. Asking again after the
         lease ran out ends it, so a stop never waits on a worker that no longer answers.
 
         A run past its last chance to stop (``progress.cancellable`` false: the new data is being
-        saved) is left as it is; it finishes, or recovery runs it again if its worker died."""
+        saved) is left as it is; it finishes, or recovery runs it again if its worker died.
+
+        Lock order is task rows first, then the job row - the order claims use -
+        so a stop and a claim can never wait on each other in a cycle (P0-05).
+        Task rows a live claimant holds are skipped, never waited on: their lease
+        is live, so the job is asked to stop instead of being ended under it."""
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                tasks_ready = True
+                if only_queued:
+                    # Claims lock task -> job. Match that order and skip a task already held by a
+                    # claimant rather than waiting on it while holding its job (a deadlock).
+                    locked = await connection.fetch(
+                        """SELECT t.id FROM semantic_jobs.tasks t JOIN semantic_jobs.jobs j ON j.id = t.job_id
+                           WHERE t.job_id = $1::uuid AND j.actor_user_id = $2 ORDER BY t.id
+                           FOR UPDATE OF t SKIP LOCKED""", job_id, actor_user_id)
+                    count = await connection.fetchval(
+                        """SELECT count(*) FROM semantic_jobs.tasks t JOIN semantic_jobs.jobs j ON j.id = t.job_id
+                           WHERE t.job_id = $1::uuid AND j.actor_user_id = $2""", job_id, actor_user_id)
+                    tasks_ready = len(locked) == count
                 job = await connection.fetchrow(
                     """
                     SELECT id::text, state, progress, job_type FROM semantic_jobs.jobs
@@ -511,19 +622,48 @@ class PostgresJobRepository:
                 )
                 if job is None:
                     return None
-                if job["job_type"].startswith("graph_search."):
+                eligible = tasks_ready and (not only_queued or job["state"] in ("queued", "waiting_dependencies"))
+                if eligible and job["job_type"].startswith("graph_search."):
                     # A search build whose generation lease ran out has no worker answering, whatever
-                    # its task lease says: stopping it must not wait for that one.
+                    # its task lease says: stopping it must not wait for that one. Its row updates
+                    # never wait on a concurrent claim (SKIP LOCKED inside).
                     await self._expire_stalled_search_leases(connection, job_id)
-                if job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
-                    live = await connection.fetchval(
+                if eligible and job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
+                    # One step ends the tasks nothing holds - queued, or running
+                    # past its lease - skipping any row a concurrent claim holds,
+                    # so this can never wait on a claimant under the job lock. An
+                    # in-flight claim is invisible here (its lease is not visible
+                    # either), so "running" afterwards means ask, never force.
+                    ended = await connection.fetch(
                         """
-                        SELECT count(*) FROM semantic_jobs.tasks
-                        WHERE job_id = $1::uuid AND state = 'running' AND lease_expires_at > now()
+                        WITH lockable AS (
+                          SELECT t.id FROM semantic_jobs.tasks t
+                          WHERE t.job_id = $1::uuid
+                            AND (t.state = 'queued'
+                                 OR (t.state = 'running' AND t.lease_expires_at <= now()))
+                          ORDER BY t.id
+                          FOR UPDATE OF t SKIP LOCKED
+                        )
+                        UPDATE semantic_jobs.tasks t
+                        SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
+                            lease_expires_at = NULL, updated_at = now()
+                        FROM lockable
+                        WHERE t.id = lockable.id
+                        RETURNING t.id
                         """,
                         job_id,
                     )
-                    if live:
+                    live = await connection.fetchval(
+                        """
+                        SELECT count(*) FROM semantic_jobs.tasks
+                        WHERE job_id = $1::uuid AND state IN ('queued', 'running')
+                        """,
+                        job_id,
+                    )
+                    # A locked queued row may be a claim not yet committed.
+                    # SKIP LOCKED cannot prove it dead: request a stop instead
+                    # of terminally cancelling its job underneath that claim.
+                    if live and not only_queued:
                         if job["state"] != "cancel_requested":
                             await connection.execute(
                                 """
@@ -539,17 +679,7 @@ class PostgresJobRepository:
                                 """,
                                 job_id,
                             )
-                    else:
-                        await connection.execute(
-                            """
-                            UPDATE semantic_jobs.tasks
-                            SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
-                                lease_expires_at = NULL, updated_at = now()
-                            WHERE job_id = $1::uuid
-                              AND (state = 'queued' OR (state = 'running' AND lease_expires_at <= now()))
-                            """,
-                            job_id,
-                        )
+                    elif not live:
                         await self._finish_cancelled(connection, job_id, None)
         return await self.get_job(job_id, actor_user_id)
 
@@ -564,15 +694,25 @@ class PostgresJobRepository:
         behind (a new attempt not yet at its own generation claim). Recovery then requeues the task
         or ends it as for any lost lease.
         """
+        # SKIP LOCKED: a row a concurrent claim holds is that claim's - this
+        # never waits on it, whatever lock order the caller is inside.
         result = await connection.execute(
             """
+            WITH lockable AS (
+              SELECT t.id FROM semantic_jobs.tasks t
+              JOIN semantic_graph_search.index_generations g
+                ON g.job_id = t.job_id
+              WHERE g.state = 'indexing' AND g.lease_until < now()
+                AND t.state = 'running' AND t.lease_expires_at >= now()
+                AND t.updated_at < g.lease_until
+                AND ($1::uuid IS NULL OR t.job_id = $1::uuid)
+              ORDER BY t.id
+              FOR UPDATE OF t SKIP LOCKED
+            )
             UPDATE semantic_jobs.tasks t
             SET lease_expires_at = now() - interval '1 second', updated_at = now()
-            FROM semantic_graph_search.index_generations g
-            WHERE g.job_id = t.job_id AND g.state = 'indexing' AND g.lease_until < now()
-              AND t.state = 'running' AND t.lease_expires_at >= now()
-              AND t.updated_at < g.lease_until
-              AND ($1::uuid IS NULL OR t.job_id = $1::uuid)
+            FROM lockable
+            WHERE t.id = lockable.id
             """,
             job_id,
         )
@@ -619,10 +759,20 @@ class PostgresJobRepository:
         if job is None:
             return
         # Tasks that never ran must not wait for a delivery of a job that is over.
+        # SKIP LOCKED: a queued row a concurrent claim holds is that claim's now -
+        # its job shows cancelled and its claim fences itself out.
         await connection.execute(
             """
-            UPDATE semantic_jobs.tasks SET state = 'cancelled', completed_at = now(), updated_at = now()
-            WHERE job_id = $1::uuid AND state = 'queued'
+            WITH lockable AS (
+              SELECT t.id FROM semantic_jobs.tasks t
+              WHERE t.job_id = $1::uuid AND t.state = 'queued'
+              ORDER BY t.id
+              FOR UPDATE OF t SKIP LOCKED
+            )
+            UPDATE semantic_jobs.tasks t
+            SET state = 'cancelled', completed_at = now(), updated_at = now()
+            FROM lockable
+            WHERE t.id = lockable.id
             """,
             job_id,
         )
@@ -685,6 +835,8 @@ class PostgresJobRepository:
     async def claim_task(
         self, *, task_id: int, queue_name: str, lease_owner: str, lease_seconds: int
     ) -> Lease | None:
+        capability = secrets.token_hex(32)
+        capability_digest = hashlib.sha256(capability.encode("ascii")).hexdigest()
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
@@ -692,6 +844,7 @@ class PostgresJobRepository:
                     UPDATE semantic_jobs.tasks
                     SET state = 'running', attempt_count = attempt_count + 1,
                         lease_epoch = lease_epoch + 1, lease_owner = $2,
+                        checkpoint = checkpoint || jsonb_build_object('assetCapabilityDigest', $5::text),
                         lease_expires_at = now() + make_interval(secs => $3),
                         started_at = COALESCE(started_at, now()), updated_at = now()
                     WHERE id = (
@@ -713,6 +866,7 @@ class PostgresJobRepository:
                     lease_owner,
                     lease_seconds,
                     task_id,
+                    capability_digest,
                 )
                 if row is None:
                     return None
@@ -742,24 +896,14 @@ class PostgresJobRepository:
                     row["lease_owner"],
                     row["lease_expires_at"],
                     row["attempt_count"],
+                    capability,
                 )
 
     async def renew_lease(
         self, *, task_id: int, lease_owner: str, lease_epoch: int, lease_seconds: int
     ) -> bool:
         row = await self.pool.fetchrow(
-            """
-            UPDATE semantic_jobs.tasks
-            SET lease_expires_at = now() + make_interval(secs => $4), updated_at = now()
-            WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
-              AND state = 'running' AND lease_expires_at > now()
-            RETURNING id
-            """,
-            task_id,
-            lease_owner,
-            lease_epoch,
-            lease_seconds,
-        )
+            RENEW_LEASE_SQL, task_id, lease_owner, lease_epoch, lease_seconds)
         return row is not None
 
     async def checkpoint(
@@ -770,14 +914,23 @@ class PostgresJobRepository:
         lease_epoch: int,
         progress: dict[str, Any],
         lease_seconds: int,
+        renew: bool = True,
     ) -> bool:
+        """Fenced progress write. ``renew`` also extends the lease; with an
+        independent lease guard (P0-02) progress passes ``renew=False`` so the
+        guard stays the one authoritative renewer and no competing window is
+        chosen behind its back. Either way the write only lands while the task
+        still owns a live lease: False means the attempt is stale."""
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
                     """
                     UPDATE semantic_jobs.tasks t
-                    SET checkpoint = $4::jsonb,
-                        lease_expires_at = now() + make_interval(secs => $5), updated_at = now()
+                    SET checkpoint = checkpoint || ($4::jsonb - 'assetCapabilityDigest') ||
+                          CASE WHEN checkpoint ? 'errorDetails' THEN jsonb_build_object('errorDetails', checkpoint->'errorDetails') ELSE '{}'::jsonb END,
+                        lease_expires_at = CASE WHEN $6::boolean
+                            THEN now() + make_interval(secs => $5) ELSE t.lease_expires_at END,
+                        updated_at = now()
                     WHERE t.id = $1 AND t.lease_owner = $2 AND t.lease_epoch = $3
                       AND t.state = 'running' AND t.lease_expires_at > now()
                     RETURNING t.job_id::text
@@ -787,11 +940,12 @@ class PostgresJobRepository:
                     lease_epoch,
                     _json(progress),
                     lease_seconds,
+                    renew,
                 )
                 if row is None:
                     return False
                 await connection.execute(
-                    "UPDATE semantic_jobs.jobs SET progress = $2::jsonb, updated_at = now() WHERE id = $1::uuid",
+                    "UPDATE semantic_jobs.jobs SET progress = progress || $2::jsonb || CASE WHEN progress ? 'errorDetails' THEN jsonb_build_object('errorDetails', progress->'errorDetails') ELSE '{}'::jsonb END, updated_at = now() WHERE id = $1::uuid",
                     row["job_id"],
                     _json(progress),
                 )
@@ -806,6 +960,7 @@ class PostgresJobRepository:
         job_state: str,
         result: dict[str, Any] | None,
         error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if job_state not in ("completed", "completed_with_gaps", "failed"):
             raise ValueError("unsupported terminal job state")
@@ -816,11 +971,12 @@ class PostgresJobRepository:
                     """
                     UPDATE semantic_jobs.tasks
                     SET state = $4, result = $5::jsonb, error_code = $6,
+                        checkpoint = checkpoint || CASE WHEN checkpoint ? 'errorDetails' THEN '{}'::jsonb ELSE $7::jsonb END,
                         completed_at = now(), lease_owner = NULL,
                         lease_expires_at = NULL, updated_at = now()
                     WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
                       AND state = 'running' AND lease_expires_at > now()
-                    RETURNING job_id::text
+                    RETURNING job_id::text, checkpoint
                     """,
                     task_id,
                     lease_owner,
@@ -828,21 +984,32 @@ class PostgresJobRepository:
                     task_state,
                     _json(result) if result is not None else None,
                     error_code,
+                    _json({"errorDetails": public_details(error_details)} if public_details(error_details) else {}),
                 )
                 if row is None:
                     raise StaleLease("task lease is stale or expired")
-                await connection.execute(
+                # A valid task lease alone must not resurrect a job that already
+                # ended (superseded, cancelled by another path): the completion
+                # only lands on a job still going, or the attempt is stale too.
+                ended = await connection.fetchval(
                     """
                     UPDATE semantic_jobs.jobs
                     SET state = $2, result = $3::jsonb, error_code = $4,
+                        progress = progress || CASE WHEN progress ? 'errorDetails' THEN '{}'::jsonb ELSE $5::jsonb END,
                         completed_at = now(), updated_at = now()
                     WHERE id = $1::uuid
+                      AND state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested')
+                    RETURNING id
                     """,
                     row["job_id"],
                     job_state,
                     _json(result) if result is not None else None,
                     error_code,
+                    _json({"errorDetails": _object(row["checkpoint"])["errorDetails"]}
+                          if "errorDetails" in _object(row["checkpoint"]) else {}),
                 )
+                if ended is None:
+                    raise StaleLease("the job already ended")
                 affected_models: dict[str, str] = {}
                 if task_state == "completed" and result is not None:
                     affected_models = await self._persist_datasource_result(
@@ -886,6 +1053,156 @@ class PostgresJobRepository:
                                      "reason": "mapping_health_recomputed"},
                         )
                 return {"jobId": row["job_id"], "state": job_state}
+
+    async def finalize_population_task(
+        self,
+        *,
+        task_id: int,
+        lease_owner: str,
+        lease_epoch: int,
+        job_state: str,
+        result: dict[str, Any] | None,
+        error_code: str | None = None,
+        activate: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """One atomic, lease-fenced population finalization (P0-03 step D).
+
+        In ONE PostgreSQL transaction on the runtime database: the task row is
+        locked (task -> job order, as claims use), ownership and the lease are
+        re-proved against PostgreSQL, the job is checked for terminal or
+        cancel-requested states, the candidate revision is validated against
+        the model/version/specification/watermark it was built from, and - only
+        when ``activate`` is given - the draft serving binding is
+        compare-and-swapped before the SAME task and job go terminal with one
+        durable terminal event. Any mismatch raises :class:`CandidateRejected`
+        and rolls everything back: the previous draft stays served and the job
+        stays open for a fresh attempt. No observer can see a new active
+        binding with an unfinished job from this cutover.
+        """
+        if job_state not in ("completed", "completed_with_gaps", "failed"):
+            raise ValueError("unsupported terminal job state")
+        if activate is not None and job_state == "failed":
+            raise ValueError("a failed job does not activate")
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                task = await connection.fetchrow(
+                    """
+                    SELECT id, job_id::text, lease_owner, lease_epoch, state, lease_expires_at
+                    FROM semantic_jobs.tasks WHERE id = $1 FOR UPDATE
+                    """,
+                    task_id,
+                )
+                if (task is None or task["lease_owner"] != lease_owner
+                        or task["lease_epoch"] != lease_epoch or task["state"] != "running"):
+                    raise StaleLease("task lease is stale or expired")
+                job_id = task["job_id"]
+                job = await connection.fetchrow(
+                    """
+                    SELECT id::text, state, job_type, model_id::text
+                    FROM semantic_jobs.jobs WHERE id = $1::uuid FOR UPDATE
+                    """,
+                    job_id,
+                )
+                if job is None or job["job_type"] != "population.run":
+                    raise CandidateRejected("not_a_population_job")
+                if job["state"] in TERMINAL_JOB_STATES or job["state"] == "cancel_requested":
+                    raise CandidateRejected(f"job_{job['state']}")
+                if activate is not None:
+                    if job["model_id"] and job["model_id"] != activate["modelId"]:
+                        raise CandidateRejected("model_mismatch")
+                    from app.persistence.population_store import lock_model_cutover
+
+                    # Task -> job -> cutover, held through freshness/CAS/commit,
+                    # never during the long staging and projection phase.
+                    await lock_model_cutover(connection, activate["modelId"])
+                # Lock waits can outlast the lease while its renewal is blocked
+                # on our task row. Transaction-start now() and the worker's
+                # clock cannot establish current ownership after those waits.
+                if not await connection.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM semantic_jobs.tasks WHERE id=$1 "
+                    "AND lease_owner=$2 AND lease_epoch=$3 AND state='running' "
+                    "AND lease_expires_at > clock_timestamp())", task_id, lease_owner, lease_epoch):
+                    raise StaleLease("task lease expired during finalization lock acquisition")
+                if activate is not None:
+                    revision = await connection.fetchrow(
+                        """
+                        SELECT model_id::text, model_version_id, spec_hash,
+                               correction_sequence, projection_ref, validation_state
+                        FROM semantic_population.data_revisions WHERE id = $1
+                        """,
+                        activate["revisionId"],
+                    )
+                    if (revision is None or revision["validation_state"] != "valid"
+                            or revision["model_id"] != activate["modelId"]
+                            or revision["model_version_id"] != activate["modelVersionId"]
+                            or revision["spec_hash"] != activate["specHash"]
+                            or revision["correction_sequence"] != activate["correctionSequence"]
+                            or revision["projection_ref"] != activate["projectionRef"]):
+                        raise CandidateRejected("stale_candidate")
+                    # The watermark is re-read here, not trusted from the worker's
+                    # earlier read: a correction that landed while the candidate
+                    # was built rejects the activation in this same transaction.
+                    current_sequence = await connection.fetchval(
+                        "SELECT COALESCE(MAX(sequence), 0) FROM semantic_population.corrections "
+                        "WHERE model_id = $1", activate["modelId"])
+                    if int(current_sequence or 0) != int(activate["correctionSequence"]):
+                        raise CandidateRejected("stale_revision_watermark")
+                    from app.persistence.population_store import _cas_active_binding
+
+                    swapped = await _cas_active_binding(
+                        connection, model_id=activate["modelId"], environment="draft",
+                        expected_version=activate["expectedVersion"],
+                        model_version_id=activate["modelVersionId"],
+                        data_revision_id=activate["revisionId"],
+                        projection_ref=activate["projectionRef"],
+                        correction_sequence=activate["correctionSequence"],
+                        spec_hash=activate["specHash"],
+                    )
+                    if swapped is None:
+                        raise CandidateRejected("stale_model_definition")
+                fenced = await connection.fetchrow(
+                    """
+                    UPDATE semantic_jobs.tasks
+                    SET state = $4, result = $5::jsonb, error_code = $6,
+                        completed_at = now(), lease_owner = NULL,
+                        lease_expires_at = NULL, updated_at = now()
+                    WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
+                      AND state = 'running' AND lease_expires_at > clock_timestamp()
+                    RETURNING job_id::text
+                    """,
+                    task_id,
+                    lease_owner,
+                    lease_epoch,
+                    "failed" if job_state == "failed" else "completed",
+                    _json(result) if result is not None else None,
+                    error_code,
+                )
+                if fenced is None:
+                    raise StaleLease("task lease is stale or expired")
+                await connection.execute(
+                    """
+                    UPDATE semantic_jobs.jobs
+                    SET state = $2, result = $3::jsonb, error_code = $4,
+                        completed_at = now(), updated_at = now()
+                    WHERE id = $1::uuid
+                    """,
+                    job_id,
+                    job_state,
+                    _json(result) if result is not None else None,
+                    error_code,
+                )
+                event_type = "job.failed" if job_state == "failed" else "job.completed"
+                await connection.execute(
+                    _terminal_event_sql(), job_id, task_id, event_type, job_state)
+                if self.realtime_enabled and job["model_id"]:
+                    await enqueue_ui_signal(
+                        connection, model_id=job["model_id"],
+                        event_type="population-status-changed", resource=job_id,
+                        payload={"resource": job_id, "status": job_state,
+                                 "reason": "job_terminal"},
+                    )
+        return {"jobId": job_id, "state": job_state,
+                "activated": activate is not None}
 
     async def _persist_datasource_result(
         self, connection: asyncpg.Connection, job_id: str, result: dict[str, Any]
@@ -1110,6 +1427,7 @@ class PostgresJobRepository:
         lease_epoch: int,
         error_code: str,
         retry_seconds: int,
+        error_details: dict[str, Any] | None = None,
     ) -> bool:
         """Release a live lease so the next delivery can reclaim immediately.
 
@@ -1128,18 +1446,26 @@ class PostgresJobRepository:
                     UPDATE semantic_jobs.tasks
                     SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
                         error_code = $4, updated_at = now()
+                        , checkpoint = checkpoint || CASE WHEN checkpoint ? 'errorDetails' THEN '{}'::jsonb ELSE $5::jsonb END
                     WHERE id = $1 AND state = 'running'
                       AND lease_owner = $2 AND lease_epoch = $3
                       AND lease_expires_at > now()
-                    RETURNING id
+                    RETURNING id, job_id::text, checkpoint
                     """,
                     task_id,
                     lease_owner,
                     lease_epoch,
                     error_code[:100],
+                    _json({"errorDetails": public_details(error_details)} if public_details(error_details) else {}),
                 )
                 if row is None:
                     return False
+                await connection.execute(
+                    "UPDATE semantic_jobs.jobs SET progress = progress || CASE WHEN progress ? 'errorDetails' THEN '{}'::jsonb ELSE $2::jsonb END WHERE id = $1::uuid",
+                    row["job_id"],
+                    _json({"errorDetails": _object(row["checkpoint"])["errorDetails"]}
+                          if "errorDetails" in _object(row["checkpoint"]) else {}),
+                )
                 await connection.execute(
                     """
                     UPDATE semantic_jobs.outbox
@@ -1154,38 +1480,6 @@ class PostgresJobRepository:
                     retry_seconds,
                 )
                 return True
-
-    async def release_abandoned_leases(self, *, node_prefix: str, boot_prefix: str) -> int:
-        """Expire the leases a worker node held before it restarted.
-
-        Lease owners are ``<node_prefix><boot id>:<run id>``; a node that starts again
-        gets a new boot id, so any lease of the node under another boot id belongs to a
-        process that is gone. Expired now, recovery ends a run asked to stop and requeues
-        the others at once instead of waiting for the lease to run out.
-        """
-        result = await self.pool.execute(
-            """
-            UPDATE semantic_jobs.tasks
-            SET lease_expires_at = now() - interval '1 second', updated_at = now()
-            WHERE state = 'running' AND lease_expires_at > now()
-              AND starts_with(lease_owner, $1) AND NOT starts_with(lease_owner, $2)
-            """,
-            node_prefix,
-            boot_prefix,
-        )
-        # A search index build owns its generation under the same lease owner: that lease goes
-        # too, or the next worker would find the generation still held.
-        await self.pool.execute(
-            """
-            UPDATE semantic_graph_search.index_generations
-            SET lease_until = now() - interval '1 second'
-            WHERE state = 'indexing' AND lease_until > now()
-              AND starts_with(owner, $1) AND NOT starts_with(owner, $2)
-            """,
-            node_prefix,
-            boot_prefix,
-        )
-        return int(result.split()[-1]) if result else 0
 
     async def recover_stalled_tasks(
         self,

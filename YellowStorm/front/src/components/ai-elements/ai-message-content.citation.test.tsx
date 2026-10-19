@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { AIMessageContent, openCitationSource, type CitationData } from './ai-message-content';
+import { MessageProvider } from './message-context';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { useRecordCitationStore } from '@/modules/semantic-model/citations/record-citation-store';
@@ -44,6 +45,24 @@ describe('openCitationSource', () => {
     expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument();
+  });
+
+  it('notifies the conversation before opening an inline citation', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const onCitationOpen = vi.fn();
+    render(
+      <MessageProvider onCitationOpen={onCitationOpen}>
+        <AIMessageContent
+          citationScope={{ conversationId: 'conversation', messageId: 'answer' }}
+          parts={[{ type: 'text', content: 'Verified [1].', citations: [makeCitation({ source: 'https://example.com/used', reference: '1' })] }]}
+        />
+      </MessageProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '1' }));
+
+    expect(onCitationOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(openSpy).toHaveBeenCalledWith('https://example.com/used', '_blank', 'noopener,noreferrer'));
   });
 
   it('resolves owned evidence before web routing and uses its registered page and scoped cache key', async () => {

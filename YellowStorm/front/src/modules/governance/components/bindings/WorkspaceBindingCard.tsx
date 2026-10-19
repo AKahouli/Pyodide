@@ -11,8 +11,9 @@ export function WorkspaceBindingCard({ programId, scopeId, binding }: Readonly<{
   const deleteBinding = useDeleteGovernanceWorkspaceBinding(programId);
   const label = workspace.isPending ? t('workspaceBinding.loadingWorkspace') : workspace.data?.name ?? t('workspaceBinding.unavailableWorkspace');
   const canDisconnect = binding.visibility === 'scope_specific' && binding.scopeIds?.length === 1 && binding.scopeIds[0] === scopeId;
+  const canDetach = binding.visibility === 'multi_scope' && Boolean(binding.scopeIds?.includes(scopeId));
   return <article className='flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background p-4'>
     <div className='min-w-0'><p className='truncate font-medium'>{label}</p><p className='mt-1 flex items-center gap-1.5 text-xs text-muted-foreground'><CheckCircle2 className='h-3.5 w-3.5' />{t(canDisconnect ? 'workspaceBinding.connected' : 'workspaceBinding.sharedConnection')}</p></div>
-    {canDisconnect && <Button type='button' variant='ghost' size='sm' className='text-destructive' disabled={deleteBinding.isPending} onClick={() => deleteBinding.mutate(binding.id)}><Trash2 className='mr-1 h-4 w-4' />{t('workspaceBinding.remove')}</Button>}
+    {(canDisconnect || canDetach) && <Button type='button' variant='ghost' size='sm' className='text-destructive' disabled={deleteBinding.isPending} onClick={() => deleteBinding.mutate(canDetach ? { bindingId: binding.id, scopeId } : { bindingId: binding.id })}><Trash2 className='me-1 h-4 w-4' />{t('workspaceBinding.remove')}</Button>}
   </article>;
 }

@@ -25,6 +25,7 @@
   "appearance.language.placeholder": "Select language",
   "appearance.language.options.en": "English",
   "appearance.language.options.fr": "French",
+  "appearance.language.options.ar": "Arabic",
   "appearance.tipLabel": "Tip",
   "appearance.tip": "The system option automatically matches your device settings.",
   "profileSection.title": "Profile",

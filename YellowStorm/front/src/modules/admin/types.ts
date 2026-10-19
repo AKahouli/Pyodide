@@ -188,7 +188,7 @@ export interface NavigationNode {
   position: number;
   visible: boolean;
   launcherVisible?: boolean;
-  labels: { en: string; fr: string };
+  labels: { en: string; fr: string; ar?: string };
   targetKey?: NavigationTargetKey;
 }
 
@@ -1044,6 +1044,10 @@ export interface AdminModelResponse {
   isDefault: boolean;
   __WIRE__isConversationV2Default__: boolean;
   omitTemperature: boolean;
+  conversationApi?: 'chat_completions' | 'responses';
+  responsesHistoryMode?: 'application' | 'provider';
+  reasoningHistory?: 'none' | 'last' | 'all' | 'auto';
+  reasoningSummary?: 'off' | 'auto' | 'concise' | 'detailed';
   inputModalities: ModelInputModality[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
@@ -1085,6 +1089,10 @@ export interface UpdateModelRequest {
   types?: ModelType[];
   isActive?: boolean;
   omitTemperature?: boolean;
+  conversationApi?: 'chat_completions' | 'responses';
+  responsesHistoryMode?: 'application' | 'provider';
+  reasoningHistory?: 'none' | 'last' | 'all' | 'auto';
+  reasoningSummary?: 'off' | 'auto' | 'concise' | 'detailed';
   inputModalities?: ModelInputModality[];
   reasoningEfforts?: Array<{ id: string; name: string; description?: string }>;
   defaultReasoningEffort?: string | null;
@@ -1710,7 +1718,19 @@ export interface ConnectorDynamicHeader {
   enabled: boolean;
 }
 
+export interface McpSecurityPolicy {
+  version: 1;
+  profile: 'configured' | 'internal_jwt' | 'public';
+  audience?: string;
+  actorDelegation: 'none' | 'verified_user';
+  allowPrivateNetwork: boolean;
+  allowInsecureHttp: boolean;
+  requiredPermissions: string[];
+}
+
 export interface ConnectorResponse {
+  mcpSecurityPolicy?: McpSecurityPolicy;
+  securityRevision?: number;
   id: string;
   slug: string;
   name: string;
@@ -1723,10 +1743,12 @@ export interface ConnectorResponse {
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
   connectedAppKey: string;
-  runtimeAuthConfig: Record<string, unknown>;
+  /** True when server-side credentials exist; the credentials themselves are never returned. */
+  credentialConfigured: boolean;
   mcpTransportType: string;
   mcpServerUrl: string;
-  mcpServerConfig: Record<string, unknown>;
+  /** Whether the backend can inspect this connector over HTTP. */
+  inspectionStatus: 'supported' | 'unsupported_for_http_inspection';
   workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorActionResponse[];
@@ -1750,6 +1772,8 @@ export interface ConnectorListResponse {
 }
 
 export interface CreateConnectorRequest {
+  mcpSecurityPolicy?: McpSecurityPolicy;
+  expectedSecurityRevision?: number;
   slug: string;
   name: string;
   description: string;
@@ -1765,6 +1789,8 @@ export interface CreateConnectorRequest {
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;
+  /** Set true to clear stored runtime credentials without reading them; omitted fields preserve secrets. */
+  clearRuntimeAuthConfig?: boolean;
   workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders?: ConnectorDynamicHeader[];
   actions?: Array<{
@@ -1862,11 +1888,23 @@ export interface CatalogImportResult {
 export interface WorkspaceUploadSettingsResponse {
   allowedExtensions: string[];
   supportedExtensions: string[];
+  maxFileSizeMb?: number;
+  conversationWorkspaceStorageMb?: number;
   updatedAt?: string;
 }
 
 export interface UpdateWorkspaceUploadSettingsRequest {
   allowedExtensions: string[];
+  maxFileSizeMb?: number;
+  conversationWorkspaceStorageMb?: number;
+}
+
+export interface WorkspaceStorageResponse {
+  id: string;
+  name: string;
+  isSystem: boolean;
+  allocatedStorage: number;
+  usedStorage: number;
 }
 
 export interface WorkspaceEvidenceSearchSettingsResponse { connectorId: string | null; updatedAt?: string; }
@@ -1887,8 +1925,8 @@ export interface ComposerSuggestionSettings {
 export interface ConversationNameSettings { modelId: string | null; }
 export interface CompactionSettings { enabled: boolean; compactionInterval: number; overlapSize: number; tokenFraction: number; eventRetentionSize: number; summarizerModel: string; }
 export interface AttachmentIntelligenceSettings { enabled: boolean; maxIndexedTabularRows: number; }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings };
+export interface ConversationSettingsResponse { generativeUi?: { htmlMode: 'strict' | 'interactive' }; composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { generativeUi?: { htmlMode: 'strict' | 'interactive' }; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings };
 export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 

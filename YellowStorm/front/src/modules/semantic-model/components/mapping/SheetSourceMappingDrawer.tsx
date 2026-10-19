@@ -398,7 +398,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
         <SheetDescription>{target.replaces ? t('mapping.switch.description', { name: target.replaces.documentName ?? target.replaces.documentId }) : t('mapping.description')}</SheetDescription>
         {onSuggestConcepts && !target.mapping && !target.replaces && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit'
           onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}>
-          <Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
+          <Sparkles className='me-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
       </SheetHeader>
       <div className='min-h-0 flex-1 space-y-3 overflow-y-auto p-5'>
         <div className='grid gap-4 pb-2 sm:grid-cols-2'>
@@ -424,7 +424,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
         {!reading && unread && (analyze.isError || autoRead === readKey) && <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
           <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' /><span className='min-w-0 flex-1'>{t('sourceAnalysis.readFailed')}</span>
           <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
-            {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}</Button>
+            {analyze.isPending ? <Loader2 className='me-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}</Button>
         </div>}
 
         <div className={cn('space-y-3', sideBySide && 'xl:grid xl:grid-cols-2 xl:items-start xl:gap-4 xl:space-y-0')}>
@@ -459,7 +459,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
                 {live.loading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <Rows className='h-3.5 w-3.5 shrink-0' />}
                 <span className='min-w-0 flex-1 truncate'>{liveSummary}</span>
                 {canRead && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.loading} onClick={() => void readRows()}>
-                  <RefreshCw className='mr-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('mapping.cell.readNow') : t('mapping.live.readAgain')}
+                  <RefreshCw className='me-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('mapping.cell.readNow') : t('mapping.live.readAgain')}
                 </Button>}
               </div>
               {live.error && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{`${t('mapping.previewError')}: ${live.error}`}</p>}
@@ -596,10 +596,10 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
         </div>
         <Button variant='outline' onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant='outline' disabled={!canSave || preview.isPending} onClick={() => preview.mutate()}>
-          {preview.isPending ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}{t('mapping.previewButton')}
+          {preview.isPending ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}{t('mapping.previewButton')}
         </Button>
         <Button disabled={!canSave || save.isPending} onClick={() => save.mutate()}>
-          {save.isPending ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}{t('mapping.save')}
+          {save.isPending ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}{t('mapping.save')}
         </Button>
       </div>
     </SheetContent>}

@@ -6,12 +6,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Iterable
+from types import SimpleNamespace
 
 from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from yellowmind_observability import get_logger
 
@@ -50,8 +52,21 @@ class ConversationSessionSeedService:
         session_id: str,
         idempotency_key: str,
         history: Iterable[tuple[str, str]],
+        source_session_id: str = "",
     ) -> bool:
         entries = [(role, text.strip()) for role, text in history if text.strip()]
+        state = {SEED_KEY_STATE: idempotency_key}
+        if source_session_id and source_session_id != session_id:
+            from src.smart_rag.infrastructure.monitoring.responses_history import seed_private_history
+            source = await self._load_private_source(user_id, source_session_id)
+            if source is not None:
+                state.update(seed_private_history(source, entries))
+
+        service = self._session_service
+        if (type(service) is DatabaseSessionService
+            and all(hasattr(service, hook) for hook in _DB_SEED_HOOKS)
+            and service.db_engine.dialect.name == 'postgresql'):
+            return await self._seed_database_atomic(user_id, session_id, state, entries)
 
         # Create first: seeds almost always target a new id, and create_session
         # already checks for a duplicate, so the full session read (state plus
@@ -61,7 +76,7 @@ class ConversationSessionSeedService:
                 app_name=APP_NAME,
                 user_id=user_id,
                 session_id=session_id,
-                state={SEED_KEY_STATE: idempotency_key},
+                state=state,
             )
         except AlreadyExistsError:
             existing = await self._session_service.get_session(
@@ -81,16 +96,102 @@ class ConversationSessionSeedService:
 
         return True
 
+    async def _seed_database_atomic(self, user_id, session_id, state, entries) -> bool:
+        """Publish a new PostgreSQL seed and its complete transcript atomically.
+
+        Seed state is exclusively session-local. Shared app/user state is only
+        initialized when absent, never copied or overwritten. Custom services
+        retain the public create/append path and its ownership checks.
+        """
+        service = self._session_service
+        await service.prepare_tables()
+        schema = service._get_schema_classes()
+        events = self._history_events(entries)
+        now = datetime.now(timezone.utc)
+        updated = datetime.fromtimestamp(events[-1].timestamp, timezone.utc) if events else now
+        if service._uses_naive_datetime():
+            now, updated = now.replace(tzinfo=None), updated.replace(tzinfo=None)
+        async with service._rollback_on_exception_session() as transaction:
+            created = (await transaction.execute(postgres_insert(schema.StorageSession).values(
+                app_name=APP_NAME, user_id=user_id, id=session_id, state=state,
+                create_time=now, update_time=updated,
+            ).on_conflict_do_nothing(index_elements=['app_name', 'user_id', 'id'])
+                .returning(schema.StorageSession.id))).scalar_one_or_none()
+            if created is None:
+                existing = (await transaction.execute(select(schema.StorageSession.state).where(
+                    schema.StorageSession.app_name == APP_NAME,
+                    schema.StorageSession.user_id == user_id,
+                    schema.StorageSession.id == session_id,
+                ))).scalar_one_or_none()
+                if existing and existing.get(SEED_KEY_STATE) == state[SEED_KEY_STATE]:
+                    return False
+                raise SessionSeedConflictError(f'Session {session_id} already exists')
+            for model, values in (
+                (schema.StorageAppState, {'app_name': APP_NAME, 'state': {}}),
+                (schema.StorageUserState, {'app_name': APP_NAME, 'user_id': user_id, 'state': {}}),
+            ):
+                await transaction.execute(postgres_insert(model).values(**values).on_conflict_do_nothing())
+            session = SimpleNamespace(app_name=APP_NAME, user_id=user_id, id=session_id)
+            for event in events:
+                transaction.add(schema.StorageEvent.from_event(session, event))
+            await transaction.commit()
+        return True
+
+    async def _load_private_source(self, user_id: str, session_id: str):
+        service = self._session_service
+        # Custom/fenced services must retain their public ownership checks.
+        if type(service) is not DatabaseSessionService or not all(
+            hasattr(service, hook) for hook in _DB_SEED_HOOKS
+        ):
+            return await service.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        await service.prepare_tables()
+        # Only source-local private state and its full transcript participate in
+        # continuity validation. App/user state is neither needed nor copied.
+        schema = service._get_schema_classes()
+        async with service._rollback_on_exception_session(read_only=True) as sql_session:
+            state = (await sql_session.execute(select(schema.StorageSession.state).where(
+                schema.StorageSession.app_name == APP_NAME,
+                schema.StorageSession.user_id == user_id,
+                schema.StorageSession.id == session_id,
+            ))).scalar_one_or_none()
+            if state is None:
+                return None
+            rows = (await sql_session.execute(select(schema.StorageEvent).where(
+                schema.StorageEvent.app_name == APP_NAME,
+                schema.StorageEvent.user_id == user_id,
+                schema.StorageEvent.session_id == session_id,
+            ).order_by(schema.StorageEvent.timestamp.asc(), schema.StorageEvent.id.asc()))).scalars().all()
+            return SimpleNamespace(state=state, events=[row.to_event() for row in rows])
+
     async def _append_history(
         self, session, entries: list[tuple[str, str]]
     ) -> None:
+        events = self._history_events(entries)
+        if not events:
+            return
+        service = self._session_service
+        if type(service) is DatabaseSessionService and all(
+            hasattr(service, hook) for hook in _DB_SEED_HOOKS
+        ):
+            await self._insert_events_in_one_transaction(service, session, events)
+            return
+        for event in events:
+            await service.append_event(session=session, event=event)
+
+    @staticmethod
+    def _history_events(entries: list[tuple[str, str]]) -> list[Event]:
         # Explicit, strictly increasing timestamps keep the transcript order
         # when all rows are written in one transaction (the default
         # per-event clock reads can tie on coarse clocks).
         base = time.time()
-        events = [
+        # Importing the existing transcript is one bootstrap operation, not a
+        # new ADK invocation for every historical message. Otherwise interval
+        # compaction sees all imported messages as newly completed invocations
+        # and repeats its summarizer call on every isolated successor turn.
+        invocation_id = f"branch-seed-{uuid.uuid4()}"
+        return [
             Event(
-                invocation_id=f"branch-seed-{uuid.uuid4()}",
+                invocation_id=invocation_id,
                 author="user" if role == "user" else "assistant",
                 content=types.Content(
                     role="user" if role == "user" else "model",
@@ -100,16 +201,6 @@ class ConversationSessionSeedService:
             )
             for index, (role, text) in enumerate(entries)
         ]
-        if not events:
-            return
-        service = self._session_service
-        if isinstance(service, DatabaseSessionService) and all(
-            hasattr(service, hook) for hook in _DB_SEED_HOOKS
-        ):
-            await self._insert_events_in_one_transaction(service, session, events)
-            return
-        for event in events:
-            await service.append_event(session=session, event=event)
 
     @staticmethod
     async def _insert_events_in_one_transaction(
@@ -126,22 +217,17 @@ class ConversationSessionSeedService:
         """
         schema = service._get_schema_classes()
         async with service._rollback_on_exception_session() as sql_session:
-            row = (
-                await sql_session.execute(
-                    select(schema.StorageSession)
-                    .filter(schema.StorageSession.app_name == session.app_name)
-                    .filter(schema.StorageSession.user_id == session.user_id)
-                    .filter(schema.StorageSession.id == session.id)
-                )
-            ).scalars().one()
+            update_time = datetime.fromtimestamp(events[-1].timestamp, timezone.utc)
+            result = await sql_session.execute(update(schema.StorageSession).where(
+                schema.StorageSession.app_name == session.app_name,
+                schema.StorageSession.user_id == session.user_id,
+                schema.StorageSession.id == session.id,
+            ).values(update_time=(update_time.replace(tzinfo=None)
+                                  if service._uses_naive_datetime() else update_time)))
+            if result.rowcount != 1:
+                raise SessionSeedConflictError('Seed target disappeared before history insertion')
             for event in events:
                 sql_session.add(schema.StorageEvent.from_event(session, event))
-            update_time = datetime.fromtimestamp(events[-1].timestamp, timezone.utc)
-            row.update_time = (
-                update_time.replace(tzinfo=None)
-                if service._uses_naive_datetime()
-                else update_time
-            )
             await sql_session.commit()
 
     async def warm_up(self) -> None:

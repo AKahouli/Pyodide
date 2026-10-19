@@ -6,23 +6,94 @@ import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { LoggerService } from '../../logger';
-import { BadRequestException, ConflictException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
-import { type MessageRecord} from '../persistence/message-store';
+import { type MessageRecord, type OpenUiAppStateKey } from '../persistence/message-store';
 import { ConversationUsageAccountingService } from './conversation-usage-accounting.service';
 import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
+import { createHash } from 'node:crypto';
+import { isValidOpenUiAppState, type OpenUiAppStateResponse, type PutOpenUiAppStateDto } from '../dto/openui-app-state.dto';
 
 const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
 @Injectable()
 export class MessageService {
   private readonly appUrl: string;
+
+  private async openUiAppStateKey(actorId: string, conversationId: string, messageId: string, componentId: string): Promise<OpenUiAppStateKey> {
+    if (!/^[a-f0-9]{24}$/.test(messageId) || !componentId || componentId.length > 128) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
+    }
+    // GET conversation authorization also admits project readers/invitees; private drafts do not.
+    if (!await this.messageStore.canWriteOpenUiAppState(conversationId, actorId)) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Private app state requires conversation membership');
+    }
+    const source = await this.messageStore.findById(messageId);
+    const component = source?.components?.find(item => item.id === componentId && item.type === 'text');
+    const content = component?.data?.content;
+    if (!source || source.conversationId !== conversationId || source.conversationType !== 'ai'
+      || source.isStreaming || !source.isComplete || component?.data.assetDeletedAt || typeof content !== 'string'
+      || !/^\s*root\s*=\s*[A-Z]\w*\(/m.test(content)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
+    }
+    return { actorId, conversationId, sourceMessageId: messageId, componentId,
+      programDigest: createHash('sha256').update(content, 'utf8').digest('hex') };
+  }
+
+  markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean> {
+    return this.messageStore.markAssetUnavailable(conversationId, messageId, component);
+  }
+
+  hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean> {
+    return this.messageStore.hasOtherLiveAssetPath(conversationId, messageId, componentId, path);
+  }
+
+  listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]> {
+    return this.messageStore.listPendingAssetCleanup(conversationId);
+  }
+
+  recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean> {
+    return this.messageStore.recordAssetStaging(conversationId, messageId, component, metadata);
+  }
+
+  getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    return this.messageStore.getAssetRevocationState(conversationId);
+  }
+
+  setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void> {
+    return this.messageStore.setAssetCleanup(conversationId, messageId, componentId, blobCleanup);
+  }
+
+  markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void> {
+    return this.messageStore.markDocumentArtifactsUnavailable(conversationId, documentId);
+  }
+
+  async getOpenUiAppState(actorId: string, conversationId: string, messageId: string, componentId: string): Promise<OpenUiAppStateResponse> {
+    const key = await this.openUiAppStateKey(actorId, conversationId, messageId, componentId);
+    const saved = await this.messageStore.getOpenUiAppState(key);
+    return { schemaVersion: 1, libraryVersion: 'yellowstorm-miniapp-v1', programDigest: key.programDigest,
+      stateRevision: saved?.stateRevision ?? 0, state: saved?.state ?? {}, updatedAt: saved?.updatedAt ?? null, canWrite: true };
+  }
+
+  async putOpenUiAppState(actorId: string, conversationId: string, messageId: string, componentId: string, dto: PutOpenUiAppStateDto): Promise<OpenUiAppStateResponse> {
+    if (dto.schemaVersion !== 1 || dto.libraryVersion !== 'yellowstorm-miniapp-v1'
+      || !Number.isSafeInteger(dto.expectedRevision) || dto.expectedRevision < 0 || dto.expectedRevision > 2_147_483_646
+      || !isValidOpenUiAppState(dto.state)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI app state');
+    }
+    const key = await this.openUiAppStateKey(actorId, conversationId, messageId, componentId);
+    if (key.programDigest !== dto.programDigest) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'OpenUI program changed');
+    const saved = await this.messageStore.putOpenUiAppState(key, dto.expectedRevision, dto.state);
+    if (!saved) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'OpenUI state changed; reload before saving');
+    return { schemaVersion: 1, libraryVersion: 'yellowstorm-miniapp-v1', programDigest: key.programDigest,
+      ...saved, canWrite: true };
+  }
 
   constructor(
     private readonly messageStore: PostgresMessageStore,
@@ -40,7 +111,16 @@ export class MessageService {
     this.appUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
   }
 
+  private async assertParentInConversation(data: CreateUserMessageData): Promise<void> {
+    if (data.parentMessageId === undefined) return;
+    if (!/^[a-f0-9]{24}$/.test(data.parentMessageId)
+      || !await this.messageStore.findByIdInConversation(data.conversationId, data.parentMessageId)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+  }
+
   async createUserMessage(data: CreateUserMessageData): Promise<MessageResponse> {
+    await this.assertParentInConversation(data);
     this.logger.log('Creating user message', {
       conversationId: data.conversationId,
       contentLength: data.content.length,
@@ -112,6 +192,10 @@ export class MessageService {
     return response;
   }
 
+  listAssetMessages(conversationId: string, cursor: string | undefined, limit: number) {
+    return this.messageStore.listCursor({ conversationId, cursor, limit, conversationType: 'ai' });
+  }
+
   listRecentArtifactMessages(userId: string, limit: number) {
     return this.messageStore.listRecentArtifactMessages(userId, limit);
   }
@@ -180,6 +264,7 @@ export class MessageService {
       placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'>;
     },
   ): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
+    await this.assertParentInConversation(data);
     const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
     if (data.content.length > maxLength) {
       throw new AppException({
@@ -220,13 +305,11 @@ export class MessageService {
       userResponse.attachedFiles = fileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
     }
 
+    const placeholderResponse = this.mapToResponse(placeholder);
     void this.broadcastMessage(data.conversationId, {
       type: 'message_created',
       data: { conversationId: data.conversationId, message: userResponse },
-    });
-
-    const placeholderResponse = this.mapToResponse(placeholder);
-    void this.broadcastMessage(data.conversationId, {
+    }, {
       type: 'message_created',
       data: { conversationId: data.conversationId, message: placeholderResponse },
     });
@@ -417,6 +500,37 @@ export class MessageService {
     }
   }
 
+  async searchConversationMessages(conversationId: string, q: string, limit = 20) {
+    const query = q.trim();
+    if (!query || query.length > 200 || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid message search');
+    }
+    const redact = await this.resolveRedactSensitiveText();
+    if (redact) return { matches: [], hasMore: false };
+    const result = await this.messageStore.searchConversationMessages(conversationId, query, limit);
+    return { matches: result.records.map(row => ({ messageId: row.id, questionMessageId: row.questionMessageId ?? undefined,
+      conversationType: row.conversationType, createdAt: row.createdAt.toISOString(), snippet: redact ? '' : row.snippet })), hasMore: result.hasMore };
+  }
+
+  async messagesAround(conversationId: string, messageId: string, limit = 50) {
+    if (!/^[a-f0-9]{24}$/.test(messageId) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid message window');
+    }
+    const window = await this.messageStore.listAround(conversationId, messageId, limit);
+    if (!window) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    const redact = await this.resolveRedactSensitiveText();
+    const files = await this.resolveAttachedFiles(window.records.flatMap(row => row.attachedFileIds ?? []));
+    const mapped = window.records.map(row => {
+      const response = this.mapToResponse(row, redact);
+      if (row.attachedFileIds?.length) response.attachedFiles = row.attachedFileIds.map(id => files.get(id))
+        .filter((file): file is AttachedFileResponse => Boolean(file));
+      return response;
+    });
+    const branchesByQuestion: Record<string, MessageResponse[]> = {};
+    for (const row of mapped) if (row.questionMessageId) (branchesByQuestion[row.questionMessageId] ??= []).push(row);
+    return { messages: mapped, branchesByQuestion, pagination: { mode: 'around' as const, hasOlder: window.hasOlder, hasNewer: window.hasNewer } };
+  }
+
   async findByConversation(conversationId: string, params: MessageQueryParams): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {
     if ((params.mode ?? 'legacy') === 'cursor') {
       if (params.page !== undefined) {
@@ -501,8 +615,14 @@ export class MessageService {
     };
   }
 
-  async findById(messageId: string): Promise<MessageResponse> {
-    const [message, redactSensitiveText] = await Promise.all([this.messageStore.findById(messageId), this.resolveRedactSensitiveText()]);
+  findByIdInConversation(conversationId: string, messageId: string): Promise<MessageResponse> {
+    return this.findById(messageId, conversationId);
+  }
+
+  async findById(messageId: string, conversationId?: string): Promise<MessageResponse> {
+    const [message, redactSensitiveText] = await Promise.all([
+      conversationId === undefined ? this.messageStore.findById(messageId) : this.messageStore.findByIdInConversation(conversationId, messageId),
+      this.resolveRedactSensitiveText()]);
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -549,8 +669,8 @@ export class MessageService {
     return { resultJson };
   }
 
-  async updateFeedback(messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
-    const existing = await this.messageStore.findById(messageId);
+  async updateFeedback(conversationId: string, messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
+    const existing = await this.messageStore.findByIdInConversation(conversationId, messageId);
 
     if (!existing) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -564,7 +684,7 @@ export class MessageService {
       });
     }
 
-    const message = await this.messageStore.updateFeedback(messageId, feedback, new Date());
+    const message = await this.messageStore.updateFeedback(messageId, feedback, new Date(), conversationId);
     if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
 
     this.logger.log('Message feedback updated', {
@@ -621,8 +741,8 @@ export class MessageService {
     return this.messageStore.claimStream(messageId, leaseId, now, new Date(now.getTime() + leaseDurationMs));
   }
 
-  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
-    return this.messageStore.renewStream(messageId, leaseId, new Date(Date.now() + leaseDurationMs));
+  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number, components?: MessageComponent[]): Promise<boolean> {
+    return this.messageStore.renewStream(messageId, leaseId, new Date(Date.now() + leaseDurationMs), components);
   }
 
   async releaseStreamExecution(messageId: string, leaseId: string): Promise<void> {
@@ -773,8 +893,9 @@ export class MessageService {
     await this.messageStore.touchPendingReliability(messageIds, new Date());
   }
 
-  async getMessageDocument(messageId: string): Promise<MessageRecord> {
-    const message = await this.messageStore.findById(messageId);
+  async getMessageDocument(messageId: string, conversationId?: string): Promise<MessageRecord> {
+    const message = await (conversationId === undefined ? this.messageStore.findById(messageId)
+      : this.messageStore.findByIdInConversation(conversationId, messageId));
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -814,10 +935,10 @@ export class MessageService {
     return this.messageStore.cleanupStaleStreams(cutoff);
   }
 
-  async updateUserMessage(messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
-    const existing = await this.messageStore.findById(messageId);
+  async updateUserMessage(conversationId: string, senderId: string, messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
+    const existing = await this.messageStore.findByIdInConversation(conversationId, messageId);
 
-    if (!existing) {
+    if (!existing || existing.senderId !== senderId) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
@@ -834,7 +955,7 @@ export class MessageService {
       agentIds,
       memberIds,
       editedAt: new Date(),
-    });
+    }, { conversationId, senderId });
     if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     if (agentIds?.length) await this.conversationService.updateTaggedAgents(message.conversationId, agentIds);
 
@@ -859,8 +980,10 @@ export class MessageService {
     return this.messageStore.deleteByConversation(conversationId);
   }
 
-  async findBranchesByQuestion(questionMessageId: string): Promise<MessageResponse[]> {
-    const messages = await this.messageStore.findBranchesByQuestion(questionMessageId);
+  async findBranchesByQuestion(conversationId: string, questionMessageId: string): Promise<MessageResponse[]> {
+    const question = await this.getMessageDocument(questionMessageId, conversationId);
+    if (question.conversationType !== 'user') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    const messages = await this.messageStore.findBranchesByQuestion(questionMessageId, conversationId);
 
     return messages.map((m) => this.mapToResponse(m));
   }
@@ -926,6 +1049,7 @@ export class MessageService {
       editedAt: toISO(message.editedAt),
       isStreaming: message.isStreaming,
       isComplete: message.isComplete,
+      terminalStatus: message.terminalStatus,
       inputTokens: message.inputTokens,
       outputTokens: message.outputTokens,
       modelRequestTelemetry: message.modelRequestTelemetry,
@@ -972,6 +1096,10 @@ export class MessageService {
     // size; clients fetch it on demand via findToolActivityResult.
     return components.map((component) => {
       if (!component?.data) return component;
+      if (component.data.assetDeletedAt) {
+        return { id: component.id, type: component.type, data: { assetDeletedAt: component.data.assetDeletedAt,
+          availability: 'deleted', filename: component.data.filename, artifactId: component.data.artifactId } };
+      }
       if (component.type === 'artifact') {
         return sanitizePublicComponent(component, { redactSensitiveText: false });
       }
@@ -1014,7 +1142,7 @@ export class MessageService {
     return undefined;
   }
 
-  private async broadcastMessage(conversationId: string, event: StreamEvent): Promise<void> {
+  private async broadcastMessage(conversationId: string, ...events: StreamEvent[]): Promise<void> {
     try {
       const conversation = await this.conversationService.findById(conversationId);
       const userIds: string[] = [conversation.createdBy];
@@ -1027,7 +1155,7 @@ export class MessageService {
         });
       }
 
-      await this.streamGateway.broadcastToConversation(userIds, event);
+      for (const event of events) await this.streamGateway.broadcastToConversation(userIds, event);
     } catch (err) {
       this.logger.warn('Failed to broadcast message event', {
         conversationId,

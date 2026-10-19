@@ -1,0 +1,13 @@
+{
+    "folders": [
+        {
+            "path": "."
+        },
+        {
+            "path": "../agent-trees/nexus-agent"
+        },
+        {
+            "path": "../agent-trees/vector-agent"
+        }
+    ]
+}

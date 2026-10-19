@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import require_actor_context
+from auth import require_actor_context, verified_mcp_jwt
 from contracts import AgentMcpResultV1, failure_result
 
 
@@ -26,7 +26,7 @@ class AgentBackendError(RuntimeError):
 class YellowStormAgentClient:
     def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 60, max_response_bytes: int = 2 * 1024 * 1024, transport: httpx.AsyncBaseTransport | None = None) -> None:
         if not internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+            raise ValueError("AGENT_MCP_BACKEND_SERVICE_TOKEN is required")
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
@@ -57,7 +57,8 @@ class YellowStormAgentClient:
                 path,
                 json=payload,
                 headers={
-                    "X-Internal-Token": self._internal_token,
+                    "X-YellowStorm-Service-Principal": "mcp-agent",
+                    "X-YellowStorm-Service-Token": self._internal_token,
                     "X-YellowStorm-User-Id": user_id,
                     **self._actor_headers(),
                 },
@@ -85,12 +86,18 @@ class YellowStormAgentClient:
     @staticmethod
     def _actor_headers() -> dict[str, str]:
         context = require_actor_context()
-        return {key: value for key, value in {
+        headers = {key: value for key, value in {
             "X-YellowStorm-User-Id": context.user_id,
             "X-YellowStorm-Agent-Id": context.agent_id,
             "X-YellowStorm-Conversation-Id": context.conversation_id,
             "X-Correlation-Id": context.correlation_id,
         }.items() if value}
+        # The backend-issued MCP JWT travels as the signed actor assertion
+        # (ADR-0024); the delegated-user guard takes the actor only from it.
+        assertion = verified_mcp_jwt.get()
+        if assertion:
+            headers["X-YellowStorm-Mcp-Assertion"] = assertion
+        return headers
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> Any:

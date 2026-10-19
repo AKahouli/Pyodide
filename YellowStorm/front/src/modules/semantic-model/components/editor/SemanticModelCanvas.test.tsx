@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConceptSourceMapping, MappingHealthItem, ModelCheckIssue, SemanticGraph } from '../../types';
+import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, ModelCheckIssue, SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
 import { showSuccess, showWarning } from '@/lib/notifications';
@@ -11,8 +11,11 @@ const flow = vi.hoisted(() => ({ props:{} as Record<string,unknown> }));
 
 vi.mock('@xyflow/react', () => ({
   Background:() => null,
+  BaseEdge:({id,style,markerEnd}:{id:string;style?:Record<string,unknown>;markerEnd?:unknown}) => <div data-testid={`base-edge-${id}`} data-stroke={String(style?.stroke??'')} data-dash={String(style?.strokeDasharray??'')} data-marker={JSON.stringify(markerEnd??null)} />,
   Controls:() => null,
-  Handle:() => null,
+  EdgeLabelRenderer:({children}:{children:ReactNode}) => <>{children}</>,
+  Handle:({id,type,position,style,className,...props}:{id?:string;type:string;position:string;style?:React.CSSProperties;className?:string;'aria-label'?:string;title?:string}) => <span data-handle-id={id} data-handle-type={type} data-handle-position={position} style={style} className={className} aria-label={props['aria-label']} title={props.title} />,
+  getBezierPath:({curvature}:{curvature?:number}) => [`path-${curvature}`,100,100],
   NodeToolbar:({isVisible,children}:{isVisible?:boolean;children:ReactNode}) => isVisible ? <>{children}</> : null,
   MarkerType:{ArrowClosed:'arrowclosed'},
   Position:{Left:'left',Right:'right',Top:'top'},
@@ -20,7 +23,12 @@ vi.mock('@xyflow/react', () => ({
     flow.props=props;
     const nodes = props.nodes as Array<{id:string;type:string;data:Record<string,unknown>;selected?:boolean}>;
     const types = props.nodeTypes as Record<string,(nodeProps:Record<string,unknown>)=>React.ReactNode>;
-    return <div data-testid='flow'>{nodes.map((node)=>{const Component=types[node.type];return <Component key={node.id} data={node.data} selected={Boolean(node.selected)} isConnectable={Boolean(props.nodesConnectable)} />;})}</div>;
+    const edges = props.edges as Array<{id:string;type:string;data?:Record<string,unknown>;selected?:boolean;markerEnd?:unknown}>;
+    const edgeTypes = props.edgeTypes as Record<string,(edgeProps:Record<string,unknown>)=>React.ReactNode>;
+    return <div data-testid='flow'>
+      {nodes.map((node)=>{const Component=types[node.type];return <Component key={node.id} data={node.data} selected={Boolean(node.selected)} isConnectable={Boolean(props.nodesConnectable)} />;})}
+      {edges.map((edge)=>{const Component=edgeTypes[edge.type];return Component?<Component key={edge.id} {...edge} sourceX={0} sourceY={0} targetX={200} targetY={100} sourcePosition='right' targetPosition='left' />:null;})}
+    </div>;
   },
 }));
 
@@ -43,7 +51,7 @@ const knowledge = {
 } as unknown as KnowledgeLinkingController;
 
 const healthy = (...ids: string[]): MappingHealthItem[] => ids.map((id) => ({ id, conceptId:'contract', conceptLabel:'Contract', documentName:'', state:'healthy', missingFields:[], availableFields:[] } as unknown as MappingHealthItem));
-const renderCanvas = (sourceMappings?: ConceptSourceMapping[], mappingHealth?: MappingHealthItem[]) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} mappingHealth={mappingHealth} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+const renderCanvas = (sourceMappings?: ConceptSourceMapping[], mappingHealth?: MappingHealthItem[], onSelectRelation?: (relationId: string) => void) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} mappingHealth={mappingHealth} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onSelectRelation={onSelectRelation} />);
 
 function mapping(overrides: Partial<ConceptSourceMapping>): ConceptSourceMapping {
   return {
@@ -82,6 +90,25 @@ describe('SemanticModelCanvas', () => {
     // Both documents appear as their own source steps.
     expect(screen.getByText('master-agreement-0041.pdf')).toBeInTheDocument();
     expect(screen.getByText('master-agreement-0099.pdf')).toBeInTheDocument();
+  });
+
+  it('routes relation line and label clicks through the same parent selection callback', () => {
+    const relationGraph: SemanticGraph = {
+      ...contractGraph,
+      nodes: [contractGraph.nodes[0], { ...contractGraph.nodes[0], id: 'customer', key: 'customer', label: 'Customer' }],
+      relations: [{ id: 'contract-customer', key: 'contract_customer', label: 'has customer', inverseLabel: '', description: '',
+        sourceNodeTypeId: 'contract', targetNodeTypeId: 'customer', cardinality: 'many_to_one', traversable: true, filterable: true, attributes: [] }],
+    };
+    useSemanticModelEditorStore.getState().hydrate(relationGraph);
+    const onSelectRelation = vi.fn();
+    renderCanvas(undefined, undefined, onSelectRelation);
+
+    act(() => (flow.props.onEdgeClick as (event: unknown, edge: { id: string }) => void)({}, { id: 'contract-customer' }));
+    fireEvent.click(screen.getByText('has customer'));
+
+    expect(onSelectRelation).toHaveBeenNthCalledWith(1, 'contract-customer');
+    expect(onSelectRelation).toHaveBeenNthCalledWith(2, 'contract-customer');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
   });
 
   it('shows the key badge for a unique field chosen on the concept, before any source is mapped', () => {
@@ -156,6 +183,89 @@ describe('SemanticModelCanvas', () => {
     expect(edges[0].type).toBe('relation');
     expect(edges[0].markerEnd.type).toBe('arrowclosed');
     expect(edges[0].data).toMatchObject({label:'signs',cardinality:'one_to_many'});
+  });
+
+  it('gives concepts separate data and relationship ports, while sources expose only data', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({})]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+
+    expect(screen.getAllByLabelText('canvasConnections.dataFrom')).toHaveLength(2);
+    expect(screen.getAllByLabelText('canvasConnections.dataTo')).toHaveLength(1);
+    expect(screen.getAllByLabelText('canvasConnections.relationshipFrom')).toHaveLength(1);
+    expect(screen.getAllByLabelText('canvasConnections.relationshipTo')).toHaveLength(1);
+    expect(screen.getByLabelText('canvasConnections.dataTo')).toHaveStyle({top:'28%'});
+    expect(screen.getByLabelText('canvasConnections.relationshipTo')).toHaveStyle({top:'68%'});
+    expect(screen.getByRole('button',{name:'designer.plus.source'})).toHaveClass('left-[14px]','top-[36px]');
+    expect(screen.getByRole('button',{name:'designer.plus.next'}).parentElement).toHaveClass('right-[14px]','top-[36px]');
+    expect(screen.getByRole('button',{name:'designer.delete.concept'})).toHaveClass('left-1/2','-top-4');
+  });
+
+  it('uses the same eligibility rules to validate and route data connections', () => {
+    const concept = (id:string, attributes=contractGraph.nodes[0].attributes, systemKey:string|null=null) => ({...contractGraph.nodes[0],id,key:id,label:id,attributes,systemKey});
+    const derived = (id:string,sourceConceptId:string,conceptId:string):DerivedSource => ({id,sourceConceptId,conceptId,fieldMappings:[],conflictRule:'most_frequent',orderBy:null,updatedAt:''});
+    const derivedSources = [derived('d1','source','derived-source'),derived('d2','derived-source','chain-target')];
+    useSemanticModelEditorStore.getState().hydrate({...contractGraph,nodes:[concept('source'),concept('target'),concept('empty',[]),concept('system',contractGraph.nodes[0].attributes,'protected'),concept('derived-source'),concept('chain-target')]});
+    const onConnectRequest = vi.fn();
+    const onDataConnectRequest = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} derivedSources={derivedSources} onOpenKnowledge={vi.fn()} onConnectRequest={onConnectRequest} onDataConnectRequest={onDataConnectRequest} />);
+    const valid = flow.props.isValidConnection as (connection:Record<string,unknown>)=>boolean;
+    const connect = flow.props.onConnect as (connection:Record<string,unknown>)=>void;
+    const data = (source:string,target:string) => ({source,target,sourceHandle:'data-source',targetHandle:'data-target'});
+
+    expect(valid({...data('source','target'),targetHandle:'relationship-target'})).toBe(false);
+    expect(valid(data('source','target'))).toBe(true);
+    expect(valid(data('source','source'))).toBe(false);
+    expect(valid(data('system','target'))).toBe(false);
+    expect(valid(data('source','system'))).toBe(false);
+    expect(valid(data('empty','target'))).toBe(false);
+    expect(valid(data('derived-source','target'))).toBe(true);
+    expect(valid(data('source','chain-target'))).toBe(true);
+    expect(valid(data('derived-source','chain-target'))).toBe(true);
+    expect(valid(data('chain-target','target'))).toBe(true);
+    expect(valid(data('chain-target','source'))).toBe(false);
+
+    act(()=>connect(data('chain-target','source')));
+    act(()=>connect({source:'source',target:'target',sourceHandle:'relationship-source',targetHandle:'relationship-target'}));
+    act(()=>connect(data('chain-target','target')));
+    expect(onConnectRequest).toHaveBeenCalledWith({sourceId:'source',targetId:'target'});
+    expect(onDataConnectRequest).toHaveBeenCalledTimes(1);
+    expect(onDataConnectRequest).toHaveBeenCalledWith({sourceId:'chain-target',targetId:'target'});
+  });
+
+  it('keeps parallel data flows and relationships on distinct ports, curves and labels', () => {
+    const concept = (id:string,label:string,x:number) => ({...contractGraph.nodes[0],id,key:id,label,position:{x,y:0}});
+    const derived = (id:string,sourceConceptId:string,conceptId:string):DerivedSource => ({id,sourceConceptId,conceptId,fieldMappings:[],conflictRule:'most_frequent',orderBy:null,updatedAt:''});
+    useSemanticModelEditorStore.getState().hydrate({
+      ...contractGraph,
+      nodes:[concept('participation','Participation',0),concept('correspondant','Correspondant',300),concept('message','Message e-mail',0),concept('fait','Fait',300)],
+      relations:[
+        {id:'participates',key:'participates',label:'participates in',inverseLabel:'',description:'',sourceNodeTypeId:'participation',targetNodeTypeId:'correspondant',cardinality:'many_to_one',traversable:true,filterable:true,attributes:[]},
+        {id:'states',key:'states',label:'states',inverseLabel:'',description:'',sourceNodeTypeId:'message',targetNodeTypeId:'fait',cardinality:'one_to_many',traversable:true,filterable:true,attributes:[]},
+      ],
+    });
+    const onOpenDerived = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} derivedSources={[derived('d1','participation','correspondant'),derived('d2','message','fait')]} onOpenDerived={onOpenDerived} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+
+    const edges = flow.props.edges as Array<{id:string;type:string;sourceHandle?:string;targetHandle?:string;markerEnd?:{color?:string};data:Record<string,unknown>}>;
+    for (const edge of edges) {
+      expect(edge.data.parallel).toBe(true);
+      expect(edge.sourceHandle).toBe(edge.type==='feed'?'data-source':'relationship-source');
+      expect(edge.targetHandle).toBe(edge.type==='feed'?'data-target':'relationship-target');
+    }
+    expect(screen.getByTestId('base-edge-participates')).toHaveAttribute('data-dash','');
+    expect(screen.getByTestId('base-edge-feed:derived:d1')).toHaveAttribute('data-dash','1 8');
+    expect(edges.find((edge)=>edge.id==='feed:derived:d1')?.markerEnd?.color).toBe('rgb(13 148 136)');
+
+    const onEdgeClick = flow.props.onEdgeClick as (event:unknown,edge:{id:string})=>void;
+    act(()=>onEdgeClick({}, {id:'participates'}));
+    expect(useSemanticModelEditorStore.getState()).toMatchObject({selectedId:'participates',detailsOpen:true});
+    act(()=>onEdgeClick({}, {id:'feed:derived:d1'}));
+    expect(onOpenDerived).toHaveBeenCalledWith(expect.objectContaining({id:'d1',sourceConceptId:'participation',conceptId:'correspondant'}));
+
+    fireEvent.click(screen.getByRole('button',{name:'canvasConnections.data'}));
+    expect((flow.props.edges as Array<{type:string}>).every((edge)=>edge.type==='feed')).toBe(true);
+    fireEvent.click(screen.getByRole('button',{name:'canvasConnections.relationships'}));
+    expect((flow.props.edges as Array<{type:string}>).every((edge)=>edge.type==='relation')).toBe(true);
   });
 
   it('prevents protected concepts from producing layout operations', () => {

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+import math
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
@@ -95,6 +96,10 @@ class SessionLookupProfile:
 
 def _classify_statement(statement: str) -> str:
     stmt = (statement or "").lower()
+    # Joined session/app/user reads belong to the session-row bucket; do not
+    # misreport their entire duration as an independent app-state lookup.
+    if all(table in stmt for table in ("sessions", "app_states", "user_states")):
+        return "session_row"
     # app_states/user_states must be tested before the bare table names they contain.
     if "app_states" in stmt:
         return "app_state"
@@ -307,3 +312,119 @@ def emit_runner_pre_model_log(
     runtime_ms = fields.get("adk_runtime_pre_model_ms")
     level = 30 if runtime_ms is not None and runtime_ms >= SLOW_RUNNER_PRE_MODEL_MS else 20
     _emit(RUNNER_PRE_MODEL_EVENT, level, fields)
+
+
+def emit_provider_timing_log(trace: ConversationLatencyTrace) -> None:
+    """Numeric-only decomposition of the first capacity-gated provider call."""
+    _emit("conversation_latency_diag.provider_timing", 20, {
+        "request_id": trace.request_id,
+        "assistant_message_id": trace.assistant_message_id,
+        **{name: round(value, 1) for name, value in trace.build_provider_timing_breakdown().items()},
+    })
+
+
+async def trace_responses_http_request(request) -> None:
+    """Attach numeric-only httpcore tracing to the first request of this turn."""
+    trace = get_current_conversation_latency_trace()
+    if trace is None or trace.provider_http_timing:
+        return
+    trace.provider_http_timing['request_start'] = time.perf_counter_ns()
+    previous = request.extensions.get('trace')
+    async def observe(name, info):
+        if previous is not None:
+            await previous(name, info)
+        if name in {'connection.connect_tcp.started', 'connection.connect_tcp.complete',
+                    'connection.start_tls.started', 'connection.start_tls.complete'}:
+            trace.provider_http_timing.setdefault(name, time.perf_counter_ns())
+        elif name in {'http11.send_request_body.complete', 'http2.send_request_body.complete'}:
+            trace.provider_http_timing.setdefault('request_sent', time.perf_counter_ns())
+    request.extensions['trace'] = observe
+    request.extensions['_yellowstorm_latency_trace'] = trace
+
+
+async def trace_responses_http_response(response) -> None:
+    trace = response.request.extensions.get('_yellowstorm_latency_trace')
+    if trace is None:
+        return
+    trace.provider_http_timing.setdefault('response_headers', time.perf_counter_ns())
+    if not response.is_stream_consumed:
+        import httpx
+        original = response.stream
+
+        class ObservedBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                async for chunk in original:
+                    if chunk:
+                        trace.provider_http_timing.setdefault('first_body', time.perf_counter_ns())
+                    yield chunk
+
+            async def aclose(self):
+                await original.aclose()
+
+        response.stream = ObservedBody()
+    trace.provider_http_metrics['http2'] = int(response.http_version == 'HTTP/2')
+    for header, metric in (
+        ('x-litellm-overhead-duration-ms', 'gateway_overhead_ms'),
+        ('x-litellm-response-duration-ms', 'gateway_response_ms'),
+    ):
+        try:
+            value = float(response.headers.get(header, ''))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and 0 <= value <= 600_000:
+            trace.provider_http_metrics[metric] = value
+    _emit('conversation_latency_diag.provider_http', 20, {
+        'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id,
+        **{name: round(value, 1) for name, value in trace.build_provider_http_breakdown().items()},
+    })
+
+
+def observe_responses_event(trace: ConversationLatencyTrace, event) -> None:
+    """First-write numeric milestones only; never retain event payloads."""
+    stamps = trace.provider_stream_timing
+    now = time.perf_counter_ns()
+    stamps.setdefault('first_event', now)
+    get = event.get if isinstance(event, dict) else lambda key: getattr(event, key, None)
+    event_type = get('type')
+    item = get('item')
+    item_type = item.get('type') if isinstance(item, dict) else getattr(item, 'type', None)
+    if event_type == 'response.output_item.added' and item_type == 'reasoning':
+        stamps.setdefault('reasoning_item', now)
+    if event_type == 'response.output_item.added' and item_type == 'function_call':
+        stamps.setdefault('tool', now)
+        stamps.setdefault('useful', now)
+    category = {
+        'response.reasoning_summary_text.delta': 'summary',
+        'response.output_text.delta': 'text',
+        'response.function_call_arguments.delta': 'tool',
+    }.get(event_type)
+    if category and get('delta'):
+        stamps.setdefault(category, now)
+        stamps.setdefault('useful', now)
+    if event_type in ('response.completed', 'response.incomplete', 'response.failed', 'error'):
+        stamps.setdefault('terminal', now)
+
+
+def emit_provider_stream_log(trace: ConversationLatencyTrace) -> None:
+    if trace.provider_stream_timing:
+        _emit('conversation_latency_diag.provider_stream', 20, {
+            'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id,
+            **{name: round(value, 1) for name, value in trace.build_provider_stream_breakdown().items()},
+        })
+
+
+def emit_provider_usage_log(trace: ConversationLatencyTrace, usage) -> None:
+    values = {}
+    for field, metric in (
+        ('prompt_token_count', 'input_tokens'),
+        ('cached_content_token_count', 'cached_input_tokens'),
+        ('thoughts_token_count', 'reasoning_tokens'),
+        ('candidates_token_count', 'output_tokens'),
+    ):
+        value = getattr(usage, field, None)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            values[metric] = value
+    if values:
+        _emit('conversation_latency_diag.provider_usage', 20, {
+            'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id, **values,
+        })

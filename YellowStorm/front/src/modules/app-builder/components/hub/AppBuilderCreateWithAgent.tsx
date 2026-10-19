@@ -129,7 +129,7 @@ export function AppBuilderCreateWithAgent() {
                     onClick={() => applySuggestion(label)}
                     className={cn(
                       'max-w-full truncate rounded-full border border-border/70 bg-background/80',
-                      'px-2.5 py-1 text-left text-xs text-foreground/90',
+                      'px-2.5 py-1 text-start text-xs text-foreground/90',
                       'transition-colors hover:border-primary/30 hover:bg-primary/5',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
                       'disabled:pointer-events-none disabled:opacity-50',

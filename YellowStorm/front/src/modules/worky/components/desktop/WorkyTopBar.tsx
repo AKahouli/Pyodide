@@ -88,7 +88,7 @@ export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable, attentionPr
         </Button>
       </div>
 
-      <div className='ml-auto flex items-center gap-2'><AttentionSettingsButton value={attentionPreferences} onChange={onAttentionPreferencesChange} count={attentionCount} />{onToggleVoice && <Button type='button' size='icon' variant={voiceActive ? 'default' : 'outline'} onClick={onToggleVoice} aria-label={t('nav.voice')} title={t('nav.voice')} className='size-9 shrink-0'><Mic className='size-4' /></Button>}<Button
+      <div className='ms-auto flex items-center gap-2'><AttentionSettingsButton value={attentionPreferences} onChange={onAttentionPreferencesChange} count={attentionCount} />{onToggleVoice && <Button type='button' size='icon' variant={voiceActive ? 'default' : 'outline'} onClick={onToggleVoice} aria-label={t('nav.voice')} title={t('nav.voice')} className='size-9 shrink-0'><Mic className='size-4' /></Button>}<Button
         type="button"
         size="icon"
         variant="outline"

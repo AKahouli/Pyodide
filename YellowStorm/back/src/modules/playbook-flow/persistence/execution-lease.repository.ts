@@ -5,6 +5,7 @@ import { isObjectId, isUniqueViolation, newObjectId, normalizeObjectId } from '@
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
+import { createHash } from 'node:crypto';
 
 const l = schema.playbookExecutionLeases;
 
@@ -85,6 +86,17 @@ export class ExecutionLeaseRepository {
       .where(and(eq(l.executionId, normalizeObjectId(executionId)), sql`${l.expiresAt} > now()`))
       .limit(1);
     return rows.length > 0;
+  }
+
+  /** Heartbeats change updatedAt/expiry, not the acquisition generation. A
+   * takeover overwrites createdAt even when reusing the same concurrency row. */
+  async authorityGeneration(executionId: string, ownerId: string, flowId: string): Promise<string | null> {
+    if (![executionId, ownerId, flowId].every(isObjectId)) return null;
+    const rows = await this.q.select({ id: l.id, createdAt: l.createdAt }).from(l)
+      .where(and(eq(l.executionId, normalizeObjectId(executionId)), eq(l.ownerId, normalizeObjectId(ownerId)),
+        eq(l.flowId, normalizeObjectId(flowId)), eq(l.scopeType, 'global'), sql`${l.expiresAt} > clock_timestamp()`));
+    if (rows.length !== 1) return null;
+    return createHash('sha256').update(`${rows[0].id}:${rows[0].createdAt.toISOString()}`).digest('hex');
   }
 
   /** Frees every slot the execution holds; returns how many. */

@@ -127,7 +127,7 @@ export const TemplateCard = memo(function TemplateCard({
         <button
           type='button'
           onClick={() => onOpen(template)}
-          className='block w-full truncate text-left text-[15px] font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 rounded-sm'
+          className='block w-full truncate text-start text-[15px] font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 rounded-sm'
         >
           {template.title}
         </button>

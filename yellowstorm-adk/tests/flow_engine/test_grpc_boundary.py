@@ -19,6 +19,7 @@ from unittest.mock import patch
 import grpc
 import pytest
 import pytest_asyncio
+from types import SimpleNamespace
 from google.protobuf.struct_pb2 import Struct
 from google.protobuf.json_format import MessageToDict, ParseDict
 
@@ -35,6 +36,13 @@ from src.flow_engine.grpc_service import (  # noqa: E402
     compiled_graph_cache,
     execution_limiter,
 )
+
+
+@pytest.fixture(autouse=True)
+def scoped_artifact_machine_key(monkeypatch):
+    from src.flow_engine.runtime import artifact_publication
+    monkeypatch.setattr(artifact_publication, 'get_settings', lambda: SimpleNamespace(
+        API_URL='http://backend/api', ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN='test-only-artifact-machine-key'))
 
 
 class _MockChunk:
@@ -203,7 +211,7 @@ async def test_grpc_boundary_run_linear_flow(stub):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock response"]),
     ):
-        events = [e async for e in stub.Run(request)]
+        events = [e async for e in stub.Run(request, metadata=(('x-yellowstorm-artifact-authority', 'test-dispatch-proof'),))]
 
     assert len(events) > 0, "Expected at least one event"
     event_types = [e.event_type for e in events]
@@ -265,7 +273,7 @@ async def test_grpc_boundary_cancel_during_human_approval(stub):
         events = []
 
         async def _collect():
-            async for event in stub.Run(run_request):
+            async for event in stub.Run(run_request, metadata=(('x-yellowstorm-artifact-authority', 'test-dispatch-proof'),)):
                 events.append(event)
                 if event.event_type == "ApprovalRequested":
                     approval_requested.set()

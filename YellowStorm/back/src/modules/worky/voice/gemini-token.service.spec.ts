@@ -43,7 +43,7 @@ function svc(overrides: Record<string, unknown> = {}, actions: unknown[] | null 
   // The concierge tools come from the connectors' actions; here only
   // 'worky-concierge' resolves (human-agents returns null and is skipped).
   const connectors = {
-    findBySlug: jest.fn().mockImplementation((slug: string) =>
+    findRuntimeBySlug: jest.fn().mockImplementation((slug: string) =>
       slug === 'worky-concierge' && actions
         ? { slug, id: 'c1', mcpServerUrl: 'http://localhost:8080/mcp', actions }
         : null,
@@ -101,5 +101,27 @@ describe('GeminiTokenService', () => {
   it('throws a clear error when the concierge connector has no tools', async () => {
     createMock.mockResolvedValue({ name: 'ephemeral-none' });
     await expect(svc({}, null).mintSessionToken()).rejects.toThrow(/worky-concierge/);
+  });
+
+  it.each([
+    'https://user:TEST_CANARY_R03@mcp.example.test/mcp',
+    'https://mcp.example.test/mcp?token=TEST_CANARY_R03',
+    'https://mcp.example.test/mcp?%74oken=TEST_CANARY_R03',
+  ])('denies unsafe browser tool endpoints before provider token creation', async (endpoint) => {
+    createMock.mockResolvedValue({ name: 'ephemeral-canary' });
+    const canary = 'voice-canary-7c31';
+    const service = svc();
+    const connectors = (service as unknown as { connectors: { findRuntimeBySlug: jest.Mock } }).connectors;
+    connectors.findRuntimeBySlug.mockImplementation((slug: string) =>
+      slug === 'worky-concierge'
+        ? { slug, id: 'c1', mcpServerUrl: endpoint, actions: CONNECTOR_ACTIONS }
+        : null,
+    );
+    const logSpy = jest.spyOn((service as unknown as { logger: { log: jest.Mock } }).logger, 'log');
+
+    await expect(service.mintSessionToken()).rejects.toThrow(/without embedded credentials/);
+    expect(createMock).not.toHaveBeenCalled();
+    const logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(logged).not.toContain(canary);
   });
 });

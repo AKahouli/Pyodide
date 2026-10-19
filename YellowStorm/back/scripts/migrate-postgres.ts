@@ -23,6 +23,8 @@ async function main(): Promise<void> {
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
     database: process.env.POSTGRES_DB,
+    // Historical SQL stays immutable, including migrations predating headers.
+    options: '-c lock_timeout=5s',
     max: 1,
   });
   const db = drizzle(pool);

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, ErrorCode } from '../../exceptions';
+import { BadRequestException, ConflictException, ForbiddenException, ErrorCode } from '../../exceptions';
 import { AgentService } from '../../agent/agent.service';
 import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { stableStringify } from '../../agent/services/agent-execution-snapshot.service';
@@ -23,6 +23,51 @@ import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 
 @Injectable()
 export class RootDelegateDefinitionService {
+  async assertCurrentAuthorityRights(executionId: string): Promise<void> {
+    const execution = await this.work.getExecution(executionId);
+    const state = execution?.resultPayload?.nativeState;
+    const deny = () => new ForbiddenException(ErrorCode.FORBIDDEN, 'Root authority definition or authorization changed');
+    if (!execution || !state || state.scope.executionId !== executionId
+      || !['running', 'waiting'].includes(execution.status)) throw deny();
+    const root = execution.role === 'root' ? execution
+      : execution.parentExecutionId ? await this.work.getExecution(execution.parentExecutionId) : null;
+    const rootState = root?.resultPayload?.nativeState;
+    if (!root || !rootState || root.role !== 'root' || root.depth !== 0 || root.parentExecutionId
+      || rootState.scope.executionId !== root.id || rootState.actorId !== state.actorId
+      || root.conversationId !== execution.conversationId || root.conversationEpoch !== execution.conversationEpoch
+      || root.rootAgentId !== execution.rootAgentId || !['running', 'waiting', 'completed'].includes(root.status)) throw deny();
+    if (execution.role !== 'root' && execution.role !== 'followup' && (execution.depth !== 1
+      || state.scope.parentExecutionId !== root.id || !rootState.capabilityCeiling)) throw deny();
+    const conversation = await this.conversations.getConversationDocument(root.conversationId);
+    if (!conversation || conversation.createdBy !== state.actorId || conversation.isGroup || conversation.isArchived
+      || conversation.rootAgentId !== root.rootAgentId || (conversation.rootWorkEpoch ?? 0) !== root.conversationEpoch) throw deny();
+    const current = await this.resolver.resolveForActor(root.rootAgentId ?? '', state.actorId,
+      root.conversationId, rootState.rootContext.governance_revision ?? null);
+    if (current.rootSnapshotDigest !== rootState.scope.immutableSnapshotRef) throw deny();
+    if (execution.role === 'library_worker') {
+      const selectedId = state.rootContext.selected_agent_id;
+      const frozen = (rootState.rootContext.catalog as Array<Record<string, unknown>> | undefined)
+        ?.find(entry => entry.agent_id === selectedId);
+      const selected = current.entries.find(entry => entry.agentId === selectedId);
+      if (!current.delegationEnabled || typeof selectedId !== 'string' || state.admittedRequest?.agentId !== selectedId
+        || !frozen || !selected || selected.snapshotDigest !== state.scope.immutableSnapshotRef
+        || selected.snapshotDigest !== frozen.snapshot_digest || selected.configurationMode !== frozen.configuration_mode) throw deny();
+    } else if (execution.role === 'temporary_worker') {
+      if (!current.policy.temporaryWorkers.enabled || state.scope.immutableSnapshotRef !== rootState.scope.immutableSnapshotRef
+        || state.rootContext.origin_root_agent_id !== root.rootAgentId || state.rootContext.selected_agent_id !== execution.id
+        || (state.admittedRequest?.contextRefs ?? []).some(ref => !rootState.capabilityCeiling!.workspaceIds.includes(ref))) throw deny();
+    } else if (execution.role === 'fanout_driver') {
+      if (!current.policy.fanout.enabled || state.scope.immutableSnapshotRef !== rootState.scope.immutableSnapshotRef) throw deny();
+    } else if (execution.role === 'followup') {
+      // Followup synthesis is derived from the completed root itself: same
+      // actor/chain (checked above), same frozen snapshot, background policy only.
+      if (execution.depth !== 0 || state.scope.role !== 'followup' || state.scope.depth !== 0
+        || !current.policy?.background?.enabled || state.scope.parentExecutionId !== root.id
+        || state.scope.immutableSnapshotRef !== rootState.scope.immutableSnapshotRef) throw deny();
+    } else if (execution.role !== 'root') {
+      throw deny();
+    }
+  }
   constructor(private readonly work: RootWorkService, private readonly conversations: ConversationService,
     private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService,
     private readonly workspaceShares: WorkspaceShareService, private readonly runCodeSources: RunCodeSourceScopeService,

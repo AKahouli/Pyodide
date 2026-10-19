@@ -5,6 +5,8 @@ import {
   type RootDelegationContext,
 } from './conversation-agent-request.builder';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
+import { loadSync, type ServiceDefinition } from '@grpc/proto-loader';
+import { join } from 'node:path';
 
 describe('ConversationAgentRequestBuilder', () => {
   it('keeps the native profile digest stable across acting-user tool credential refresh', () => {
@@ -33,6 +35,34 @@ describe('ConversationAgentRequestBuilder', () => {
       agent: { id: 'agent-1' }, skills: [{ id: 'skill-1' }],
       correction_replay_context: expect.objectContaining({ original_answer: 'Old', attempt_number: 1 }),
     }));
+  });
+
+  const attachmentWorkspace = 'b'.repeat(24);
+  const currentDocument = { type: 'document', document: { workspace_id: attachmentWorkspace, document_id: 'c'.repeat(24), filepath: '/private/source', filename: 'plan.docx' } };
+  const buildWithAttachments = (workspaceContexts: unknown[], attachedFiles: unknown[], previousAttachedFiles: unknown[] = []) => new ConversationAgentRequestBuilder().build({
+    userId: 'user-1', conversationId: 'a'.repeat(24), request, workspaceContexts, attachedFiles, previousAttachedFiles, agents: [{id: 'agent-1'}], skills: [],
+  }).payload;
+  it('preserves the legacy conversation fallback when no current trusted document workspace exists', () => {
+    expect(buildWithAttachments([], [], [currentDocument]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+  });
+  it('uses the real current attachment workspace instead of the conversation fallback', () => {
+    const result = buildWithAttachments([], [currentDocument]);
+    expect(result.workspace_context).toEqual([{workspace_id:attachmentWorkspace,workspace_name:attachmentWorkspace,workspace_documents:[]}]);
+    expect(result.attached_files).toEqual([currentDocument]);
+  });
+  it('merges and deduplicates current attachment workspaces with selected contexts', () => {
+    const linked = {workspace_id:'d'.repeat(24),workspace_name:'Knowledge',workspace_documents:[{id:'known'}]};
+    const existing = {workspace_id:attachmentWorkspace,workspace_name:'Uploads',workspace_documents:[]};
+    expect(buildWithAttachments([linked], [currentDocument,currentDocument]).workspace_context).toEqual([linked,{workspace_id:attachmentWorkspace,workspace_name:attachmentWorkspace,workspace_documents:[]}]);
+    expect(buildWithAttachments([linked,existing], [currentDocument]).workspace_context).toEqual([linked,existing]);
+  });
+  it('ignores malformed or non-document attachment workspace metadata', () => {
+    for(const file of [null,{}, {type:'image',document:currentDocument.document}, {type:'document',document:null},
+      {type:'document',document:{workspace_id:'foreign',document_id:'c'.repeat(24)}},
+      {type:'document',document:{workspace_id:attachmentWorkspace,document_id:'bad'}},
+      {type:'document',document:{workspace_id:attachmentWorkspace}}]) {
+      expect(buildWithAttachments([], [file]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+    }
   });
 
   it('routes multiple resolved agents through the team RPC', () => {
@@ -189,19 +219,32 @@ describe('ConversationAgentRequestBuilder', () => {
       stopRequestId: '018f0000-0000-7000-8000-000000000000',
       rootContext: {
         root_agent_id: 'r1', policy_version: '1', max_depth: 1,
+        visible_user_message: 'stale content must be overwritten',
         catalog: [{ agent_id: 'a1', name: 'S', configuration_mode: 'native' }],
       },
       candidates: [{ id: 'a1', name: 'S' }],
     };
     const result = new ConversationAgentRequestBuilder().build({
-      userId: 'user-1', conversationId: 'conv-1', request,
+      userId: 'user-1', conversationId: 'conv-1', request: { ...request, clientContext: {
+        contextVersion: 1, route: '/conversation', module: 'other', surface: 'conversation',
+        availableActions: [], hasUnsavedChanges: false, locale: 'en',
+      } },
       workspaceContexts: [], agents: [{ id: 'root-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
       rootDelegation,
       executionScope: rootDelegation.scope,
     });
     expect(result.rpc).toBe('RunSingleAgent');
-    expect(result.payload.root_context).toEqual(rootDelegation.rootContext);
+    expect(result.payload.root_context).toEqual({ ...rootDelegation.rootContext, visible_user_message: request.content });
+    expect(result.payload.query).toContain('<contextual_page_hint>');
+    expect(rootDelegation.rootContext.visible_user_message).toBe('stale content must be overwritten');
     expect(result.payload.delegate_candidates).toEqual([{ id: 'a1', name: 'S' }]);
     expect(result.payload.execution_scope).toEqual(expect.objectContaining({ execution_role: 1, conversation_epoch: 3 }));
+    const service = loadSync(join(__dirname, '../proto/chatbot.proto'), { keepCase: true })['chatbot.ChatbotService'] as ServiceDefinition;
+    const method = service.RunSingleAgent;
+    const wire = method.requestDeserialize(method.requestSerialize(result.payload)) as {
+      root_context: { visible_user_message: string }; query: string;
+    };
+    expect(wire.root_context.visible_user_message).toBe(request.content);
+    expect(wire.query).toContain('<contextual_page_hint>');
   });
 });

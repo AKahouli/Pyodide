@@ -344,7 +344,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
           </div>
           {!isScenarioInlineOpen && (
             <Button type='button' onClick={handleCreateScenario} className='bg-primary hover:bg-primary/90 text-primary-foreground border-none shadow-lg'>
-              <Plus className='mr-2 h-4 w-4' />
+              <Plus className='me-2 h-4 w-4' />
               {t('evaluation.scenarios.create')}
             </Button>
           )}
@@ -355,7 +355,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
             <Label className='text-sm font-bold text-foreground'>Nom du scénario</Label>
             <div className='flex items-center'>
               <div className='relative flex-1'>
-                <Input value={scenarioForm.name} onChange={(e) => setScenarioForm({ ...scenarioForm, name: e.target.value })} placeholder="Ex. Parcours d'onboarding" className='border-primary focus-visible:ring-primary h-10 pr-20 rounded-r-none' autoFocus />
+                <Input value={scenarioForm.name} onChange={(e) => setScenarioForm({ ...scenarioForm, name: e.target.value })} placeholder="Ex. Parcours d'onboarding" className='border-primary focus-visible:ring-primary h-10 pe-20 rounded-r-none' autoFocus />
                 <div className='absolute right-0 top-0 h-full flex border-l border-primary'>
                   <button type='button' onClick={handleSaveScenario} className='h-full px-3 flex items-center justify-center bg-muted hover:bg-muted/70 transition-colors text-foreground'>
                     <Save className='h-4 w-4' />
@@ -430,7 +430,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
       <Accordion type='multiple' defaultValue={['dataset', 'evaluations', 'results']} className='space-y-4'>
         <AccordionItem value='dataset' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
           <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
-            <div className='flex items-center gap-4 text-left'>
+            <div className='flex items-center gap-4 text-start'>
               <div className='flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>1</div>
               <div>
                 <h4 className='font-semibold text-[14px] text-foreground group-hover:text-primary transition-colors'>Dataset Q/R</h4>
@@ -443,7 +443,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
               <div className='flex items-end gap-2 flex-1 max-w-xl'>
                 <input type='file' ref={fileInputRef} className='hidden' accept='.xlsx,.csv' onChange={handleFileUpload} />
                 <Button type='button' size='sm' onClick={() => fileInputRef.current?.click()}>
-                  <FileDown className='mr-2 h-4 w-4' />
+                  <FileDown className='me-2 h-4 w-4' />
                   Importer en Excel
                 </Button>
 
@@ -486,7 +486,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                         <SelectItem key={ds.id} value={ds.id} className='flex items-center justify-between group py-3'>
                           <div className='flex items-center justify-between w-full'>
                             <span className='text-foreground'>{ds.name}</span>
-                            <Badge variant='secondary' className='ml-2'>
+                            <Badge variant='secondary' className='ms-2'>
                               {ds.items.length} questions
                             </Badge>
                           </div>
@@ -510,7 +510,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                   <div className='divide-y divide-primary/10 max-h-96 overflow-y-auto custom-scrollbar p-2 space-y-2'>
                     {/* Manual items */}
                     {manualItems.map((item, i) => (
-                      <div key={`manual-${i}`} className='flex gap-3 items-center animate-in fade-in slide-in-from-top-2 duration-300 p-2 bg-primary/5 rounded-lg border border-border/50 group relative pr-14'>
+                      <div key={`manual-${i}`} className='flex gap-3 items-center animate-in fade-in slide-in-from-top-2 duration-300 p-2 bg-primary/5 rounded-lg border border-border/50 group relative pe-14'>
                         <div className='flex-1 relative'>
                           <div className='bg-card border border-border rounded-lg p-3 shadow-inner group-hover:border-primary/30 transition-all'>
                             <textarea value={item?.question || ''} onChange={(e) => handleUpdateManualRow(i, 'question', e.target.value)} placeholder='Saisissez votre question ici...' className='w-full min-h-20 bg-transparent border-none outline-none text-sm resize-none focus:ring-0 placeholder:text-muted-foreground/20 text-foreground' />
@@ -550,7 +550,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
 
         <AccordionItem value='evaluations' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
           <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
-            <div className='flex items-center gap-4 text-left'>
+            <div className='flex items-center gap-4 text-start'>
               <div className='flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>2</div>
               <div></div>
               <h4 className='font-semibold text-base text-foreground'>{t('evaluation.evaluations.title')}</h4>
@@ -562,7 +562,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
               <div className='grid gap-2 min-w-75 flex-1'>
                 <Label className='text-xs'>{t('evaluation.evaluations.runName')}</Label>
                 <div className='relative flex items-center'>
-                  <Input value={runName} onChange={(e) => setRunName(e.target.value)} className='h-9 pr-24' />
+                  <Input value={runName} onChange={(e) => setRunName(e.target.value)} className='h-9 pe-24' />
                   <div className='absolute right-1 px-2 py-1 flex items-center gap-1.5 h-7 rounded-md bg-muted/50 border border-border/50 text-[10px] font-bold text-muted-foreground pointer-events-none'>
                     <Cpu className='w-3 h-3 text-primary' />
                     <span>{models.find((m) => m.id === agent?.model)?.name || agent?.model || 'Standard'}</span>
@@ -612,7 +612,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                 </div>
               </div>
               <Button type='button' className='bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-6 min-w-35 shadow-lg' onClick={handleLaunch} disabled={!selectedDatasetId}>
-                <Play className='mr-2 h-4 w-4 fill-current' />
+                <Play className='me-2 h-4 w-4 fill-current' />
                 {t('evaluation.evaluations.launch')}
               </Button>
             </div>
@@ -621,8 +621,8 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
 
         <AccordionItem value='results' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
           <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
-            <div className='flex items-center justify-between w-full pr-4'>
-              <div className='flex items-center gap-4 text-left'>
+            <div className='flex items-center justify-between w-full pe-4'>
+              <div className='flex items-center gap-4 text-start'>
                 <div className='flex items-center justify-center w-10 h-10 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>3</div>
                 <div>
                   <h4 className='font-bold text-lg text-foreground'>{t('evaluation.evaluations.title')}</h4>
@@ -647,8 +647,8 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                 <table className='w-full text-sm'>
                   <thead className='bg-primary/90 text-primary-foreground uppercase text-[10px] font-bold'>
                     <tr>
-                      <th className='px-4 py-3 text-left tracking-wider'>RÉPONSE</th>
-                      <th className='px-4 py-3 text-left tracking-wider'>Date</th>
+                      <th className='px-4 py-3 text-start tracking-wider'>RÉPONSE</th>
+                      <th className='px-4 py-3 text-start tracking-wider'>Date</th>
                       <th className='px-4 py-3 text-center tracking-wider'>Resp. Match</th>
                       <th className='px-4 py-3 text-center tracking-wider'>Final Match</th>
                       <th className='px-4 py-3 text-center tracking-wider'>Hallucinations</th>
@@ -673,7 +673,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                             <td className='px-4 py-3 font-medium'>
                               <div className='flex items-center gap-2'>
                                 {ev.scenarioName}
-                                {isProcessing && <Loader2 className='inline ml-2 h-3 w-3 animate-spin text-primary' />}
+                                {isProcessing && <Loader2 className='inline ms-2 h-3 w-3 animate-spin text-primary' />}
                                 {totalRuns > 1 && <Badge variant='secondary' className='text-[10px] px-1.5 py-0'>{totalRuns} Runs</Badge>}
                               </div>
                             </td>
@@ -779,7 +779,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
             </div>
           </DialogHeader>
 
-          <div className='flex-1 overflow-auto mt-4 pr-1'>
+          <div className='flex-1 overflow-auto mt-4 pe-1'>
             {(() => {
               if (!selectedEvalForDetail) return null;
               
@@ -814,7 +814,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                         <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Resp Match</TableHead>
                         <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Final Match</TableHead>
                         <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Hallu</TableHead>
-                        <TableHead className='w-20 text-right text-[10px] font-black uppercase tracking-widest text-primary'>Action</TableHead>
+                        <TableHead className='w-20 text-end text-[10px] font-black uppercase tracking-widest text-primary'>Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -837,7 +837,7 @@ export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
                               {Math.round(run.avgHallu * 100)}%
                             </Badge>
                           </TableCell>
-                          <TableCell className='text-right py-4'>
+                          <TableCell className='text-end py-4'>
                             <Button variant='outline' size='sm' className='h-7 text-[10px] font-bold' onClick={() => setSelectedRunIndex(run.runIdx)}>
                               Détails
                             </Button>

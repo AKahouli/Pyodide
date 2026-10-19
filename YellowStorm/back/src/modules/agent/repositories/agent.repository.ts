@@ -121,6 +121,14 @@ export class AgentRepository {
     return this.one(eq(agents.id, id));
   }
 
+  async findBootstrapById(id: string): Promise<Pick<AgentRecord, '_id' | 'name' | 'createdBy' | 'isDefault' | 'rootExecutionPolicy'> | null> {
+    const [row] = await this.db.select({ id: agents.id, name: agents.name, createdBy: agents.createdBy,
+      isDefault: agents.isDefault, rootExecutionPolicy: agents.rootExecutionPolicy })
+      .from(agents).where(eq(agents.id, id)).limit(1);
+    return row ? { _id: trim24(row.id), name: row.name, createdBy: trim24(row.createdBy),
+      isDefault: row.isDefault, rootExecutionPolicy: (row.rootExecutionPolicy as Record<string, unknown>) ?? undefined } : null;
+  }
+
   async listUserAgents(p: { userId: string; search?: string; agentType?: string; isActive?: boolean; page: number; limit: number }) {
     const conds = [eq(agents.createdBy, p.userId), eq(agents.isDefault, false)];
     if (p.search) conds.push(ilike(agents.name, `%${p.search}%`));

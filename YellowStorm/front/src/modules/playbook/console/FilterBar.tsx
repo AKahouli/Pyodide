@@ -60,7 +60,7 @@ export function FilterBar({
           placeholder={t('console.search.placeholder')}
           aria-label={t('console.search.placeholder')}
           data-testid="playbook-search"
-          className="h-8 pl-9 pr-8"
+          className="h-8 ps-9 pe-8"
         />
         {search && (
           <button

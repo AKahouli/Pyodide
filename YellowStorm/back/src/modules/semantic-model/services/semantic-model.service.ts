@@ -11,6 +11,7 @@ import { SemanticGraphRepository } from '../repositories/semantic-graph.reposito
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
 import { RuntimeCloneDataCommand, SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticSourceAccessService } from './semantic-source-access.service';
 
 interface CloneIdMaps {
   nodeIds: Map<string, string>;
@@ -32,6 +33,8 @@ export interface CloneInclude {
 
 export type SemanticModelCloneResult = SemanticModelRow & {
   dataCopy: { status: 'copied' | 'skipped' | 'failed'; reason?: string; records?: number; links?: number };
+  /** Neutral count of source rows NOT copied because the cloner cannot read them (WP04.3). */
+  skippedSources?: number;
 };
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -86,11 +89,24 @@ export class SemanticModelService {
     private readonly workspaces: WorkspaceService,
     private readonly realtimeSignals: SemanticRealtimeSignalService,
     private readonly runtime: SemanticRuntimeClientService,
+    private readonly sourceAccess: SemanticSourceAccessService,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
+  /** Fail-closed clone-scope authorization (WP-04): absent wiring denies source-including clones. */
+  private get cloneScope(): SemanticSourceAccessService {
+    if (!this.sourceAccess) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Clone scope authorization is not configured');
+    }
+    return this.sourceAccess;
+  }
+
   list(userId: string, query: SemanticModelQueryDto) {
     return this.models.listForUser(userId, query);
+  }
+
+  listJobModels(userId: string) {
+    return this.models.listJobModels(userId);
   }
 
   async get(userId: string, modelId: string): Promise<SemanticModelRow & { role: string }> {
@@ -254,18 +270,36 @@ export class SemanticModelService {
    * copied: a build of the clone gives it data again.
    */
   async clone(userId: string, modelId: string, name: string, include: CloneInclude = {}): Promise<SemanticModelCloneResult> {
-    const options = { sources: include.sources ?? true, data: include.data ?? false, shares: include.shares ?? false };
+    // WP04.2: structure-only is the default; sources and data are explicit,
+    // reviewed choices — a clone never silently inherits source access.
+    const options = { sources: include.sources ?? false, data: include.data ?? false, shares: include.shares ?? false };
     if (options.data) options.sources = true;
     const source = await this.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (options.shares && source.role !== 'owner') {
       throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED, 'Only the owner can copy who the model is shared with');
     }
+    // WP04.4: durable data copying is reserved for the people who manage the
+    // source model and can read every contributing workspace.
+    if (options.data && !['owner', 'editor'].includes(source.role)) {
+      throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED, 'Only the owner or an editor can copy a model\'s data');
+    }
     const versionId = source.currentDraftVersionId ?? source.currentPublishedVersionId;
     if (!versionId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    // WP04.1 preflight: the actor-authorized source scope decides what may be
+    // copied, pinned to this decision — the copy never re-reads permissions.
+    const contributing = await this.cloneContributingWorkspaces(source.id);
+    const authorized = new Set(await this.cloneScope.accessibleWorkspaceIds(userId, source.id));
+    const skippedWorkspaces = contributing.filter((workspaceId) => !authorized.has(workspaceId));
+    if (options.data && skippedWorkspaces.length) {
+      // Fail closed BEFORE creating anything: no partial clone, no raw revision.
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'This model has sources you cannot access, so its data cannot be copied. Clone the structure, or the sources you can access, instead.');
+    }
     const revisionResult = await this.database.query<{ revision: number }>('SELECT revision::int FROM semantic_model.versions WHERE id=$1', [versionId]);
     const sourceGraph = await this.graph.getGraph(source.id, versionId, revisionResult.rows[0]?.revision ?? 0);
     const ids = this.createCloneIdMaps(sourceGraph);
     let clone: SemanticModelRow;
+    let skippedSources = 0;
     try {
       clone = await this.database.transaction(async (client) => {
         const target = await this.createCloneModel(client, userId, name, source.description, []);
@@ -273,12 +307,13 @@ export class SemanticModelService {
         ids.all.set(versionId, target.currentDraftVersionId!);
         await this.copyCloneGraph(client, target.id, target.currentDraftVersionId!, sourceGraph, ids, options.sources);
         await this.copyCloneStructure(client, source.id, target.id, userId, ids, options.sources);
-        if (options.sources) await this.copyCloneSources(client, source.id, target.id, userId, ids);
+        if (options.sources) skippedSources = await this.copyCloneSources(client, source.id, target.id, userId, ids, authorized);
         if (options.shares) await this.copyCloneShares(client, source.id, target.id, userId);
         await this.audit(client, target.id, target.currentDraftVersionId, userId, 'model.cloned', {
           sourceModelId: source.id,
           sourceVersionId: versionId,
           include: options,
+          skippedSources,
         });
         return target;
       });
@@ -286,12 +321,15 @@ export class SemanticModelService {
       if (this.isUniqueViolation(error)) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NAME_EXISTS);
       throw error;
     }
-    if (!options.data) return { ...clone, dataCopy: { status: 'skipped' } };
+    if (!options.data) {
+      return { ...clone, dataCopy: { status: 'skipped' }, ...(skippedSources ? { skippedSources } : {}) };
+    }
     try {
       const planned = await this.plannedCloneData(userId, source.id, clone.id);
       const copied = await this.runtime.cloneModelData(source.id, {
         targetModelId: clone.id,
         targetModelVersionId: clone.currentDraftVersionId!,
+        allowedWorkspaceIds: [...authorized],
         ...planned,
         idMap: {
           concepts: Object.fromEntries(ids.nodeIds),
@@ -312,6 +350,17 @@ export class SemanticModelService {
       this.logger.warn(`Clone ${clone.id} of ${source.id} kept without data: ${(error as Error).message}`);
       return { ...clone, dataCopy: { status: 'failed', reason: 'runtime_copy_failed' } };
     }
+  }
+
+  /** Every workspace the source model takes data from: links and mapped sources (WP04.1 preflight candidates). */
+  private async cloneContributingWorkspaces(modelId: string): Promise<string[]> {
+    const result = await this.database.query<{ workspaceId: string }>(
+      `SELECT workspace_id AS "workspaceId" FROM semantic_model.source_mappings WHERE model_id=$1
+       UNION
+       SELECT workspace_id AS "workspaceId" FROM semantic_model.workspace_links WHERE model_id=$1`,
+      [modelId],
+    );
+    return [...new Set(result.rows.map((row) => row.workspaceId).filter(Boolean))];
   }
 
   /**
@@ -431,10 +480,20 @@ export class SemanticModelService {
     }
   }
 
-  private async copyCloneSources(client: PoolClient, sourceId: string, targetId: string, userId: string, ids: CloneIdMaps): Promise<void> {
+  /**
+   * Copies source links, knowledge bindings and mappings the cloner may read
+   * (WP04.3). Rows of unauthorized workspaces are skipped — never copied —
+   * and counted so the caller can report a neutral skipped-source figure.
+   * Concept-level artefacts (derived sources, relation rules, policies,
+   * presets) carry no workspace reference; resolution policies drop the
+   * priorities of mappings that were skipped.
+   */
+  private async copyCloneSources(client: PoolClient, sourceId: string, targetId: string, userId: string, ids: CloneIdMaps, authorized: Set<string>): Promise<number> {
+    let skipped = 0;
     const links = await client.query<{ workspaceId: string; role: string; enabled: boolean }>(
       'SELECT workspace_id AS "workspaceId", role, enabled FROM semantic_model.workspace_links WHERE model_id=$1', [sourceId]);
     for (const link of links.rows) {
+      if (!authorized.has(link.workspaceId)) { skipped += 1; continue; }
       await client.query(
         `INSERT INTO semantic_model.workspace_links (model_id, workspace_id, role, enabled, created_by) VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (model_id, workspace_id) DO NOTHING`, [targetId, link.workspaceId, link.role, link.enabled, userId]);
@@ -442,7 +501,7 @@ export class SemanticModelService {
     // The clone inherits the origin link, so models.origin_workspace_id has to follow.
     // Left null, linking any workspace would be read as "this model has no origin yet"
     // and assign role 'origin' again, colliding with semantic_workspace_origin_uidx.
-    const origin = links.rows.find((link) => link.role === 'origin' && link.enabled);
+    const origin = links.rows.find((link) => link.role === 'origin' && link.enabled && authorized.has(link.workspaceId));
     if (origin) {
       await client.query(
         'UPDATE semantic_model.models SET origin_workspace_id=$2, updated_at=now() WHERE id=$1 AND origin_workspace_id IS NULL',
@@ -453,13 +512,21 @@ export class SemanticModelService {
               workspace_id AS "workspaceId", document_id AS "documentId", inclusion_mode AS "inclusionMode",
               retrieval_mode AS "retrievalMode", priority, enabled, protected, availability
        FROM semantic_model.knowledge_bindings WHERE model_id=$1`, [sourceId]);
-    await this.copyCloneBindings(client, targetId, userId, bindings.rows, ids);
+    await this.copyCloneBindings(client, targetId, userId, bindings.rows.filter((binding) => {
+      if (authorized.has(binding.workspaceId)) return true;
+      skipped += 1;
+      return false;
+    }), ids);
 
-    const mappings = await client.query<CloneRow & { id: string; concept_id: string }>(
+    const mappings = await client.query<CloneRow & { id: string; concept_id: string; workspace_id: string }>(
       'SELECT * FROM semantic_model.source_mappings WHERE model_id=$1 ORDER BY created_at', [sourceId]);
-    for (const row of mappings.rows) ids.mappingIds.set(row.id, randomUUID());
+    for (const row of mappings.rows) {
+      if (!authorized.has(row.workspace_id)) { skipped += 1; continue; }
+      ids.mappingIds.set(row.id, randomUUID());
+    }
     for (const [from, to] of ids.mappingIds) ids.all.set(from, to);
     for (const row of mappings.rows) {
+      if (!authorized.has(row.workspace_id) || !ids.mappingIds.has(row.id)) continue;
       const conceptId = ids.nodeIds.get(row.concept_id);
       if (!conceptId) continue;
       await insertCloneRow(client, 'semantic_model.source_mappings', {
@@ -512,6 +579,7 @@ export class SemanticModelService {
         id: randomUUID(), model_id: targetId, concept_id: conceptId, created_by: userId, updated_by: userId,
       });
     }
+    return skipped;
   }
 
   /** Every other member keeps their role; the caller owns the clone and the source owner becomes an editor. */

@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { escapeLike } from '@common/postgres/like';
 import { newObjectId } from '@common/postgres/object-id';
-import { resolveQueryable } from '@common/postgres/transaction';
+import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
 import { workspaceRowToRecord } from '../../persistence/postgres/pg-workspace-read.adapter';
 import { type WorkspaceCreateInput, type WorkspaceListParams, type WorkspaceListPublicParams, type WorkspaceUpdatePatch, type WorkspaceCounterDelta } from '../workspace-store';
 import type { WorkspaceRecord } from '../../ports/workspace-records';
@@ -161,6 +161,21 @@ export class PgWorkspaceStore {
       })
       .returning();
     return workspaceRowToRecord(rows[0]);
+  }
+
+  async updateStorageQuota(id: string, allocatedStorage: number, expectedAllocatedStorage: number): Promise<boolean> {
+    return withTransaction(this.db, async () => {
+      const [workspace] = await this.q.select().from(WORKSPACES).where(eq(WORKSPACES.id, id)).for('update');
+      if (!workspace || workspace.allocatedStorage !== expectedAllocatedStorage) return false;
+      const documents = schema.workspaceDocuments;
+      const [usage] = await this.q.select({
+        pending: sql<number>`coalesce(sum(case when ${documents.status} in ('pending', 'uploading') then ${documents.size} else 0 end), 0)`.mapWith(Number),
+        completed: sql<number>`coalesce(sum(case when ${documents.status} not in ('pending', 'uploading') then ${documents.size} else 0 end), 0)`.mapWith(Number),
+      }).from(documents).where(and(eq(documents.workspaceId, id), eq(documents.isFolder, false)));
+      if (Math.max(workspace.usedStorage, usage.completed) + usage.pending > allocatedStorage) return false;
+      await this.q.update(WORKSPACES).set({ allocatedStorage, updatedAt: new Date() }).where(eq(WORKSPACES.id, id));
+      return true;
+    });
   }
 
   async updateFields(id: string, patch: WorkspaceUpdatePatch): Promise<void> {

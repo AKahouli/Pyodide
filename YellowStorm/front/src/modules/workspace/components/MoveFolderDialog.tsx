@@ -70,7 +70,7 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
           disabled={disabled}
           onClick={() => setTarget(node.id)}
           className={cn(
-            'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition',
+            'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition',
             'hover:bg-accent hover:text-accent-foreground',
             selected && 'bg-primary/10 text-primary',
             disabled && 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-current',
@@ -109,7 +109,7 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
                 type='button'
                 onClick={() => setTarget(null)}
                 className={cn(
-                  'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition',
+                  'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition',
                   'hover:bg-accent hover:text-accent-foreground',
                   target === null && 'bg-primary/10 text-primary',
                 )}

@@ -163,7 +163,7 @@ export function RulesDialog({ open, onOpenChange, globalOnly = false }: Props) {
         <ScrollArea className='max-h-[320px]'>
           {isLoadingRules && visibleRules.length === 0 ? (
             <div className='flex items-center justify-center py-12 text-sm text-muted-foreground'>
-              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              <Loader2 className='me-2 h-4 w-4 animate-spin' />
               Chargement…
             </div>
           ) : visibleRules.length === 0 ? (

@@ -15,6 +15,8 @@ import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-call
 import { ConnectorController } from './connector.controller';
 import { ConnectorInternalController } from './controllers/connector-internal.controller';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
+import { AdkRuntimeMcpRenewalGuard } from '../auth/guards/internal-service-principal.guard';
+import { AdkNativeActorGuard } from '../auth/guards/adk-native-actor.guard';
 import { ConnectorUserService } from './connector-user.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
@@ -25,7 +27,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
-import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from './services/mcp-jwt.service';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
 import { SKILL_STORE } from '../skill/persistence/skill.store';
@@ -70,11 +72,13 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     ConnectorTransferService,
     ConnectorPlaybookBindingSyncService,
     ConnectorMcpRuntimeService,
-    SemanticModelMcpJwtService,
+    McpJwtService,
     CatalogTransferService,
     M365TransferAdapter,
     ConnectorUserService,
     InternalServiceGuard,
+    AdkRuntimeMcpRenewalGuard,
+    AdkNativeActorGuard,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,
@@ -83,6 +87,6 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     { provide: SKILL_STORE, useClass: PgSkillStore },
     PgSkillCategoryStore,
   ],
-  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService, SemanticModelMcpJwtService],
+  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService, McpJwtService],
 })
 export class ConnectorModule {}

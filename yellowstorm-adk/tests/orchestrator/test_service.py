@@ -38,12 +38,12 @@ async def test_add_message_propagates_projection_failure():
 
 
 def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(monkeypatch):
-    """LlmAgent.output_schema + tools together works by ADK injecting a
-    set_model_response tool and synthesizing a compatible final text event
-    when the model can't natively combine both (see google/adk/flows/
-    llm_flows/_output_schema_processor.py) — confirms _make_plan's existing
-    JSON extraction still works once that mechanism is in play, not just
-    when the planner emits plain text."""
+    """A scripted planner LLM emits the plan as a plain text JSON payload — the
+    exact contract _make_plan parses with _extract_json on its structured pass
+    and its schema-less prompt-mode fallback alike. (ADK 2.11 no longer injects
+    a set_model_response tool for output_schema+tools agents, so text JSON is
+    the mechanism actually under test.) Confirms _make_plan's JSON extraction,
+    per-plan id namespacing, and server-side assignee resolution on it."""
     from pydantic import PrivateAttr
     from google.adk.models import BaseLlm
     from google.adk.models.llm_response import LlmResponse
@@ -73,11 +73,10 @@ def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(mon
              "assignee": "Rabeb", "depends_on": ["s1"]},
         ],
     }
-    set_response_call = LlmResponse(content=genai_types.Content(role="model", parts=[
-        genai_types.Part(function_call=genai_types.FunctionCall(
-            name="set_model_response", args=plan_json, id="call_1"))
+    planner_reply = LlmResponse(content=genai_types.Content(role="model", parts=[
+        genai_types.Part(text=json.dumps(plan_json))
     ]))
-    fake_model = _ScriptedLlm([set_response_call])
+    fake_model = _ScriptedLlm([planner_reply])
     monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: fake_model)
     # _make_plan resolves "assignee" server-side via search_human_agents
     # (never trusts the planner's own text) — mock that lookup too.
@@ -137,8 +136,7 @@ def test_make_plan_survives_a_flaky_planner_duplicate_blank_and_dangling_deps(mo
         ],
     }
     resp = LlmResponse(content=genai_types.Content(role="model", parts=[
-        genai_types.Part(function_call=genai_types.FunctionCall(
-            name="set_model_response", args=plan_json, id="c1"))]))
+        genai_types.Part(text=json.dumps(plan_json))]))
     monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: _ScriptedLlm(resp))
 
     session_service = InMemorySessionService()
@@ -167,14 +165,21 @@ def test_dep_results_context_injects_only_completed_direct_dependencies():
     plan = Plan(steps=[s1, s2, s3])
     ctx = svc.OrchestratorService._dep_results_context(plan)
 
-    assert ctx(s1) is None                      # no deps → nothing injected
+    # Downstream awareness (context only): s1 learns a follow-up step exists —
+    # labelled by its title — but downstream context never carries results.
+    first = ctx(s1)
+    assert first and "Use" in first             # its dependent step is named
+    assert "FOUND=42" not in first              # no results leak downstream
+    assert "not yet" not in first
+
     out = ctx(s3)
     assert out and "FOUND=42" in out            # completed dep's result is injected
     assert "Search" in out                      # labelled by the dep's title
     assert "not yet" not in out                 # a pending dep is excluded
 
     # direct-only: a step depending on c (not yet completed) sees nothing —
-    # a's result does not reach it transitively through c.
+    # a's result does not reach it transitively through c, and it has no
+    # dependents of its own to be announced either.
     s4 = Step(id="e", depends_on=["c"])
     plan.steps.append(s4)
     assert svc.OrchestratorService._dep_results_context(plan)(s4) is None
@@ -1044,9 +1049,15 @@ def test_every_step_gets_the_same_toolset():
     def tool_names(node):
         return {getattr(getattr(t, "func", None), "__name__", "?") for t in getattr(node, "tools", [])}
 
-    expected = {"find_human_agents", "delegate_to_human_agent", "create_task"}
-    assert expected <= tool_names(nodes_by_name["s4"])
-    assert expected <= tool_names(nodes_by_name["s5"])
+    # The old built-in find_human_agents wrapper was dropped (the human-agents
+    # connector's own search tool now provides discovery, when that connector is
+    # configured — a unit env has none). The invariant under test: every step's
+    # toolset is IDENTICAL — no per-step gating — and always includes the two
+    # plan-growing tools any step may need mid-turn.
+    s4_tools = tool_names(nodes_by_name["s4"])
+    s5_tools = tool_names(nodes_by_name["s5"])
+    assert s4_tools == s5_tools
+    assert {"delegate_to_human_agent", "create_task"} <= s4_tools
 
 
 def test_delegating_never_blocks_the_caller_on_the_delegate(monkeypatch):
@@ -1167,10 +1178,27 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
                 getattr(p, "text", "") or ""
                 for c in llm_request.contents for p in (c.parts or []))
             # The step's task now rides in the user turn, not system_instruction
-            # (see nodes._inject_task_turn) — look in both so the scripted model
-            # still recognizes the follow-up step.
+            # (see nodes._inject_task_turn). Key on the LATEST user TEXT only:
+            # s1's own create_task args also contain this phrase, but they ride
+            # in s1's model-role history and its function response — never as
+            # the latest user text — so s1's continuation must not impersonate
+            # the follow-up step.
+            # The follow-up step's OWN task rides in its user turn
+            # (nodes._inject_task_turn). s1's request also contains the phrase
+            # twice over: the downstream-awareness context names the spawned
+            # step by its (truncated) title, and s1's own create_task history
+            # repeats it. The context block truncates the title, so keying on
+            # the FULL task tail — excluding the injected context block — lets
+            # only the real follow-up step impersonate itself.
+            user_task_text = "\n".join(
+                "\n".join(getattr(p, "text", "") or "" for p in (c.parts or []))
+                for c in llm_request.contents
+                if c.role == "user"
+                and "\n".join(getattr(p, "text", "") or "" for p in (c.parts or [])).strip()
+                and not "\n".join(getattr(p, "text", "") or "" for p in (c.parts or [])).lstrip().startswith(
+                    "Étapes qui suivent la tienne"))
             is_followup = ("Give the real final answer" in instr
-                           or "Give the real final answer" in contents_text)
+                           or "using exactly what he decided" in user_task_text)
             seen_reply = "APPROVED THE PILOT" in contents_text
             if is_followup:
                 yield LlmResponse(content=types.Content(role="model", parts=[
@@ -1858,7 +1886,11 @@ async def test_concurrent_amends_on_one_session_are_serialized():
     against the first's already-applied steps, not the same stale snapshot.
     Without the lock both would enter _make_plan at once (max_concurrent == 2)."""
     rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
-                   register_mail_wait=AsyncMock())
+                   register_mail_wait=AsyncMock(),
+                   # converse_turn snapshots the read model (service.py:1512)
+                   # even with a live plan, for the pending-questions note.
+                   snapshot=AsyncMock(return_value={"session": {"status": "running"},
+                                                    "steps": []}))
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     live = Plan(id="p", title="t", executor_id="e", executor_name="W",
                 steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])

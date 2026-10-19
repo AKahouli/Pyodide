@@ -16,6 +16,7 @@ from typing import Optional, Tuple, Any, List, Dict
 from google.adk import Agent
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.base_session_service import GetSessionConfig
 from src.temporary_child_summary import record_temporary_child_tool_call
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
@@ -35,6 +36,7 @@ from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
 from src.smart_rag.infrastructure.compaction import make_chat_runner
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import current_conversation_id
 from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
 from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
@@ -280,6 +282,9 @@ class AgentRunner:
                         app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
+                        # Runner performs the authoritative full history read.
+                        # This lookup needs only state/existence unless resuming.
+                        **({} if resuming else {'config': GetSessionConfig(num_recent_events=0)}),
                     )
                 _mark_session_stage("mark_session_lookup_end")
                 if session is None:
@@ -563,6 +568,9 @@ class AgentRunner:
                                     component_data={
                                         "summary": sanitize_activity_summary(update.detail),
                                         "detail": update.detail,
+                                        **({'activity_kind': 'reasoning_summary'}
+                                           if isinstance(event.custom_metadata, dict)
+                                           and event.custom_metadata.get('activity_kind') == 'reasoning_summary' else {}),
                                         "status": "completed",
                                         "started_at": update.started_at,
                                         "completed_at": observed_at,
@@ -888,7 +896,8 @@ class AgentRunner:
                                 artifacts = build_run_code_artifacts(response_payload, agent_config, tool_component_id) if func_name == "run_code" else build_tool_result_artifacts(
                                     response_payload,
                                     tool_component_id,
-                                    run_workspace_path(user_id, session_id),
+                                    run_workspace_path(user_id, current_conversation_id() or session_id),
+                                    require_receipt=True, producer_tool_name=func_name,
                                 )
                                 for artifact in artifacts:
                                     await q.put(self.streaming_formatter.format_component_event(

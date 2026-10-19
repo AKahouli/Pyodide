@@ -185,7 +185,7 @@ export function AppBuilderPage() {
               }}
               disabled={deleting}
             >
-              {deleting ? <Loader2 className='mr-2 size-4 animate-spin' aria-hidden /> : null}
+              {deleting ? <Loader2 className='me-2 size-4 animate-spin' aria-hidden /> : null}
               {t('admin.confirmDelete')}
             </AlertDialogAction>
           </AlertDialogFooter>

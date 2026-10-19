@@ -172,10 +172,20 @@ class TestAutoAgentGenerationTeam:
         assert error_events == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("timestamp_suffix", ["", "\n\n the current timestamp is {time}. \n", "\nCustom timestamp {time}"])
+    @pytest.mark.parametrize("conversation_api", ['chat_completions', 'responses'])
     @pytest.mark.parametrize("role", [None, "ROOT", "ROOT_FANOUT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
-    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role):
+    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role, conversation_api, timestamp_suffix, monkeypatch):
         """Mono conversation parents should evaluate child results, not use child tools directly."""
         mock_config = MagicMock()
+        from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
+        from types import SimpleNamespace
+        native_model = SimpleNamespace(client=SimpleNamespace(close=AsyncMock()))
+        native_adapter = MagicMock(return_value=native_model)
+        monkeypatch.setattr(LLMFactory, 'for_conversation', native_adapter)
+        from src.smart_rag.infrastructure.monitoring import responses_history
+        history_callbacks = MagicMock()
+        monkeypatch.setattr(responses_history, 'install_history_callbacks', history_callbacks)
         mock_config.user_id = "user123"
         orchestrator = AutoAgentGenerationTeam(mock_config)
         orchestrator.streaming_processor = MagicMock()
@@ -192,12 +202,20 @@ class TestAutoAgentGenerationTeam:
             "prompt": "Search prompt",
             "tools": [{"name": "search"}],
             "agent_params": {
+                "conversation_api": conversation_api,
                 "enable_temporary_child_agents": "true",
                 "max_temporary_child_agents": "2",
             },
         }
         mock_agent = MagicMock()
-        mock_agent.instruction = "Parent instruction"
+        mock_agent.instruction = "Parent instruction" + timestamp_suffix
+        factory_timestamp = timestamp_suffix == "\n\n the current timestamp is {time}. \n"
+        from src.smart_rag.tools.utilities import connector_tools
+        original_install = connector_tools.install_deferred_connector_tools
+        def install_with_static_instruction(agent):
+            original_install(agent)
+            agent.instruction += '\nDeferred tool instruction'
+        monkeypatch.setattr(connector_tools, 'install_deferred_connector_tools', install_with_static_instruction)
         mock_agent.tools = [{"name": "search"}]
         if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
             from google.adk.agents import LlmAgent
@@ -238,6 +256,7 @@ class TestAutoAgentGenerationTeam:
             injected_session = MagicMock() if worker else None
             result = await orchestrator.run_single_agent(
                 "parent task", "sess-1", queue, execution_scope=scope, session_service=injected_session,
+                visible_user_message='visible parent task',
                 **({'fanout_tool': 'fanout-control', 'delegation_instruction': 'Only foreground fan-out is available.'}
                     if role == 'ROOT_FANOUT' else {})
             )
@@ -245,6 +264,14 @@ class TestAutoAgentGenerationTeam:
                 mock_session_factory.assert_not_awaited()
 
         assert result == "parent answer"
+        assert native_adapter.call_count == (0 if worker else 1)
+        if not worker:
+            assert native_adapter.call_args.args[1] == conversation_api
+            history_callbacks.assert_called_once_with(mock_agent, conversation_api, 'search-1',
+                user_message=('parent task', 'visible parent task'))
+        else:
+            history_callbacks.assert_not_called()
+        assert native_model.client.close.await_count == (0 if worker else 1)
         if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
             assert mock_agent.tools == [] and mock_agent.sub_agents == []
             assert mock_agent.disallow_transfer_to_parent and mock_agent.disallow_transfer_to_peers
@@ -254,8 +281,11 @@ class TestAutoAgentGenerationTeam:
             return
         if role in ("ROOT", "ROOT_FANOUT"):
             assert mock_agent.tools == ([{"name": "search"}, 'fanout-control'] if role == 'ROOT_FANOUT' else [{"name": "search"}])
-            assert mock_agent.instruction == ("Parent instruction\nOnly foreground fan-out is available."
-                if role == 'ROOT_FANOUT' else "Parent instruction")
+            stable = ("\nOnly foreground fan-out is available." if role == 'ROOT_FANOUT' else "") + '\nDeferred tool instruction'
+            assert mock_agent.instruction == ("Parent instruction" + stable + timestamp_suffix
+                if factory_timestamp else "Parent instruction" + timestamp_suffix + stable)
+            if timestamp_suffix:
+                assert mock_agent.instruction.count(timestamp_suffix) == 1
             orchestrator.delegation_factory._execute_agent_with_error_handling.assert_not_awaited()
             assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs["message"] == "parent task"
             return

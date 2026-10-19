@@ -19,7 +19,7 @@ describe('concurrent ROOT foreground streams', () => {
       streamTerminalCoordinators: new Map(), bootstrapCancelRequested: new Set(), activeConversationExecutions: new Set(),
       configService: { get: (key: string, fallback: unknown) => key === 'conversation.maxConcurrentStreams' ? 2 : fallback },
       conversationService: { getConversationDocument: jest.fn().mockResolvedValue({ rootAgentId: 'root', runtimePurpose: 'chat' }) },
-      agentService: { findUserAgentById: jest.fn().mockResolvedValue({ rootExecutionPolicy: {} }) },
+      agentService: { findUserAgentBootstrap: jest.fn().mockResolvedValue({ rootExecutionPolicy: {} }) },
       rootWorkService: { completeExecution: jest.fn().mockResolvedValue({}) },
       messageService, conversationSettings: { isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(false) },
       logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -58,14 +58,27 @@ describe('concurrent ROOT foreground streams', () => {
     const { service, finishes } = harness();
     const rootAgentId = '6a325b8d0e92383c1a7dd7a7';
     (service as any).conversationService.getConversationDocument.mockResolvedValue({ rootAgentId, runtimePurpose: 'chat' });
-    (service as any).agentService.findUserAgentById.mockResolvedValue({ name: 'Smart Agent', rootExecutionPolicy: {} });
+    (service as any).agentService.findUserAgentBootstrap.mockResolvedValue({ name: 'Smart Agent', rootExecutionPolicy: {} });
     const run = service.startStream('user', 'conversation', 'a', { content: 'first' });
     await tick();
     expect((service as any).streamGateway.broadcastToConversation).toHaveBeenCalledWith(['user'], {
       type: 'stream_start', data: expect.objectContaining({ messageId: 'a', agentId: rootAgentId, agentName: 'Smart Agent' }),
     });
     expect(service.getActiveStreamSnapshots('conversation')[0]).toMatchObject({ agentId: rootAgentId, agentName: 'Smart Agent' });
+    expect((service as any).agentService.findUserAgentBootstrap).toHaveBeenCalledWith('user', rootAgentId);
     finishes.get('a')!(); await run;
+  });
+  it('does not load history or dispatch when root bootstrap access is denied', async () => {
+    const { service, messageService } = harness();
+    const denial = new Error('root access denied');
+    (service as any).agentService.findUserAgentBootstrap.mockRejectedValue(denial);
+    await expect(service.startStream('user', 'conversation', 'a', { content: 'first' })).rejects.toBe(denial);
+    expect(messageService.findAllByConversation).not.toHaveBeenCalled();
+    expect((service as any).streamGateway.broadcastToConversation).not.toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ type: 'stream_start' }));
+    expect((service as any).executeGrpcStream).not.toHaveBeenCalled();
+    expect(messageService.releaseStreamExecution).toHaveBeenCalledWith('a', expect.any(String));
+    expect(service.getActiveStreamSnapshots('conversation')).toEqual([]);
   });
   it('does not name an agent when the request targets another agent', async () => {
     const { service, finishes } = harness();
@@ -87,7 +100,7 @@ describe('concurrent ROOT foreground streams', () => {
   });
   it('keeps roots without persisted enrollment on their legacy session', async () => {
     const { service, finishes } = harness();
-    (service as any).agentService.findUserAgentById.mockResolvedValue({ rootExecutionPolicy: null });
+    (service as any).agentService.findUserAgentBootstrap.mockResolvedValue({ rootExecutionPolicy: null });
     const first = service.startStream('user', 'conversation', 'a', { content: 'first' });
     await tick();
     expect((service as any).buildAgentExecutionRequest.mock.calls[0][6]).toBe('conversation');

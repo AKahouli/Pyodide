@@ -326,7 +326,7 @@ export function AgentTelegramIntegrationSection({
                     </p>
                   )}
                   <Button type="button" variant="outline" size="sm" onClick={handleCopyLinkCommand}>
-                    <Copy className="mr-2 h-3.5 w-3.5" />
+                    <Copy className="me-2 h-3.5 w-3.5" />
                     {t("createEdit.fields.telegramCopyLinkCommand")}
                   </Button>
                 </div>
@@ -381,12 +381,12 @@ export function AgentTelegramIntegrationSection({
           </code>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" size="sm" onClick={handleCopyBotLink}>
-              <Copy className="mr-2 h-3.5 w-3.5" />
+              <Copy className="me-2 h-3.5 w-3.5" />
               {t("createEdit.fields.telegramCopyBotLink")}
             </Button>
             <Button type="button" variant="outline" size="sm" asChild>
               <a href={botUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                <ExternalLink className="me-2 h-3.5 w-3.5" />
                 {t("createEdit.fields.telegramOpenBot")}
               </a>
             </Button>
@@ -397,7 +397,7 @@ export function AgentTelegramIntegrationSection({
               onClick={() => setShowQr((v) => !v)}
               data-testid="telegram-qr-toggle"
             >
-              <QrCode className="mr-2 h-3.5 w-3.5" />
+              <QrCode className="me-2 h-3.5 w-3.5" />
               {showQr
                 ? t("createEdit.fields.telegramHideQr")
                 : t("createEdit.fields.telegramShowQr")}
@@ -444,7 +444,7 @@ export function AgentTelegramIntegrationSection({
             <Button type="button" size="sm" onClick={handleSave} disabled={readOnly || saving || loading}>
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t("createEdit.actions.saving")}
                 </>
               ) : (

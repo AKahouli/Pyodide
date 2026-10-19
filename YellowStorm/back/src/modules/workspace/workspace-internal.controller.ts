@@ -1,10 +1,12 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Body, HttpCode, HttpStatus, VERSION_NEUTRAL } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { isObjectId } from '@common/postgres';
 import { IsArray, IsString } from 'class-validator';
-import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
-import { Public } from '../auth/decorators/public.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '@common/auth/auth-user';
+import { assertAccountApproved } from '../user/utils/assert-account-accessible';
 import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
+import { WorkspaceShareService } from './workspace-share.service';
 
 class ResolveNamesDto {
   @IsArray()
@@ -14,24 +16,28 @@ class ResolveNamesDto {
 
 @ApiTags('Workspace Internal')
 @Controller({ path: 'workspaces/internal', version: VERSION_NEUTRAL })
-@UseGuards(InternalServiceGuard)
+@ApiBearerAuth()
 export class WorkspaceInternalController {
   constructor(
     private readonly workspaceStore: PgWorkspaceStore,
+    private readonly shares: WorkspaceShareService,
   ) {}
 
-  @Public()
   @Post('resolve-names')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Resolve workspace names from ObjectIds (internal)' })
+  @ApiOperation({ summary: 'Resolve names of workspaces accessible to the signed-in user' })
   @ApiResponse({ status: 200, description: 'Map of id -> name' })
-  @ApiResponse({ status: 401, description: 'Invalid internal service token' })
+  @ApiResponse({ status: 401, description: 'User authentication required' })
+  @ApiResponse({ status: 403, description: 'Workspace access denied' })
   async resolveNames(
     @Body() dto: ResolveNamesDto,
+    @CurrentUser() user: AuthUser,
   ): Promise<Record<string, string>> {
+    assertAccountApproved(user);
     const ids = (dto.ids || []).map((id) => String(id).toLowerCase()).filter((id) => isObjectId(id));
     if (!ids.length) return {};
 
+    await this.shares.assertUserHasAccess(user._id.toString(), ids);
     const byId = await this.workspaceStore.findByIds(ids);
 
     const result: Record<string, string> = {};

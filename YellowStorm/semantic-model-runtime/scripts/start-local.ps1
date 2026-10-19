@@ -50,21 +50,21 @@ try {
     '-m', 'celery',
     '-A', 'app.workers.datasource_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-datasource.preview,semantic-model-datasource.batch',
-    '--hostname', 'semantic-datasource@%h'
+    '--hostname', "semantic-datasource@$(hostname)-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
   $workers += Start-Process -FilePath $python -ArgumentList @(
     '-m', 'celery',
     '-A', 'app.workers.population_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-population.batch,semantic-model-population.corrections',
-    '--hostname', 'semantic-population@%h'
+    '--hostname', "semantic-population@$(hostname)-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
   $workers += Start-Process -FilePath $python -ArgumentList @(
     '-m', 'celery',
     '-A', 'app.workers.graph_search_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-search.index',
-    '--hostname', 'semantic-search@%h'
+    '--hostname', "semantic-search@$(hostname)-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
   & $python -m uvicorn app.main:app --host 127.0.0.1 --port $Port

@@ -276,7 +276,7 @@ export function PlansPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchPlans} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -296,7 +296,7 @@ export function PlansPage() {
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button onClick={openCreateDialog}>
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="me-2 h-4 w-4" />
             {t('plans.actions.create')}
           </Button>
         </div>
@@ -325,7 +325,7 @@ export function PlansPage() {
                   <TableHead className="hidden lg:table-cell">{t('plans.table.columns.price')}</TableHead>
                   <TableHead className="hidden xl:table-cell">{t('plans.table.columns.workspaces')}</TableHead>
                   <TableHead>{t('plans.table.columns.status')}</TableHead>
-                  <TableHead className="text-right">{t('plans.table.columns.actions')}</TableHead>
+                  <TableHead className="text-end">{t('plans.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -344,13 +344,13 @@ export function PlansPage() {
                             <span className="font-medium">{plan.name}</span>
                             {plan.isDefault && (
                               <Badge variant="secondary" className="text-xs">
-                                <Star className="mr-1 h-3 w-3" />
+                                <Star className="me-1 h-3 w-3" />
                                 {t('plans.badges.default')}
                               </Badge>
                             )}
                             {plan.isUnlimited && (
                               <Badge variant="outline" className="text-xs">
-                                <Infinity className="mr-1 h-3 w-3" />
+                                <Infinity className="me-1 h-3 w-3" />
                                 {t('plans.badges.unlimited')}
                               </Badge>
                             )}
@@ -416,7 +416,7 @@ export function PlansPage() {
                           onCheckedChange={() => handleToggleActive(plan)}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
@@ -725,7 +725,7 @@ export function PlansPage() {
             <Button onClick={handleSave} disabled={saving || !formData.name || !formData.slug}>
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {editingPlan
                     ? t('plans.form.actions.updating')
                     : t('plans.form.actions.creating')}
@@ -758,7 +758,7 @@ export function PlansPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t('plans.delete.actions.deleting')}
                 </>
               ) : (

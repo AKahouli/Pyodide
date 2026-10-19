@@ -471,6 +471,41 @@
       "when": 1792410000000,
       "tag": "0050_user_invitation_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1792420000000,
+      "tag": "0049_connector_mcp_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1792454400000,
+      "tag": "0050_model_conversation_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792454400001,
+      "tag": "0051_model_responses_history_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1792454400002,
+      "tag": "0052_openui_app_states",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792454400003,
+      "tag": "0053_conversation_sse_events",
+      "breakpoints": true
     }
   ]
 }

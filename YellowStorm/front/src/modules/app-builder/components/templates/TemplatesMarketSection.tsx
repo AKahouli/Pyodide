@@ -133,7 +133,7 @@ export function TemplatesMarketSection({
                   value={templateSearch}
                   onChange={(e) => setTemplateSearch(e.target.value)}
                   placeholder={t('templates.searchPlaceholder')}
-                  className='h-10 rounded-xl border-border/60 bg-card pl-9 pr-9 shadow-sm'
+                  className='h-10 rounded-xl border-border/60 bg-card ps-9 pe-9 shadow-sm'
                   aria-label={t('templates.searchPlaceholder')}
                 />
                 {templateSearch ? (

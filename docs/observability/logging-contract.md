@@ -1,6 +1,11 @@
 # Yellowmind logging contract (v1)
 
 Canonical developer contract for the unified logging platform (Grafana + Loki + Alloy).
+Classic conversation admission remediation registers
+`conversation.admission.store_error` (fixed operation/outcome) and
+`conversation.admission.reclaimed` (operation/outcome/count) in the shared event
+registry and SDK mirrors. Count these events by operation to observe dependency
+failures and reclaimed capacity; raw database diagnostics are not event attributes.
 Normative files (source of truth) live in [`contracts/observability/`](../../contracts/observability/):
 
 | File | Purpose |
@@ -30,6 +35,7 @@ Normative files (source of truth) live in [`contracts/observability/`](../../con
 
 `OBS_SERVICE_NAME`, `OBS_SERVICE_VERSION`, `OBS_ENVIRONMENT` — deployment identity.
 `LOG_LEVEL` — severity threshold (existing convention, precedence defined once).
+`LOG_DISPLAY_LEVELS` — dev-console severity allowlist for `scripts/observability/pretty.mjs` (e.g. `ERROR|WARN`). Display-only: it never changes the wire format or what remote sinks receive. Unset/empty shows every level; accepts legacy aliases (`warning`→`WARN`, `critical`→`FATAL`).
 `OBS_LOG_QUEUE_MAX_BYTES` / `OBS_LOG_QUEUE_MAX_EVENTS` — admission budgets.
 `OBS_LOG_ERROR_RESERVE_BYTES`, `OBS_LOG_MAX_EVENT_BYTES`, `OBS_LOG_SHUTDOWN_TIMEOUT_MS`.
 `OBS_LOG_DEBUG_SCOPE` / `OBS_LOG_DEBUG_EXPIRES_AT` — operator-scoped debug (optional, never public parameters).
@@ -37,7 +43,7 @@ Normative files (source of truth) live in [`contracts/observability/`](../../con
 
 Developers do not choose sinks; collectors own remote delivery; the SDK never sees Loki credentials or endpoints.
 
-Local dev pretty-printing (does not change the wire format): `npm run start:dev:pretty` in `YellowStorm/back`, `dev-pretty.cmd` in `yellowstorm-adk`, or pipe any service through `node scripts/observability/pretty.mjs`. Host the pipe in cmd/bash (`cmd /c "svc 2>&1 | node ...pretty.mjs"`) — Windows PowerShell's `2>&1 |` wraps stderr lines in ErrorRecords and they never reach the filter.
+Local dev pretty-printing (does not change the wire format): `npm run start:dev:pretty` in `YellowStorm/back`, `dev-pretty.cmd` in `yellowstorm-adk`, or pipe any service through `node scripts/observability/pretty.mjs`. Host the pipe in cmd/bash (`cmd /c "svc 2>&1 | node ...pretty.mjs"`) — Windows PowerShell's `2>&1 |` wraps stderr lines in ErrorRecords and they never reach the filter. The renderer filters by `LOG_DISPLAY_LEVELS` (read from the environment or `<cwd>/.env`), so setting e.g. `LOG_DISPLAY_LEVELS=ERROR|INFO` in the service's `.env` shows only those levels on the console.
 
 ## Short agent instructions
 

@@ -43,6 +43,7 @@ function row(overrides: Partial<ModelRow>): ModelRow {
     isDefault: false,
     isAppBuilderDefault: false,
     omitTemperature: false,
+    conversationApi: 'chat_completions',
     inputModalities: ['text'],
     maxInputTokens: null,
     maxOutputTokens: null,
@@ -174,6 +175,45 @@ describe('ModelsService', () => {
     }).compile();
 
     svc = mod.get(ModelsService);
+  });
+
+  it('persists the admin API choice and preserves it through gateway sync', async () => {
+    store.rows.set('model', row({ modelId: 'model' }));
+    expect((await svc.updateModel('model', { conversationApi: 'responses' }))?.conversationApi).toBe('responses');
+    fetchModels.mockResolvedValue([entry('model', 'chat')]);
+    await svc.syncModels();
+    expect((await svc.findById('model'))?.conversationApi).toBe('responses');
+  });
+
+  it('defaults legacy model records to Chat Completions', async () => {
+    const legacy = row({ modelId: 'legacy' });
+    delete (legacy as Partial<ModelRow>).conversationApi;
+    store.rows.set('legacy', legacy);
+    expect((await svc.findById('legacy'))?.conversationApi).toBe('chat_completions');
+  });
+
+  it('preserves Responses controls through gateway sync and API switches', async () => {
+    store.rows.set('model', row({ modelId: 'model' }));
+    const settings = { responsesHistoryMode: 'application' as const, reasoningHistory: 'last' as const, reasoningSummary: 'detailed' as const };
+    expect(await svc.updateModel('model', { conversationApi: 'responses', ...settings })).toMatchObject(settings);
+    fetchModels.mockResolvedValue([entry('model', 'chat')]);
+    await svc.syncModels();
+    expect(await svc.findById('model')).toMatchObject(settings);
+    expect(await svc.updateModel('model', { conversationApi: 'chat_completions' })).toMatchObject(settings);
+  });
+
+  it('validates Responses provider replay against merged PATCH settings', async () => {
+    store.rows.set('model', row({ conversationApi: 'responses', responsesHistoryMode: 'provider', reasoningHistory: 'auto' }));
+    await expect(svc.updateModel('model', { reasoningHistory: 'last' })).rejects.toThrow('automatic reasoning history');
+    expect(await svc.updateModel('model', { reasoningSummary: 'auto' })).toMatchObject({ reasoningHistory: 'auto' });
+    expect(await svc.updateModel('model', { conversationApi: 'chat_completions', reasoningHistory: 'none' })).toMatchObject({ reasoningHistory: 'none' });
+    await expect(svc.updateModel('model', { conversationApi: 'responses' })).rejects.toThrow('automatic reasoning history');
+    expect(await svc.updateModel('model', { conversationApi: 'responses', reasoningHistory: 'auto' })).toMatchObject({ responsesHistoryMode: 'provider' });
+  });
+
+  it('supplies backward-compatible defaults for legacy Responses controls', async () => {
+    store.rows.set('model', row({}));
+    expect(await svc.findById('model')).toMatchObject({ responsesHistoryMode: 'application', reasoningHistory: 'auto', reasoningSummary: 'off' });
   });
 
   describe('syncModels', () => {

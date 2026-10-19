@@ -5,6 +5,7 @@ No database, model API, or production source content is used by the CPU probes.
 """
 import argparse
 import json
+import logging
 import math
 import os
 import statistics
@@ -15,6 +16,9 @@ import uuid
 from pathlib import Path
 
 from src.mcp_server import context_navigation, evidence
+
+
+logger = logging.getLogger(__name__)
 
 
 def distribution(values):
@@ -156,6 +160,7 @@ def database_probe(repeat):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-ref")
     parser.add_argument("--repeat", type=int, default=30)
@@ -181,7 +186,7 @@ def main():
     output = json.dumps(report, indent=2)
     if args.output:
         args.output.write_text(output + "\n", encoding="utf-8")
-    print(output)
+    logger.info(output)
 
 
 if __name__ == "__main__":

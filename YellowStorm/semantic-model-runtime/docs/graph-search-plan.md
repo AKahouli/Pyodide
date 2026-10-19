@@ -90,8 +90,8 @@ Live check on the dev data:
 
 ### MCP
 - `mcp/mcp-semantic-model/server.py` is FastMCP on port 8027. Each tool calls `back /api/v1/internal/semantic-model-assistant/...`, which is guarded by:
-  - `InternalServiceGuard`;
-  - `SemanticAssistantActorGuard`, which takes the acting user from `x-yellowstorm-user-id`;
+  - `SemanticMcpServiceGuard` (scoped service principal);
+  - `DelegatedActorGuard` (ADR-0024), which takes the acting user only from the signed `X-YellowStorm-Mcp-Assertion`;
   - `SemanticAssistantModelGuard`.
 - The existing tool `search_records` uses ILIKE paging per concept (`search_revision_entities`).
 

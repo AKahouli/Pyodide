@@ -8,6 +8,8 @@
  * originalName search + count).
  */
 export interface DocumentFilter {
+  /** Internal cleanup only; ordinary reads must never resolve deleted source rows. */
+  includeDeleted?: boolean;
   id?: string;
   workspaceId?: string;
   workspaceIds?: string[];

@@ -9,6 +9,7 @@ import { PostgresConversationBranchStore } from '../src/modules/conversation/per
 import { PostgresMessageStore } from '../src/modules/conversation/persistence/postgres/postgres-message-store';
 import { PostgresConversationAnalyticsStore } from '../src/modules/conversation/persistence/postgres/postgres-conversation-analytics-store';
 import { PostgresConversationExpiryService } from '../src/modules/conversation/persistence/postgres/postgres-conversation-expiry.service';
+import { PgTtlSweeper } from '../src/modules/postgres/ttl/pg-ttl-sweeper.service';
 import { PostgresConversationPlaybookHandoffStore } from '../src/modules/conversation/persistence/postgres/postgres-conversation-playbook-handoff-store';
 import { PostgresReportStore } from '../src/modules/conversation/persistence/postgres/postgres-report-store';
 import { PostgresShareStore } from '../src/modules/conversation/persistence/postgres/postgres-share-store';
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
     database,
+    options: '-c lock_timeout=5s',
     ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
     max: 4,
   });
@@ -436,11 +438,15 @@ async function main(): Promise<void> {
     });
     const expiryLogger = {
       setContext: () => undefined,
+      log: () => undefined,
       error: (message: string) => {
         throw new Error(message);
       },
     };
-    await new PostgresConversationExpiryService(db, expiryLogger as never).cleanupExpired();
+    const expirySweeper = new PgTtlSweeper(db, expiryLogger as never);
+    const expiry = new PostgresConversationExpiryService(expirySweeper);
+    expiry.onModuleInit();
+    await expirySweeper.sweepAll();
     assert.equal(await shareStore.findById(ids.expiredShare), null);
     assert.equal(await handoffStore.findOwned(expiredHandoffId, ids.owner), null);
     assert.equal(await shareStore.findById(publicShare.id).then(Boolean), true);

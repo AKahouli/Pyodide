@@ -113,3 +113,17 @@ def test_initial_agent_activity_chunk_is_empty_progress_only() -> None:
     assert chunk.component.agent_activity.summary == ""
     assert chunk.component.agent_activity.status == "completed"
     assert chunk.component.agent_activity.detail == ""
+
+
+def test_native_summary_provenance_survives_wire_without_marking_generic_activity():
+    servicer = ChatbotServicer(agent_team_service=None)
+    assert chatbot_pb2.AgentActivityComponent.DESCRIPTOR.fields_by_name['activity_kind'].number == 9
+    for kind in ('reasoning_summary', 'unknown', None):
+        data = {'summary': 'Inspecting reports', 'status': 'completed'}
+        if kind is not None:
+            data['activity_kind'] = kind
+        component = servicer._build_component('activity', 'agent_activity', data)
+        decoded = chatbot_pb2.Component.FromString(component.SerializeToString()).agent_activity
+        assert decoded.HasField('activity_kind') is (kind == 'reasoning_summary')
+        if kind == 'reasoning_summary':
+            assert decoded.activity_kind == kind

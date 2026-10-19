@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HealthConcept, ModelHealth } from '../../types';
 import { ModelHealthView } from './ModelHealthView';
@@ -56,10 +57,10 @@ const health = (overrides: Partial<ModelHealth> = {}): ModelHealth => ({
   concepts: [participation, correspondent, fait], setup: [], ...overrides,
 });
 
-const show = (data: ModelHealth | undefined, state: { isLoading?: boolean; isError?: boolean } = {}) => {
+const show = (data: ModelHealth | undefined, state: { isLoading?: boolean; isError?: boolean } = {}, sections: { records?: ReactNode; sources?: ReactNode } = {}) => {
   hooks.useModelHealth.mockReturnValue({ data, isLoading: false, isError: false, refetch: vi.fn(), ...state });
   const onAction = vi.fn();
-  render(<ModelHealthView modelId='m-1' canEdit onAction={onAction} setup={<p>setup slot</p>} />);
+  render(<ModelHealthView modelId='m-1' canEdit onAction={onAction} setup={<p>setup slot</p>} records={sections.records} sources={sections.sources} />);
   return onAction;
 };
 
@@ -78,6 +79,18 @@ describe('ModelHealthView', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Participation' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'health.issue.identity_too_coarse.title' })).toBeInTheDocument();
     expect(screen.getByText('setup slot')).toBeInTheDocument();
+  });
+
+  it('switches among Overview, Records, and Sources & lineage sections', () => {
+    show(health(), {}, { records: <p>record section</p>, sources: <p>source lineage section</p> });
+
+    const tabs = screen.getByRole('tablist', { name: 'trustCenter.sections' });
+    expect(within(tabs).getByRole('tab', { name: 'trustCenter.overview' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'trustCenter.records' }));
+    expect(screen.getByText('record section')).toBeInTheDocument();
+    expect(screen.queryByText('setup slot')).not.toBeInTheDocument();
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'trustCenter.sourcesLineage' }));
+    expect(screen.getByText('source lineage section')).toBeInTheDocument();
   });
 
   it('shows real rows with where they come from, not a generic record', () => {

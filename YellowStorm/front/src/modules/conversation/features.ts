@@ -1,6 +1,6 @@
 /**
  * Module-local rollout flags for the conversation module.
- * Build-time `VITE_*` values — see FRONTEND_GUIDELINES §5 (feature flags).
+ * Build-time `VITE_*` values — see docs/agent-context/frontend/state-and-data.md (feature flags).
  * Declare new keys in `src/vite-env.d.ts` and the deployment env template.
  */
 export const conversationFeatures = Object.freeze({

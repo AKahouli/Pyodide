@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { notificationsService } from './NotificationsService';
 
 const toastMock = vi.hoisted(() => ({
@@ -28,6 +28,8 @@ vi.mock('@/lib/api', () => ({
 
 // Minimal EventSource mock
 class EventSourceMock {
+  static CONNECTING = 0;
+  static CLOSED = 2;
   onopen: (() => void) | null = null;
   onerror: ((err: unknown) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -45,7 +47,36 @@ class EventSourceMock {
 }
 
 describe('NotificationsService', () => {
+  it('does not dial or show connection errors when hidden, including token reconnect', () => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    notificationsService.connect();
+    notificationsService.reconnectWithNewToken();
+    expect(eventSourceCtor).not.toHaveBeenCalled();
+    expect(toastMock.loading).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+  it('pauses the passive pipe and timers without stale callbacks or delayed toasts', () => {
+    vi.useFakeTimers();
+    notificationsService.connect();
+    const es = (notificationsService as unknown as { eventSource: EventSourceMock }).eventSource!;
+    es.onopen?.();
+    es.onmessage?.({ data: JSON.stringify({ type: 'connected', data: { connectionId: 'old' } }) } as MessageEvent);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    notificationsService.pause();
+    es.onerror?.(new Error('intentional close'));
+    vi.advanceTimersByTime(120_000);
+    expect(es.readyState).toBe(2);
+    expect(eventSourceCtor).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    notificationsService.connect();
+    expect(eventSourceCtor).toHaveBeenCalledTimes(2);
+  });
+
+  afterEach(() => { notificationsService.disconnect(); vi.useRealTimers(); vi.unstubAllGlobals(); });
   beforeEach(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     vi.stubGlobal('EventSource', EventSourceMock);
     seededToken = 'abc123';
     toastMock.loading.mockReset();
@@ -55,6 +86,21 @@ describe('NotificationsService', () => {
     toastMock.dismiss.mockReset();
     eventSourceCtor.mockClear();
     notificationsService.disconnect();
+  });
+
+  it('cancels a queued notification retry when intentionally paused', () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    notificationsService.connect();
+    const es = (notificationsService as unknown as { eventSource: EventSourceMock }).eventSource!;
+    es.readyState = EventSourceMock.CONNECTING;
+    es.onerror?.(new Error('temporary network failure'));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    notificationsService.pause();
+    vi.advanceTimersByTime(120_000);
+    expect(eventSourceCtor).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it('constructs EventSource with token and sets connection on connected event', () => {

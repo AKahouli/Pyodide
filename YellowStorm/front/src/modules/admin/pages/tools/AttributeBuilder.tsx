@@ -52,7 +52,7 @@ export function AttributeBuilder() {
       <div className="flex items-center justify-between">
         <Label>{t("defaultTools.form.attributes.title")}</Label>
         <Button type="button" variant="outline" size="sm" onClick={addAttribute}>
-          <Plus className="mr-1 h-3 w-3" />
+          <Plus className="me-1 h-3 w-3" />
           {t("defaultTools.form.attributes.add")}
         </Button>
       </div>
@@ -233,7 +233,7 @@ function AttributeCard({
                         <button
                           type="button"
                           onClick={() => removeOption(opt)}
-                          className="ml-1 hover:text-destructive"
+                          className="ms-1 hover:text-destructive"
                         >
                           <X className="h-3 w-3" />
                         </button>

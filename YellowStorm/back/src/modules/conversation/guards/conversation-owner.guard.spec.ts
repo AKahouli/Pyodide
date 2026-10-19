@@ -8,6 +8,35 @@ function makeGuard(conversationStore: Record<string, jest.Mock>, hasAccess = jes
 }
 
 describe('ConversationOwnerGuard', () => {
+  it.each(['messages/search?q=budget', 'messages/0123456789abcdef01234567/around?limit=50'])(
+    'authorizes navigation GET %s for the owner and denies an unrelated actor', async (route) => {
+      const conversationId = new Types.ObjectId().toString(), owner = new Types.ObjectId().toString();
+      const store = { findActiveAccessById: jest.fn().mockResolvedValue({ id: conversationId, createdBy: owner,
+        memberIds: [], invitedEmails: [] }) };
+      const guard = makeGuard(store);
+      const request = { user: { _id: owner, email: 'owner@example.com' }, params: { conversationId },
+        method: 'GET', url: `/conversations/${conversationId}/${route}` };
+      const context = { switchToHttp: () => ({ getRequest: () => request }) } as ExecutionContext;
+      expect(await guard.canActivate(context)).toBe(true);
+      request.user._id = new Types.ObjectId().toString();
+      await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  it.each(['files/upload-url', 'files/upload', 'files/confirm', 'messages/m/generated-images/d/url', 'messages/m/generated-images/d/history'])(
+    'denies foreign conversation POST %s even with project read access', async (route) => {
+      const conversationId = new Types.ObjectId().toString();
+      const store = { findActiveAccessById: jest.fn().mockResolvedValue({
+        id: conversationId, createdBy: new Types.ObjectId().toString(), memberIds: [], invitedEmails: [],
+        projectId: new Types.ObjectId().toString(),
+      }) };
+      const projectRead = jest.fn().mockResolvedValue(true);
+      const guard = makeGuard(store, projectRead);
+      const request = { user: { _id: new Types.ObjectId().toString(), email: 'outsider@example.com' },
+        params: { conversationId }, method: 'POST', url: `/conversations/${conversationId}/${route}` };
+      const context = { switchToHttp: () => ({ getRequest: () => request }) } as ExecutionContext;
+      await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(projectRead).not.toHaveBeenCalled();
+    },
+  );
   it('checks current governed audience even for an existing member', async () => {
     const userId = new Types.ObjectId().toString();
     const conversationId = new Types.ObjectId().toString();

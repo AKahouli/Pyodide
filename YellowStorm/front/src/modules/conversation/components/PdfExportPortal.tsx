@@ -19,7 +19,8 @@ export function PdfExportPortal({ title, subtitle, contentKey, onFinish, childre
 
   useLayoutEffect(() => {
     let cancelled = false;
-    const timer = window.setTimeout(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
       if (cancelled) return;
       try {
         const content = contentRef.current;
@@ -27,14 +28,15 @@ export function PdfExportPortal({ title, subtitle, contentKey, onFinish, childre
           onFinish(false);
           return;
         }
-        printHtmlDocument(buildMessagePdfDocument(title, content.innerHTML, subtitle));
-        onFinish(true);
+        await printHtmlDocument(buildMessagePdfDocument(title, content.innerHTML, subtitle), controller.signal);
+        if (!cancelled) onFinish(true);
       } catch {
-        onFinish(false);
+        if (!cancelled) onFinish(false);
       }
     }, 0);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
   }, [onFinish, contentKey, subtitle, title]);

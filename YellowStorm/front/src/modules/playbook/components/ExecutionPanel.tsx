@@ -81,9 +81,9 @@ function ExecutionHistoryPicker({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-6 text-xs px-2">
-          <History className="h-3 w-3 mr-1" />
+          <History className="h-3 w-3 me-1" />
           {label}
-          <ChevronDown className="h-3 w-3 ml-1" />
+          <ChevronDown className="h-3 w-3 ms-1" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[340px] p-0">
@@ -156,7 +156,7 @@ function PanelHeaderActions({
           onClick={() => navigate(compareUrl)}
           title={t('compare.compare')}
         >
-          <GitCompareArrows className="h-3 w-3 mr-1" />
+          <GitCompareArrows className="h-3 w-3 me-1" />
           <span className="hidden sm:inline">{t('compare.compare')}</span>
         </Button>
       )}
@@ -168,7 +168,7 @@ function PanelHeaderActions({
           onClick={onDeleteAll}
           title="Delete all executions"
         >
-          <Trash2 className="h-3 w-3 mr-1" />
+          <Trash2 className="h-3 w-3 me-1" />
           <span className="hidden sm:inline">Delete All</span>
         </Button>
       )}
@@ -180,7 +180,7 @@ function PanelHeaderActions({
           onClick={onDeleteCurrentExecution}
           title={t('execution.deleteSelected')}
         >
-          <Trash2 className="h-3 w-3 mr-1" />
+          <Trash2 className="h-3 w-3 me-1" />
           <span className="hidden sm:inline">{t('execution.delete')}</span>
         </Button>
       )}
@@ -563,7 +563,7 @@ export function ExecutionPanel({
               disabled={isStopping}
               onClick={() => stopExecution(execution.playbookId, execution.id)}
             >
-              <Square className="h-3 w-3 mr-1" />
+              <Square className="h-3 w-3 me-1" />
               {isStopping ? t('execution.stopping') : t('execution.stop')}
             </Button>
           )}

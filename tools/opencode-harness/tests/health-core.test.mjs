@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
+import { openHarness } from '../runtime/lib/sdlc-core.mjs';
+import { fixture } from './fixture.mjs';
+
+const passing = { graph: { status: 'PASS', reason: 'Scoped graph query completed.' }, hindsight: { status: 'PASS', reason: 'Daemon and integration verified.' } };
+const goal = { goal: 'Verify session isolation', acceptance: ['Session owns its receipt'], nextAction: 'Continue', status: 'active' };
+
+function workerReceipt(child) {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
+    const finish = (error, message) => {
+      clearTimeout(timer); child.removeListener('message', messageReady); child.removeListener('exit', exited); child.removeListener('error', failed);
+      error ? reject(error) : resolve([message]);
+    };
+    const messageReady = message => finish(null, message);
+    const exited = (code, signal) => finish(new Error(`Health worker exited before its receipt (${code ?? signal}): ${stderr}`));
+    const failed = error => finish(error);
+    const timer = setTimeout(() => finish(new Error(`Health worker receipt timed out: ${stderr}`)), 20000);
+    child.once('message', messageReady); child.once('exit', exited); child.once('error', failed);
+  });
+}
+
+if (process.argv[2] === '--bootstrap-worker') {
+  const start = once(process, 'message'); process.send({ ready: true }); await start;
+  const h = await openHarness(process.argv[3]);
+  h.close(); process.send({ bootstrapped: true });
+} else if (process.argv[2] === '--health-worker') {
+  const [root, sessionID] = process.argv.slice(3);
+  const h = await openHarness(root);
+  for (let index = 0; index < 20; index++) {
+    h.health(sessionID, { ...passing, graph: { status: 'PASS', reason: `${sessionID}-${index}` } });
+    h.checkpoint(sessionID, { ...goal, completed: [`${sessionID}-${index}`] });
+    assert.equal(h.health(sessionID).checkpoints.status, 'PASS');
+  }
+  process.send({ receipt: h.health(sessionID) });
+  process.once('message', () => { h.close(); process.exit(0); });
+} else {
+  test('fresh checkpoint stores initialize under a simultaneous process burst', async () => {
+    const f = fixture(); const children = [];
+    try {
+      await Promise.all(Array.from({ length: 12 }, () => {
+        const child = fork(new URL(import.meta.url), ['--bootstrap-worker', f.root], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true });
+        children.push(child);
+        return workerReceipt(child);
+      }));
+      const initialized = children.map(workerReceipt);
+      for (const child of children) child.send('start');
+      await Promise.all(initialized);
+    } finally {
+      await Promise.all(children.filter(child => child.exitCode === null && child.signalCode === null).map(child => { const exited = once(child, 'exit'); child.kill(); return exited; }));
+      f.cleanup();
+    }
+  });
+  test('health verifies actual checkpoint persistence without becoming an integration edit gate', async () => {
+    const f = fixture(); const h = await openHarness(f.root);
+    try {
+      h.checkpoint('session-a', { ...goal, checks: [{ name: 'Existing evidence', status: 'PASS', files: ['src/a.js'] }] });
+      assert.equal(h.health('session-a'), null);
+      const receipt = h.health('session-a', { ...passing, root: 'wrong', sessionID: 'wrong', checkpoints: { status: 'FAIL' } });
+      assert.equal(receipt.root, h.root);
+      assert.equal(receipt.sessionID, 'session-a');
+      assert.equal(receipt.checkpoints.status, 'PASS');
+      assert.equal(h.health('session-a').probe, receipt.probe);
+      h.health('session-a', { ...passing, graph: { status: 'FAIL', reason: 'Wrong root', action: 'Check this repository graph' } });
+      assert.equal(h.health('session-a').graph.status, 'FAIL');
+      h.health('session-a', { ...passing, hindsight: { status: 'PENDING', reason: 'Checking recall' } });
+      assert.equal(h.health('session-a').hindsight.status, 'PENDING');
+      assert.equal(h.state('session-a').checks[0].status, 'PASS');
+      assert.deepEqual(h.state('session-a').files, {});
+      assert.throws(() => h.health('session-a', { graph: { status: 'SKIPPED' }, hindsight: passing.hindsight }), /explicit graph status/);
+    } finally { h.close(); f.cleanup(); }
+  });
+
+  test('startup receipts survive same-session task generations but not owner restart or resume from another session', async () => {
+    const f = fixture(); let h = await openHarness(f.root);
+    try {
+      h.health('old', passing); h.checkpoint('old', goal);
+      const original = h.state('old').id;
+      h.park('old');
+      h.health('fresh', { ...passing, graph: { status: 'FAIL', reason: 'Fresh session has no graph evidence' } });
+      h.resume('fresh', original);
+      assert.equal(h.health('fresh').graph.status, 'FAIL');
+      assert.equal(h.health('old').graph.status, 'PASS');
+      const receipt = h.health('fresh', passing);
+      h.checkpoint('fresh', { ...goal, newTask: true });
+      assert.equal(h.health('fresh').probe, receipt.probe);
+      h.close(); h = await openHarness(f.root);
+      assert.equal(h.health('fresh'), null);
+      h.health('fresh', passing);
+      assert.equal(h.health('fresh').graph.status, 'PASS');
+    } finally { h.close(); f.cleanup(); }
+  });
+
+  test('two real processes sharing the checkpoint database isolate receipts and do not enforce task ownership', async () => {
+    const f = fixture(); let h; const children = [];
+    try {
+      const messages = ['parallel-a', 'parallel-b'].map(id => {
+        const child = fork(new URL(import.meta.url), ['--health-worker', f.root, id], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true });
+        children.push(child);
+        return workerReceipt(child);
+      });
+      const receipts = (await Promise.all(messages)).map(([message]) => message.receipt);
+      assert.notEqual(receipts[0].processID, receipts[1].processID);
+      assert.notEqual(receipts[0].ownerToken, receipts[1].ownerToken);
+      assert.equal(receipts[0].graph.reason, 'parallel-a-19');
+      assert.equal(receipts[1].graph.reason, 'parallel-b-19');
+      h = await openHarness(f.root);
+      assert.equal(h.health('parallel-a'), null);
+      assert.equal(h.health('parallel-b', passing).graph.status, 'PASS');
+      h.health('parent', { ...passing, hindsight: { status: 'FAIL', reason: 'Parent integration unavailable' } });
+      assert.equal(h.health('parent').hindsight.status, 'FAIL');
+      assert.equal(h.state('parallel-a').completed[0], 'parallel-a-19');
+      assert.equal(h.state('parallel-b').completed[0], 'parallel-b-19');
+      await Promise.all(children.map(child => { const exit = once(child, 'exit'); child.send('close'); return exit; }));
+      assert.equal(h.health('parallel-a'), null);
+      h.health('parallel-a', passing);
+      assert.equal(h.health('parallel-a').sessionID, 'parallel-a');
+    } finally {
+      await Promise.all(children.filter(child => child.exitCode === null && child.signalCode === null).map(child => { const exited = once(child, 'exit'); child.kill(); return exited; }));
+      h?.close(); f.cleanup();
+    }
+  });
+}

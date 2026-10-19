@@ -53,6 +53,8 @@ export function __resetAllowedUploadExtensionsCache(): void {
 export interface UseAllowedUploadExtensionsResult {
   allowedExtensions: string[];
   accept: string;
+  maxFileSizeMb: number;
+  maxFileSize: number;
   isLoading: boolean;
   error: unknown;
   refresh: () => Promise<void>;
@@ -92,6 +94,8 @@ export function useAllowedUploadExtensions(): UseAllowedUploadExtensionsResult {
   return {
     allowedExtensions,
     accept,
+    maxFileSizeMb: sharedState.settings?.maxFileSizeMb ?? 500,
+    maxFileSize: (sharedState.settings?.maxFileSizeMb ?? 500) * 1024 * 1024,
     isLoading,
     error: sharedState.error,
     refresh,

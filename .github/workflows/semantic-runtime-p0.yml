@@ -1,0 +1,57 @@
+name: Semantic runtime P0
+
+on:
+  pull_request:
+    paths:
+      - 'YellowStorm/semantic-model-runtime/**'
+      - 'packages/observability-python/**'
+      - '.github/workflows/semantic-runtime-p0.yml'
+      - '.github/actions/stage-observability/**'
+  push:
+    branches: [baseline/semantic-model-001]
+    paths:
+      - 'YellowStorm/semantic-model-runtime/**'
+      - '.github/workflows/semantic-runtime-p0.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-p0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-p0-only
+          POSTGRES_DB: semantic_p0_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d semantic_p0_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SEMANTIC_P0_DISPOSABLE: '1'
+      SEMANTIC_RUNTIME_TEST_DATABASE_URL: postgresql://postgres:disposable-p0-only@127.0.0.1:5432/semantic_p0_test
+      SEMANTIC_RUNTIME_GUARD_TEST_DATABASE_URL: postgresql://postgres:disposable-p0-only@127.0.0.1:5432/semantic_p0_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/stage-observability
+        with:
+          python-version: '3.11'
+      - name: Install repository runtime requirements
+        working-directory: YellowStorm/semantic-model-runtime
+        run: python -m pip install -r requirements.txt
+      - name: Run real PostgreSQL P0 gate (skips fail)
+        working-directory: YellowStorm/semantic-model-runtime
+        run: python scripts/run_p0_gate.py
+      - name: Publish exact revision and JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantic-runtime-p0-${{ github.sha }}
+          path: qa-artifacts/semantic-runtime-p0/
+          if-no-files-found: error

@@ -3,13 +3,13 @@ import { BadRequestException, ConflictException, NotFoundException } from '@modu
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import {
-  asSheetFieldMappings, checkDerivedSource, derivedFieldInputs, derivedFieldMode, derivedFieldUsesAi, readableSourceFields, runtimeDerivedField,
-  storedDerivedField, storedExpand, type DerivedExpand, type DerivedFieldMapping, type DerivedSource, type RuntimeDerivation,
+  asSheetFieldMappings, checkDerivedSource, closesDerivationCycle, derivedFieldInputs, derivedFieldMode, derivedFieldUsesAi, readableSourceFields,
+  reachableDerivationsInOrder, runtimeDerivedField, storedDerivedField, storedExpand, type DerivedExpand, type DerivedFieldMapping, type DerivedSource,
+  type RuntimeDerivation,
 } from '../domain/semantic-derived-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
+import { type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
 import type { DerivedFieldPreviewDto, SaveDerivedSourceDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
@@ -36,8 +36,7 @@ const asSource = (row: DerivedSourceRow): DerivedSource => ({
 /**
  * Concepts filled from another concept's records: the organizations named by the customer id and
  * name of every contract. One record per distinct key value; a conflict rule picks the value kept
- * when the records disagree. A derived concept is never the source of another one, so derivations
- * never chain.
+ * when the records disagree. Derivations may chain as long as their concept graph stays acyclic.
  */
 @Injectable()
 export class SemanticDerivedSourceService {
@@ -45,7 +44,6 @@ export class SemanticDerivedSourceService {
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
     @Optional() private readonly runtime?: SemanticRuntimeClientService,
-    @Optional() private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
     @Optional() private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) { }
 
@@ -144,7 +142,7 @@ export class SemanticDerivedSourceService {
       return { ...rest, sourceField: (sourceAttribute as string | undefined) ?? null, mode: derivedFieldMode(field) };
     });
     const usesAi = fields.some(derivedFieldUsesAi);
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     const result = await this.runtime.previewSheetFields({
       modelId: model.id,
       entry: {
@@ -156,7 +154,7 @@ export class SemanticDerivedSourceService {
         ...(usesAi ? { options: { aiSettings: { ...await this.aiSettings(), ...sourceAiSettings(dto.aiSettings) } } } : {}),
       },
       rows: dto.records.map((record, index) => ({ rowNumber: index + 1, values: record.values })),
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
       ...(expand ? { expand: { ...expand } } : {}),
     });
     // Each reading names the source record it was read on rather than a row number (and its item, when expanded).
@@ -179,17 +177,16 @@ export class SemanticDerivedSourceService {
   }
 
   /**
-   * What a run receives: only derivations whose concepts are both in the draft and whose source
-   * concept has records in this run. Sorted and complete, so the run fingerprint is stable. `aiSettings`
-   * travel only with a derivation that reads a field with AI, so other derivations keep their fingerprint.
+   * What a run receives: valid derivations reachable from concepts with records, in stable dependency
+   * order. `aiSettings` travel only with a derivation that reads a field with AI, so other derivations
+   * keep their fingerprint.
    */
   runtimeDerivations(sources: DerivedSource[], nodes: Array<{ id: string; attributes: AttributeDefinition[] }>,
     sourcedConcepts: Set<string>, identityRules: Map<string, string[]>, aiSettings?: AiExtractionSettings,
     labelFields?: Map<string, string>): RuntimeDerivation[] {
     const fieldsOf = (conceptId: string) => new Set(nodes.find((node) => node.id === conceptId)?.attributes.map((attribute) => attribute.key));
-    return sources
-      .filter((source) => sourcedConcepts.has(source.sourceConceptId)
-        && nodes.some((node) => node.id === source.conceptId) && nodes.some((node) => node.id === source.sourceConceptId))
+    const candidates = sources
+      .filter((source) => nodes.some((node) => node.id === source.conceptId) && nodes.some((node) => node.id === source.sourceConceptId))
       .flatMap((source) => {
         const identity = identityRules.get(source.conceptId) ?? [];
         // A field removed since the derived source was saved is not copied; without its key or its
@@ -214,8 +211,8 @@ export class SemanticDerivedSourceService {
           ...(usesAi && aiSettings ? { aiSettings: { ...aiSettings, ...sourceAiSettings(source.aiSettings) } } : {}),
           ...(expand ? { expand } : {}),
         }];
-      })
-      .sort((left, right) => left.derivationId < right.derivationId ? -1 : left.derivationId > right.derivationId ? 1 : 0);
+      });
+    return reachableDerivationsInOrder(candidates, sourcedConcepts);
   }
 
   /**
@@ -273,12 +270,8 @@ export class SemanticDerivedSourceService {
     if (unmappedKey) throw invalid(`The key field ${unmappedKey} must be filled from ${source.label}`);
     if (orderBy !== null && !sourceKeys.has(orderBy)) throw invalid(`${source.label} has no field ${orderBy}`);
     if (dto.conflictRule === 'latest' && orderBy === null) throw invalid('Choose the field that tells which record is the most recent');
-    // Derivations never chain: a derived concept is never the source of another one.
-    if (others.some((other) => other.conceptId === dto.sourceConceptId)) {
-      throw invalid(`${source.label} is itself made from another concept, so it cannot fill ${target.label}`);
-    }
-    if (others.some((other) => other.sourceConceptId === dto.conceptId)) {
-      throw invalid(`${target.label} already fills another concept, so it cannot be made from ${source.label}`);
+    if (closesDerivationCycle(others, dto.sourceConceptId, dto.conceptId)) {
+      throw invalid(`Making ${target.label} from ${source.label} would create a derivation cycle`);
     }
   }
 }

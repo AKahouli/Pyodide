@@ -58,7 +58,7 @@ export function FixValueButton({ value, onSave, busy, label, iconOnly, className
   }
   return <form className='mt-1 flex items-center gap-1' onSubmit={(event) => { event.preventDefault(); onSave(draft); setEditing(false); }}>
     <Input autoFocus className={INPUT_COMPACT} value={draft} onChange={(event) => setDraft(event.target.value)} aria-label={t('corrections.newValueOf', { field: label })} />
-    <Button type='submit' size='sm' className='h-8' disabled={busy}><Check className='mr-1 h-3.5 w-3.5' />{t('corrections.save')}</Button>
+    <Button type='submit' size='sm' className='h-8' disabled={busy}><Check className='me-1 h-3.5 w-3.5' />{t('corrections.save')}</Button>
     <Button type='button' size='sm' variant='ghost' className='h-8' onClick={() => setEditing(false)} aria-label={t('action.cancel')}><X className='h-3.5 w-3.5' /></Button>
   </form>;
 }
@@ -66,7 +66,7 @@ export function FixValueButton({ value, onSave, busy, label, iconOnly, className
 export function HideRecordButton({ onHide, busy }: Readonly<{ onHide: () => void; busy?: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [confirming, setConfirming] = useState(false);
-  if (!confirming) return <Button type='button' variant='outline' size='sm' onClick={() => setConfirming(true)}><EyeOff className='mr-1.5 h-3.5 w-3.5' />{t('corrections.hideRecord')}</Button>;
+  if (!confirming) return <Button type='button' variant='outline' size='sm' onClick={() => setConfirming(true)}><EyeOff className='me-1.5 h-3.5 w-3.5' />{t('corrections.hideRecord')}</Button>;
   return <div className='flex flex-wrap items-center gap-2 text-xs'>
     <span>{t('corrections.hideRecordConfirm')}</span>
     <Button type='button' size='sm' variant='destructive' disabled={busy} onClick={() => { onHide(); setConfirming(false); }}>{t('corrections.hideRecord')}</Button>
@@ -86,7 +86,7 @@ export function AddLinkForm({ options, onAdd, busy }: Readonly<{
   const [target, setTarget] = useState('');
   const usable = options.filter((option) => option.targets.length > 0);
   if (!usable.length) return null;
-  if (!open) return <Button type='button' variant='outline' size='sm' onClick={() => setOpen(true)}><Link2 className='mr-1.5 h-3.5 w-3.5' />{t('corrections.addLink')}</Button>;
+  if (!open) return <Button type='button' variant='outline' size='sm' onClick={() => setOpen(true)}><Link2 className='me-1.5 h-3.5 w-3.5' />{t('corrections.addLink')}</Button>;
   const selected = usable.find((option) => `${option.relationId}|${option.direction}` === choice);
   return <form className='mt-2 grid gap-2 text-sm sm:grid-cols-[1fr_1fr_auto]' onSubmit={(event) => {
     event.preventDefault();
@@ -134,9 +134,9 @@ export function CorrectionsList({ actions, recordLabel, fieldLabel, relationLabe
   };
   return <section className='space-y-3 rounded-2xl border bg-background p-4' aria-label={t('corrections.title')}>
     <SectionHeader title={t('corrections.title')} help={t('corrections.description')} count={items.length} />
-    <ul className={ROW_LIST}>{items.map((item) => <li key={item.sequence} className='flex items-center gap-2 py-1.5 pl-3 pr-1 text-sm'>
+    <ul className={ROW_LIST}>{items.map((item) => <li key={item.sequence} className='flex items-center gap-2 py-1.5 ps-3 pe-1 text-sm'>
       <span className='min-w-0 flex-1 break-words'>{describe(item)} <span className='text-xs text-muted-foreground'>· {item.correctedByYou ? t('corrections.byYou') : item.correctedBy || t('corrections.bySomeone')}</span></span>
-      <Button type='button' variant='ghost' size='sm' className='h-7 shrink-0 px-2 text-xs' disabled={actions.busy} onClick={() => actions.revert(item.sequence)}><Undo2 className='mr-1 h-3.5 w-3.5' />{t('corrections.undo')}</Button>
+      <Button type='button' variant='ghost' size='sm' className='h-7 shrink-0 px-2 text-xs' disabled={actions.busy} onClick={() => actions.revert(item.sequence)}><Undo2 className='me-1 h-3.5 w-3.5' />{t('corrections.undo')}</Button>
     </li>)}</ul>
   </section>;
 }

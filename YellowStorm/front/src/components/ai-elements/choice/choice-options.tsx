@@ -58,7 +58,7 @@ export function ChoiceOptionsList({ choice, selection, disabled, onToggle, onTog
                 role={choice.selectionMode === 'single' ? 'radio' : 'checkbox'}
                 aria-checked={isSelected}
                 data-selected={isSelected}
-                className={cn('min-h-11 flex-1 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}
+                className={cn('min-h-11 flex-1 rounded-lg border px-3 py-2 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}
               >
                 <span className='font-medium'>{option.label}</span>
                 {option.description && <span className='mt-1 block text-sm text-muted-foreground'>{option.description}</span>}
@@ -76,7 +76,7 @@ export function ChoiceOptionsList({ choice, selection, disabled, onToggle, onTog
             aria-checked={selection.otherSelected}
             data-selected={selection.otherSelected}
             data-other-option='true'
-            className={cn('min-h-11 rounded-lg border px-3 py-2 text-left font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', selection.otherSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}
+            className={cn('min-h-11 rounded-lg border px-3 py-2 text-start font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', selection.otherSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}
           >
             {choice.otherOption.label}
           </button>

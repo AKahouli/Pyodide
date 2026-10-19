@@ -1,6 +1,6 @@
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-/** Only internal authenticated runtimes may specify an acting user. */
+/** Renewal proves the existing actor rather than accepting a caller-selected subject. */
 export class InternalMcpTokenDto {
   @IsString()
   @IsNotEmpty()
@@ -9,6 +9,6 @@ export class InternalMcpTokenDto {
 
   @IsString()
   @IsNotEmpty()
-  @MaxLength(200)
-  userId!: string;
+  @MaxLength(8192)
+  assertion!: string;
 }

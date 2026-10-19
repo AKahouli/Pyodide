@@ -5,6 +5,7 @@
 import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
+  WorkspaceStorageResponse,
   AgentTypeListResponse,
   AgentTypeResponse,
   CreateAgentTypeRequest,
@@ -92,6 +93,7 @@ import type {
   SkillQueryParams,
   ConnectorListResponse,
   ConnectorResponse,
+  ConnectorDynamicHeader,
   CreateConnectorRequest,
   UpdateConnectorRequest,
   ConnectorQueryParams,
@@ -1266,10 +1268,11 @@ export async function inspectMcp(
   connectedAppKey?: string,
   runtimeAuthConfig?: Record<string, unknown>,
   connectorId?: string,
+  dynamicHeaders?: ConnectorDynamicHeader[],
 ): Promise<McpInspectResult> {
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.inspect,
-    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId },
+    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId, dynamicHeaders },
   );
   return response.data.data;
 }
@@ -1456,6 +1459,16 @@ export async function deleteAdminAgent(id: string): Promise<void> {
 }
 
 // Workspace Upload Settings API
+
+export async function getAdminWorkspaceStorage(id: string): Promise<WorkspaceStorageResponse> {
+  const response = await apiClient.get<ApiResponse<WorkspaceStorageResponse>>(API_ENDPOINTS.adminWorkspaceUploadSettings.storage(id));
+  return response.data.data;
+}
+
+export async function updateAdminWorkspaceStorage(id: string, data: { allocatedStorageMb: number; expectedAllocatedStorage: number }): Promise<WorkspaceStorageResponse> {
+  const response = await apiClient.put<ApiResponse<WorkspaceStorageResponse>>(API_ENDPOINTS.adminWorkspaceUploadSettings.storage(id), data);
+  return response.data.data;
+}
 
 export async function getAdminWorkspaceUploadSettings(): Promise<WorkspaceUploadSettingsResponse> {
   const response = await apiClient.get<ApiResponse<WorkspaceUploadSettingsResponse>>(

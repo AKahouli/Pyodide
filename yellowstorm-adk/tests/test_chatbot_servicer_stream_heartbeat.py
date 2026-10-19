@@ -40,6 +40,7 @@ async def _silent_stream(_request: object, queue: asyncio.Queue[dict | None]) ->
 )
 async def test_streaming_rpcs_emit_heartbeats_while_processing_is_silent(
     monkeypatch: pytest.MonkeyPatch,
+    native_dispatch_authority,
     rpc_name: str,
     converter_name: str,
     grpc_request: object,
@@ -55,7 +56,11 @@ async def test_streaming_rpcs_emit_heartbeats_while_processing_is_silent(
     )
     monkeypatch.setattr(chatbot_servicer, "STREAM_HEARTBEAT_INTERVAL_SECONDS", 0.005)
 
-    chunks = [chunk async for chunk in getattr(servicer, rpc_name)(grpc_request, MagicMock())]
+    context = MagicMock()
+    context.invocation_metadata.return_value = (
+        ("x-yellowstorm-native-authority", native_dispatch_authority("conversation-1")),
+    )
+    chunks = [chunk async for chunk in getattr(servicer, rpc_name)(grpc_request, context)]
 
     heartbeats = [chunk for chunk in chunks if chunk.action == "heartbeat"]
     assert heartbeats
@@ -89,6 +94,7 @@ async def test_streaming_rpcs_emit_heartbeats_while_processing_is_silent(
 )
 async def test_stream_cancellation_stops_owned_tasks(
     monkeypatch: pytest.MonkeyPatch,
+    native_dispatch_authority,
     rpc_name: str,
     converter_name: str,
     grpc_request: object,
@@ -115,16 +121,29 @@ async def test_stream_cancellation_stops_owned_tasks(
         AsyncMock(return_value=SimpleNamespace(correction_replay_context=None, attached_files=[],
                                               session_id="conversation-1")),
     )
-    stream = getattr(servicer, rpc_name)(grpc_request, MagicMock())
+    context = MagicMock()
+    context.invocation_metadata.return_value = (
+        ("x-yellowstorm-native-authority", native_dispatch_authority("conversation-1")),
+    )
+    stream = getattr(servicer, rpc_name)(grpc_request, context)
     baseline_tasks = set(asyncio.all_tasks())
 
-    await anext(stream)
-    next_chunk = asyncio.create_task(anext(stream))
+    # Drive the whole stream from a single task, mirroring the real gRPC handler
+    # task: the authority contextvar must be set and reset in the same context.
+    driver_started = asyncio.Event()
+
+    async def _drive() -> None:
+        await anext(stream)  # first chunk; producer task starts
+        driver_started.set()
+        await anext(stream)  # stays pending while processing keeps running
+
+    driver = asyncio.create_task(_drive())
+    await driver_started.wait()
     await processing_started.wait()
-    next_chunk.cancel()
+    driver.cancel()
 
     with pytest.raises(asyncio.CancelledError):
-        await next_chunk
+        await driver
     await processing_stopped.wait()
     await asyncio.sleep(0)
 

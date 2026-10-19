@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileFloatingWindow } from './FileFloatingWindow';
+import { useFileViewerStore } from '../store';
 
 const setPositionMock = vi.hoisted(() => vi.fn());
 const setSizeMock = vi.hoisted(() => vi.fn());
@@ -59,6 +60,27 @@ describe('FileFloatingWindow', () => {
     expect(screen.getByText('titlebar')).toBeInTheDocument();
     expect(screen.getByText('floating-content')).toBeInTheDocument();
     expect(container.querySelectorAll('[data-resize-edge]').length).toBe(8);
+  });
+
+  it('keeps a centered preview centered when the viewport changes', () => {
+    modeState = 'open';
+    displayModeState = 'floating';
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1440);
+    const height = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(900);
+    const state = vi.spyOn(useFileViewerStore, 'getState').mockReturnValue({
+      size: { width: 900, height: 650 }, position: { x: 270, y: 125 }, minimizedPosition: { x: 0, y: 0 },
+    } as never);
+    try {
+      render(<FileFloatingWindow />);
+      width.mockReturnValue(1200);
+      height.mockReturnValue(800);
+      act(() => { window.dispatchEvent(new Event('resize')); });
+      expect(setPositionMock).toHaveBeenLastCalledWith({ x: 150, y: 75 });
+    } finally {
+      state.mockRestore();
+      width.mockRestore();
+      height.mockRestore();
+    }
   });
 
   it('fits the floating window to a narrow viewport immediately', () => {

@@ -87,6 +87,8 @@ export function graphRecordValues(graph: OutlineSourceGraph, recordId: string) {
     id: node.id,
     values: Object.fromEntries(fields.map((field) => [field, valueOf(node, field)])),
     sourceFileName: isMissingValue(source) ? null : String(source),
+    // Reserved AGE metadata is read separately from editable concept fields.
+    source_documents: Array.isArray(node.properties.source_documents) ? node.properties.source_documents : null,
   };
 }
 

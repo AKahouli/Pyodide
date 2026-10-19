@@ -41,6 +41,18 @@ describe('graph outline', () => {
     expect(graphRecordValues(graph, 'nope')).toBeNull();
   });
 
+  it('exposes reserved source documents separately from concept fields, including derived records', () => {
+    const documents = [{ workspaceId: 'w1', documentId: 'd1', filename: 'a.eml' }];
+    const projected = { ...graph, nodes: graph.nodes.map((node) => ({ ...node, properties: { ...node.properties, source_documents: documents } })) };
+    for (const id of ['m1', 'p1']) {
+      const record = graphRecordValues(projected, id)!;
+      expect(record.source_documents).toEqual(documents);
+      expect(record.values).not.toHaveProperty('source_documents');
+    }
+    expect(graphRecordValues(graph, 'm1')!.source_documents).toBeNull();
+    expect(graphRecordValues({ ...graph, nodes: [{ ...graph.nodes[0], properties: { source_documents: [] } }] }, 'm1')!.source_documents).toEqual([]);
+  });
+
   it('finds records by a value, ignoring accents and case', () => {
     expect(searchGraphValues(graph, 'FEVRIER')).toEqual([{ id: 'm1', field: 'sujet', value: 'Facture février' }]);
     expect(searchGraphValues(graph, 'nothing')).toEqual([]);

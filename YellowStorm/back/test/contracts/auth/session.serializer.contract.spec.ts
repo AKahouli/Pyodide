@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { AuthService } from '@modules/auth/auth.service';
+import { SessionService } from '@modules/auth/services/session.service';
 import { sessionRecord, makeSessionStoreFake } from '@modules/auth/persistence/session-store.fake';
 import { expectContract } from '../expect-contract';
 
@@ -25,7 +25,7 @@ const wire = async (): Promise<Record<string, unknown>> => {
       lastActivityAt: new Date('2026-01-15T00:00:00Z'),
     }),
   ]);
-  const service = Object.create(AuthService.prototype) as AuthService;
+  const service = Object.create(SessionService.prototype) as SessionService;
   (service as unknown as { sessionStore: unknown }).sessionStore = store;
   const [session] = await service.getUserSessions('64b000000000000000000001', '64b000000000000000000010');
   return JSON.parse(JSON.stringify(session));

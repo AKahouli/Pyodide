@@ -213,7 +213,7 @@ export function AuditLogsPage() {
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
         <Button onClick={fetchLogs} variant='outline'>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -244,7 +244,7 @@ export function AuditLogsPage() {
               </Label>
               <div className='relative'>
                 <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-                <Input id='email-search' placeholder={t('auditLogs.filters.searchPlaceholder')} className='pl-9' value={emailInput} onChange={(e) => setEmailInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
+                <Input id='email-search' placeholder={t('auditLogs.filters.searchPlaceholder')} className='ps-9' value={emailInput} onChange={(e) => setEmailInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
               </div>
             </div>
             <div className='flex gap-2 flex-wrap'>
@@ -284,7 +284,7 @@ export function AuditLogsPage() {
               <Button onClick={handleSearch}>{t('auditLogs.actions.search')}</Button>
               {hasActiveFilters && (
                 <Button variant='ghost' onClick={clearFilters}>
-                  <X className='mr-1 h-4 w-4' />
+                  <X className='me-1 h-4 w-4' />
                   {t('auditLogs.actions.clear')}
                 </Button>
               )}
@@ -307,7 +307,7 @@ export function AuditLogsPage() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant='outline' className='w-[180px] justify-start'>
-                        <Calendar className='mr-2 h-4 w-4' />
+                        <Calendar className='me-2 h-4 w-4' />
                         {startDate ? startDate.toLocaleDateString() : t('auditLogs.filters.selectDate')}
                       </Button>
                     </PopoverTrigger>
@@ -329,7 +329,7 @@ export function AuditLogsPage() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant='outline' className='w-[180px] justify-start'>
-                        <Calendar className='mr-2 h-4 w-4' />
+                        <Calendar className='me-2 h-4 w-4' />
                         {endDate ? endDate.toLocaleDateString() : t('auditLogs.filters.selectDate')}
                       </Button>
                     </PopoverTrigger>

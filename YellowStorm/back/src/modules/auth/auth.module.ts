@@ -10,7 +10,11 @@ import { AuthController } from './controllers/auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
-import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
+import {
+  AdkPlaybookArtifactServiceGuard, AdkRootRuntimeServiceGuard, AdkRuntimeMcpRenewalGuard,
+  AgentMcpServiceGuard, AppRuntimeServiceGuard, PlaybookMcpServiceGuard, SemanticMcpServiceGuard,
+} from './guards/internal-service-principal.guard';
+import { AdkNativeActorGuard } from './guards/adk-native-actor.guard';
 import { PgSessionStore } from './persistence/pg-session.store';
 import { JWT_ALGORITHM } from './constants/jwt.constants';
 import { AuthThrottleService } from './throttle/auth-throttle.service';
@@ -52,13 +56,20 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     JwtStrategy,
     JwtAuthGuard,
     InternalServiceGuard,
-    AgentCrudActorGuard,
+    AppRuntimeServiceGuard,
+    AgentMcpServiceGuard,
+    PlaybookMcpServiceGuard,
+    SemanticMcpServiceGuard,
+    AdkRuntimeMcpRenewalGuard,
+    AdkRootRuntimeServiceGuard,
+    AdkPlaybookArtifactServiceGuard,
+    AdkNativeActorGuard,
     AuthThrottleService,
     LoginLockoutService,
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     PgSessionStore,
   ],
-  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
+  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AppRuntimeServiceGuard, AgentMcpServiceGuard, PlaybookMcpServiceGuard, SemanticMcpServiceGuard, AdkRuntimeMcpRenewalGuard, AdkRootRuntimeServiceGuard, AdkPlaybookArtifactServiceGuard, AdkNativeActorGuard, JwtModule],
 })
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- Nest module: configuration lives in the decorator
 export class AuthModule {}

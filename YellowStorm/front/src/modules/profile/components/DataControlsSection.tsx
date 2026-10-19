@@ -164,12 +164,12 @@ export function DataControlsSection() {
           >
             {isExporting ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="me-2 h-4 w-4 animate-spin" />
                 {t('dataControls.export.loading')}
               </>
             ) : (
               <>
-                <Download className="mr-2 h-4 w-4" />
+                <Download className="me-2 h-4 w-4" />
                 {t('dataControls.export.button')}
               </>
             )}
@@ -196,12 +196,12 @@ export function DataControlsSection() {
               <Button variant="destructive" disabled={isDeleting}>
                 {isDeleting ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
                     {t('dataControls.danger.loading')}
                   </>
                 ) : (
                   <>
-                    <Trash2 className="mr-2 h-4 w-4" />
+                    <Trash2 className="me-2 h-4 w-4" />
                     {t('dataControls.danger.button')}
                   </>
                 )}

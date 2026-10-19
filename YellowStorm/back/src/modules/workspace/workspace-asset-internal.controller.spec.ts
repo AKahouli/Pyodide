@@ -25,6 +25,10 @@ const document = {
 };
 const config = { get: jest.fn((_key: string, fallback: unknown) => fallback) };
 const writer = { storeDerivedFile: jest.fn() };
+const namespace = 'v2/11111111-1111-1111-1111-111111111111/1/version/options';
+const grants = { check: jest.fn().mockResolvedValue(query.actorUserId), storageNamespace: jest.fn().mockReturnValue(namespace) };
+
+beforeEach(() => { grants.check.mockReset().mockResolvedValue(query.actorUserId); });
 
 function responseSink() {
   const chunks: Buffer[] = [];
@@ -41,13 +45,45 @@ function responseSink() {
 }
 
 describe('WorkspaceAssetInternalController', () => {
+  it.each(['metadata', 'read', 'derived-put', 'dataset-put', 'dataset-get'])('rejects principal plus selectors without a verified grant before %s effects', async operation => {
+    const documents = { findById: jest.fn() };
+    const storage = { openReadStream: jest.fn(), putStream: jest.fn() };
+    const rejected = new Error('missing grant');
+    grants.check.mockRejectedValueOnce(rejected);
+    const controller = new WorkspaceAssetInternalController({} as any, documents as any, storage as any,
+      config as any, writer as any, grants as any);
+    const token = undefined as unknown as string;
+    const dataset = { ...query, datasetId: 'ds_0123456789abcdef01234567' };
+    const request = Readable.from([]) as any;
+    const result = operation === 'metadata' ? controller.metadata(query, token)
+      : operation === 'read' ? controller.content(query, responseSink().response as any, token)
+      : operation === 'dataset-get' ? controller.dataset(dataset, responseSink().response as any, token)
+      : operation === 'dataset-put' ? controller.putDataset(dataset, '4', 'a'.repeat(64), request, token)
+      : controller.putDerivedFile({ ...query, fileName: 'derived.txt' }, 'text/plain', '4', 'a'.repeat(64), request, token);
+    await expect(result).rejects.toBe(rejected);
+    expect(grants.check).toHaveBeenCalledWith(undefined, query.workspaceId, query.documentId, operation,
+      operation.startsWith('dataset-') ? { datasetId: dataset.datasetId } : operation === 'derived-put' ? { fileName: 'derived.txt' } : {});
+    expect(documents.findById).not.toHaveBeenCalled();
+    expect(storage.openReadStream).not.toHaveBeenCalled();
+    expect(storage.putStream).not.toHaveBeenCalled();
+  });
+
+  it('rejects a naked actor selector that disagrees with the verified grant', async () => {
+    grants.check.mockResolvedValueOnce('another-user');
+    const documents = { findById: jest.fn() };
+    const controller = new WorkspaceAssetInternalController({} as any, documents as any, {} as any,
+      config as any, writer as any, grants as any);
+    await expect(controller.metadata(query, 'grant')).rejects.toThrow('actor');
+    expect(documents.findById).not.toHaveBeenCalled();
+  });
+
   it('reauthorizes and returns authoritative metadata without touching storage', async () => {
     const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { openReadStream: jest.fn() };
     const result = await new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any, writer as any,
-    ).metadata(query);
+      shares as any, documents as any, storage as any, config as any, writer as any, grants as any,
+    ).metadata(query, 'grant');
 
     expect(result).toMatchObject({
       workspaceId: query.workspaceId,
@@ -67,10 +103,10 @@ describe('WorkspaceAssetInternalController', () => {
     }) };
     const { response, chunks } = responseSink();
 
-    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
-      .content(query, response as any);
+    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any, grants as any)
+      .content(query, response as any, 'grant');
 
-    expect(shares.assertUserHasAccess).toHaveBeenCalledWith(query.actorUserId, [query.workspaceId]);
+    expect(grants.check).toHaveBeenCalledWith('grant', query.workspaceId, query.documentId, 'read', {});
     expect(documents.findById).toHaveBeenCalledWith(query.workspaceId, query.documentId);
     expect(storage.openReadStream).toHaveBeenCalledWith(document.path);
     expect(response.setHeader).toHaveBeenCalledWith('X-YellowStorm-Asset-Id', query.documentId);
@@ -80,12 +116,13 @@ describe('WorkspaceAssetInternalController', () => {
 
   it('does not touch storage when authorization fails', async () => {
     const denied = new Error('forbidden');
+    grants.check.mockRejectedValueOnce(denied);
     const shares = { assertUserHasAccess: jest.fn().mockRejectedValue(denied) };
     const documents = { findById: jest.fn() };
     const storage = { openReadStream: jest.fn() };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
-      .content(query, responseSink().response as any)).rejects.toBe(denied);
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any, grants as any)
+      .content(query, responseSink().response as any, 'grant')).rejects.toBe(denied);
     expect(documents.findById).not.toHaveBeenCalled();
     expect(storage.openReadStream).not.toHaveBeenCalled();
   });
@@ -95,8 +132,8 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue({ ...document, size: 50 * 1024 * 1024 + 1 }) };
     const storage = { openReadStream: jest.fn() };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
-      .content(query, responseSink().response as any)).rejects.toBeInstanceOf(PayloadTooLargeException);
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any, grants as any)
+      .content(query, responseSink().response as any, 'grant')).rejects.toBeInstanceOf(PayloadTooLargeException);
     expect(storage.openReadStream).not.toHaveBeenCalled();
   });
 
@@ -106,8 +143,8 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { openReadStream: jest.fn().mockResolvedValue({ body, contentLength: 8 }) };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
-      .content(query, responseSink().response as any)).rejects.toBeInstanceOf(ConflictException);
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any, grants as any)
+      .content(query, responseSink().response as any, 'grant')).rejects.toBeInstanceOf(ConflictException);
     expect(body.destroyed).toBe(true);
   });
 
@@ -122,11 +159,11 @@ describe('WorkspaceAssetInternalController', () => {
     const hash = 'a'.repeat(64);
 
     const result = await new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, configured as any, writer as any,
-    ).putDataset({ ...query, datasetId }, '4', hash, request);
+      shares as any, documents as any, storage as any, configured as any, writer as any, grants as any,
+    ).putDataset({ ...query, datasetId }, '4', hash, request, 'grant');
 
     expect(storage.putStream).toHaveBeenCalledWith(
-      `private/semantic-data/${query.workspaceId}/${query.documentId}/${datasetId}.parquet`,
+      `private/semantic-data/${query.workspaceId}/${query.documentId}/${namespace}/${datasetId}.parquet`,
       request,
       'application/vnd.apache.parquet',
       4,
@@ -144,13 +181,14 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { putStream: jest.fn() };
     const controller = new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any, writer as any,
+      shares as any, documents as any, storage as any, config as any, writer as any, grants as any,
     );
     await expect(controller.putDataset(
       { ...query, datasetId: 'ds_0123456789abcdef01234567' },
       undefined,
       'a'.repeat(64),
       Readable.from([]) as any,
+      'grant',
     )).rejects.toThrow('Content-Length');
     expect(storage.putStream).not.toHaveBeenCalled();
   });
@@ -168,11 +206,11 @@ describe('WorkspaceAssetInternalController', () => {
     }) };
     const { response, chunks } = responseSink();
 
-    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
-      .dataset({ ...query, datasetId }, response as any);
+    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any, grants as any)
+      .dataset({ ...query, datasetId }, response as any, 'grant');
 
     expect(storage.openReadStream).toHaveBeenCalledWith(
-      `semantic-model/datasets/${query.workspaceId}/${query.documentId}/${datasetId}.parquet`,
+      `semantic-model/datasets/${query.workspaceId}/${query.documentId}/${namespace}/${datasetId}.parquet`,
     );
     expect(response.setHeader).toHaveBeenCalledWith('X-YellowStorm-Dataset-Id', datasetId);
     expect(response.setHeader).toHaveBeenCalledWith('X-YellowStorm-Content-Hash', `sha256:${hash}`);
@@ -187,11 +225,11 @@ describe('WorkspaceAssetInternalController', () => {
       body, contentType: 'application/octet-stream', contentLength: 4, metadata: {},
     }) };
     const controller = new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any, writer as any,
+      shares as any, documents as any, storage as any, config as any, writer as any, grants as any,
     );
 
     await expect(controller.dataset(
-      { ...query, datasetId: 'ds_0123456789abcdef01234567' }, responseSink().response as any,
+      { ...query, datasetId: 'ds_0123456789abcdef01234567' }, responseSink().response as any, 'grant',
     )).rejects.toBeInstanceOf(ConflictException);
     expect(body.destroyed).toBe(true);
   });
@@ -200,7 +238,7 @@ describe('WorkspaceAssetInternalController', () => {
     const invalid = { get: jest.fn((key: string, fallback: unknown) =>
       key === 'storage.semanticDatasetMaxSizeMb' ? Number.NaN : fallback) };
     expect(() => new WorkspaceAssetInternalController(
-      {} as any, {} as any, {} as any, invalid as any, writer as any,
+      {} as any, {} as any, {} as any, invalid as any, writer as any, grants as any,
     )).toThrow('SEMANTIC_DATASET_MAX_SIZE_MB');
   });
 
@@ -214,7 +252,7 @@ describe('WorkspaceAssetInternalController', () => {
       const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
       const documents = { findById: jest.fn().mockResolvedValue(source) };
       return new WorkspaceAssetInternalController(
-        shares as any, documents as any, {} as any, config as any, { storeDerivedFile: store } as any,
+        shares as any, documents as any, {} as any, config as any, { storeDerivedFile: store } as any, grants as any,
       );
     }
 
@@ -223,12 +261,12 @@ describe('WorkspaceAssetInternalController', () => {
         document: { id: 'doc-1', originalName: 'msg_abc-message.txt', indexingStatus: 'pending' }, created: true,
       });
       const result = await controller(archive, store).putDerivedFile(
-        derivedQuery, 'text/plain; charset=utf-8', String(body.length), sha, Readable.from([body]) as any,
+        derivedQuery, 'text/plain; charset=utf-8', String(body.length), sha, Readable.from([body]) as any, 'grant',
       );
 
       expect(store).toHaveBeenCalledWith(expect.objectContaining({
         workspaceId: query.workspaceId, userId: query.actorUserId, sourceDocumentId: archive.id,
-        sourceName: 'boite.zip', fileName: 'msg_abc-message.txt', mimeType: 'text/plain',
+        sourceName: expect.stringContaining(archive.id + '_'), fileName: expect.stringMatching(/^[a-f0-9]{64}_[a-f0-9]{24}_msg_abc-message\.txt$/), mimeType: 'text/plain',
       }));
       expect(store.mock.calls[0][0].file.equals(body)).toBe(true);
       expect(result).toEqual({ documentId: 'doc-1', originalName: 'msg_abc-message.txt', created: true,
@@ -237,10 +275,10 @@ describe('WorkspaceAssetInternalController', () => {
 
     it('refuses sources that are not e-mail archives and bodies that do not match their hash', async () => {
       await expect(controller(document).putDerivedFile(
-        derivedQuery, 'text/plain', String(body.length), sha, Readable.from([body]) as any,
+        derivedQuery, 'text/plain', String(body.length), sha, Readable.from([body]) as any, 'grant',
       )).rejects.toThrow('e-mail archive');
       await expect(controller(archive).putDerivedFile(
-        derivedQuery, 'text/plain', String(body.length), '0'.repeat(64), Readable.from([body]) as any,
+        derivedQuery, 'text/plain', String(body.length), '0'.repeat(64), Readable.from([body]) as any, 'grant',
       )).rejects.toThrow('hash');
     });
 
@@ -253,8 +291,8 @@ describe('WorkspaceAssetInternalController', () => {
       const documents = { findById: jest.fn().mockResolvedValue(big) };
       const { response } = responseSink();
       await expect(new WorkspaceAssetInternalController(
-        shares as any, documents as any, storage as any, config as any, writer as any,
-      ).content(query, response as any)).rejects.toBeInstanceOf(ConflictException);
+        shares as any, documents as any, storage as any, config as any, writer as any, grants as any,
+      ).content(query, response as any, 'grant')).rejects.toBeInstanceOf(ConflictException);
       expect(storage.openReadStream).toHaveBeenCalled();
     });
   });

@@ -15,6 +15,7 @@ async function main(): Promise<void> {
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
     database,
+    options: '-c lock_timeout=5s',
     ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
     max: 1,
   });

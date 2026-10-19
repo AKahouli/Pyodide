@@ -117,11 +117,11 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
           </DropdownMenuTrigger>
           <DropdownMenuContent side='right' align='start'>
             <DropdownMenuItem onClick={onRename} className='cursor-pointer'>
-              <Pencil className='mr-2 h-4 w-4' />
+              <Pencil className='me-2 h-4 w-4' />
               {t('conversations.rename')}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onDelete} className='cursor-pointer text-destructive'>
-              <Trash2 className='mr-2 h-4 w-4' />
+              <Trash2 className='me-2 h-4 w-4' />
               {t('conversations.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -157,11 +157,11 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
         </DropdownMenuTrigger>
         <DropdownMenuContent side='right' align='start'>
           <DropdownMenuItem onClick={onRename} className='cursor-pointer'>
-            <Pencil className='mr-2 h-4 w-4' />
+            <Pencil className='me-2 h-4 w-4' />
             {t('conversations.rename')}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onDelete} className='cursor-pointer text-destructive'>
-            <Trash2 className='mr-2 h-4 w-4' />
+            <Trash2 className='me-2 h-4 w-4' />
             {t('conversations.delete')}
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -234,14 +234,14 @@ export const ProjectsSection = memo(function ProjectsSection({ label, flyout = f
                 <Folder />
                 <span>{label ?? t('actions.projects.label')}</span>
                 <ChevronDown
-                  className={`ml-auto h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`}
+                  className={`ms-auto h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`}
                 />
               </SidebarMenuButton>
             </CollapsibleTrigger>
           </SidebarMenuItem>
         </SidebarMenu>}
         <CollapsibleContent>
-          <SidebarMenu className={flyout ? undefined : 'pl-3'}>
+          <SidebarMenu className={flyout ? undefined : 'ps-3'}>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={t('projects.create.title')}
@@ -272,7 +272,7 @@ export const ProjectsSection = memo(function ProjectsSection({ label, flyout = f
                     >
                       <MoreHorizontal className='h-4 w-4' />
                       <span>{t('projects.more')}</span>
-                      <ChevronRight className='ml-auto h-4 w-4' />
+                      <ChevronRight className='ms-auto h-4 w-4' />
                     </SidebarMenuButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent

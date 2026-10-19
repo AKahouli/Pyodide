@@ -166,7 +166,7 @@ export function CreateWorkspaceStep2({ onBack, onSubmit }: CreateWorkspaceStep2P
               <div className='text-sm text-muted-foreground'>{t('modal.createWorkspace.step2.modes.template.description')}</div>
             </Label>
             {templates.length > 0 && (
-              <Badge variant='secondary' className='ml-auto'>
+              <Badge variant='secondary' className='ms-auto'>
                 {t('modal.createWorkspace.step2.template.available', { count: templates.length })}
               </Badge>
             )}
@@ -364,13 +364,13 @@ export function CreateWorkspaceStep2({ onBack, onSubmit }: CreateWorkspaceStep2P
       {/* Action Buttons */}
       <div className='flex justify-between pt-4'>
         <Button type='button' variant='outline' onClick={onBack}>
-          <ChevronLeft className='mr-2 h-4 w-4' />
+          <ChevronLeft className='me-2 h-4 w-4' />
           {t('modal.createWorkspace.step2.actions.back')}
         </Button>
         <Button onClick={handleSubmit} disabled={isCreating || (mode === 'template' && !selectedTemplateId)}>
           {isCreating ? (
             <>
-              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              <Loader2 className='me-2 h-4 w-4 animate-spin' />
               {t('modal.createWorkspace.step2.actions.creating')}
             </>
           ) : (

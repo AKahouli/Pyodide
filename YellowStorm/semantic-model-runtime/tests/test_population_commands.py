@@ -31,6 +31,10 @@ class ScriptedPool:
     async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
         return self.script.pop(0)
 
+    async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        assert "pg_advisory_xact_lock" in sql
+        return "SELECT 1"
+
     async def executemany(self, sql: str, rows) -> None:  # type: ignore[no-untyped-def]
         self.script.pop(0)
 
@@ -93,6 +97,12 @@ class FakeAgePool:
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
+    async def no_index_hook(*args, **kwargs):
+        # This suite scripts command-store responses. Index admission is tested
+        # separately and must not consume this pool's scripted command rows.
+        return None
+
+    monkeypatch.setattr("app.api.population_routes.request_index_quietly", no_index_hook)
     monkeypatch.setenv("SEMANTIC_RUNTIME_SERVICE_KEY", "test-key")
     monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
     monkeypatch.delenv("SEMANTIC_RUNTIME_DATABASE_URL", raising=False)
@@ -699,7 +709,8 @@ def test_delete_model_needs_the_service_key(client: TestClient):
 
 
 def _clone_body() -> dict:
-    return {"targetModelId": "m2", "targetModelVersionId": "v2",
+    # WP04.5: the authorized workspace scope is required on every clone command.
+    return {"targetModelId": "m2", "targetModelVersionId": "v2", "allowedWorkspaceIds": ["ws1"],
             "idMap": {"concepts": {"c1": "c2"}, "relations": {"r1": "r2"}}}
 
 
@@ -735,7 +746,7 @@ def test_clone_data_projects_activates_and_requests_the_index(client: TestClient
     assert response.json()["projectionRef"] == "age:v1:pop_dr_new"
     assert calls["copy"] == {"source_model_id": "m1", "target_model_id": "m2",
                              "target_model_version_id": "v2", "id_map": {"c1": "c2", "r1": "r2"},
-                             "planned": None}
+                             "planned": None, "allowed_workspace_ids": ["ws1"]}
     assert calls["project"] == "dr_new" and calls["index"] == "dr_new"
     assert calls["activate"]["projection_ref"] == "age:v1:pop_dr_new"  # type: ignore[index]
 
@@ -753,6 +764,27 @@ def test_clone_data_refuses_while_a_source_job_runs(client: TestClient, monkeypa
                            json=_clone_body())
     assert response.status_code == 409
     assert response.json()["detail"] == "model_jobs_running"
+
+
+def test_clone_data_refuses_an_unscoped_command_and_out_of_scope_sources(client: TestClient,
+                                                                        monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+
+    async def outside_scope(pool, **kwargs):  # type: ignore[no-untyped-def]
+        raise clone_store.CloneScopeExceeded("m1", ["ws-outside"])
+
+    monkeypatch.setattr(clone_store, "clone_model_data", outside_scope)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 409
+    assert response.json()["detail"] == "clone_scope_exceeded"
+
+    # WP04.5: an unscoped command is a validation error, never an unlimited copy.
+    unscoped = {key: value for key, value in _clone_body().items() if key != "allowedWorkspaceIds"}
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH, json=unscoped)
+    assert response.status_code == 422
 
 
 def test_clone_data_removes_the_copy_when_the_graph_fails(client: TestClient,

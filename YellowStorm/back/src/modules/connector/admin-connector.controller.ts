@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Body,
   Controller,
@@ -13,6 +14,8 @@ import {
   Inject,
   Optional,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -22,7 +25,8 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { isTrustedMcpServerUrl } from './utils/trusted-mcp-server.util';
+import { normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
+import { assertMcpDestinationAllowed, McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
@@ -37,13 +41,16 @@ import {
   UpdateConnectorDto,
 } from './dto';
 import { InspectConnectorDto } from './dto/inspect-connector.dto';
-import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
+import { PublicConnectorDto } from './dto/public-connector.dto';
+import { IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorAuthService } from './interfaces/connector-auth.interface';
+import { MigrateQueryHeadersDto } from './dto/migrate-query-headers.dto';
+import { ENCRYPTED_CONNECTOR_HEADERS } from './connector-auth.service';
 
 @ApiTags('Admin Connectors')
 @ApiBearerAuth()
@@ -62,7 +69,7 @@ export class AdminConnectorController {
   @Get()
   @RequirePermissions(Permissions.CONNECTORS_READ)
   @ApiOperation({ summary: 'List connectors (paginated)' })
-  async findAll(@Query() query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {
+  async findAll(@Query() query: QueryConnectorDto): Promise<PaginatedResponseDto<PublicConnectorDto>> {
     return this.connectorService.findAll(query);
   }
 
@@ -70,7 +77,7 @@ export class AdminConnectorController {
   @RequirePermissions(Permissions.CONNECTORS_READ)
   @ApiOperation({ summary: 'Get a connector by ID' })
   @ApiParam({ name: 'id', description: 'Connector ID' })
-  async findById(@Param('id') id: string): Promise<IConnectorResponse> {
+  async findById(@Param('id') id: string): Promise<PublicConnectorDto> {
     return this.connectorService.findById(id);
   }
 
@@ -82,8 +89,8 @@ export class AdminConnectorController {
     @Body() dto: CreateConnectorDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
-  ): Promise<IConnectorResponse> {
-    const connector = await this.connectorService.create(user._id.toString(), dto);
+  ): Promise<PublicConnectorDto> {
+    const connector = await this.connectorService.create(user._id.toString(), dto, user.permissions ?? []);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
       actorEmail: user.email,
@@ -104,16 +111,43 @@ export class AdminConnectorController {
     @Body() body: InspectMcpDto,
     @CurrentUser() user: AuthUser,
   ): Promise<IMcpInspectResult> {
+    // SERVER-ONLY runtime lookup: stored credentials never travel through the
+    // public projection (WP-02).
+    const connector = body.connectorId
+      ? await this.connectorService.getRuntimeById(body.connectorId)
+      : undefined;
+    if (connector?.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+      && (body.runtimeAuthConfig !== undefined || body.dynamicHeaders !== undefined))
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Saved encrypted connector authentication cannot be overridden for inspection');
+    if (connector && (body.serverUrl !== connector.mcpServerUrl || body.transportType !== connector.mcpTransportType)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Save connector connection changes before testing');
+    }
+    // Reject non-remote transports BEFORE any token retrieval or credential
+    // resolution, so denied inspections have zero auth side effects (WP-01).
+    this.connectorService.assertInspectableTransport(connector?.mcpTransportType ?? body.transportType);
+    // Same for the destination (WP-05/WP05.7): run the egress policy before
+    // OAuth token retrieval, runtime auth resolution or dynamic-header
+    // evaluation — a blocked destination must cause zero credential side
+    // effects. Options mirror ConnectorService (trusted internal endpoints
+    // excepted per WP05.5).
+    try {
+      if (connector) await this.connectorService.assertRuntimeDestination(connector, user._id.toString());
+      else await assertMcpDestinationAllowed(body.serverUrl);
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+          'This MCP server destination is not allowed.',
+        );
+      }
+      throw error;
+    }
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
-    const connector = body.connectorId
-      ? await this.connectorService.findById(body.connectorId)
-      : undefined;
-    // An internal MCP server (trusted by URL) authorizes tool listing as a user, like a tool call.
-    const trustedServer = isTrustedMcpServerUrl(this.configService, connector?.mcpServerUrl ?? body.serverUrl);
+    const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
     const runtimeAuthConfig = body.runtimeAuthConfig;
-    const resolvedAuth = connector
+    const resolvedAuth = connector && policy.profile === 'configured'
       ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
           authSourceType: connector.authSourceType,
           connectedAppKey: connector.connectedAppKey,
@@ -124,16 +158,17 @@ export class AdminConnectorController {
     const draftStaticHeaders = !connector
       ? this.resolveDraftStaticHeaders(body.runtimeAuthConfig)
       : undefined;
-    const resolvedAuthHeaders = resolvedAuth?.headers ?? draftStaticHeaders;
-    const inspectionHeaders = trustedServer
-      ? {
-          ...resolvedAuthHeaders,
-          'X-YellowStorm-User-Id': user._id.toString(),
-          'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
-          'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',
-          'X-Correlation-Id': 'admin-connector-inspection',
-        }
-      : resolvedAuthHeaders;
+    const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+      user._id.toString(),
+      body.dynamicHeaders ?? connector?.dynamicHeaders ?? [],
+    );
+    const resolvedAuthHeaders = { ...(resolvedAuth?.headers ?? draftStaticHeaders), ...dynamicHeaders };
+    // Sandbox discovery requires a session even outside a conversation.
+    // Use a fresh inspection-only scope rather than an actual chat session.
+    if (Object.keys(dynamicHeaders).some((name) => name.toLowerCase() === 'x-user-id')) {
+      resolvedAuthHeaders['x-conversation-id'] = `admin-connector-inspection-${randomUUID()}`;
+    }
+    const inspectionHeaders = policy.profile === 'public' ? {} : resolvedAuthHeaders;
 
     return this.connectorService.inspectMcp(
       connector?.mcpTransportType ?? body.transportType,
@@ -144,6 +179,7 @@ export class AdminConnectorController {
       body.runtimeAuthConfig,
       resolvedToken,
       inspectionHeaders,
+      connector?.id,
     );
   }
 
@@ -186,11 +222,24 @@ export class AdminConnectorController {
       action: 'connectors.import_mcp',
       targetId: '',
       targetType: 'Connector',
-      metadata: { serverUrl: body.serverUrl, toolCount: result.tools.length },
+      metadata: { toolCount: result.tools.length },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
     return result;
+  }
+
+  @Post(':id/migrate-query-headers')
+  @RequirePermissions([Permissions.CONNECTORS_UPDATE, Permissions.CONNECTORS_SECURITY_MANAGE])
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async migrateQueryHeaders(@Param('id') id: string, @Body() dto: MigrateQueryHeadersDto,
+    @CurrentUser() user: AuthUser, @Req() req: Request): Promise<PublicConnectorDto> {
+    const connector = await this.connectorService.migrateQueryHeaders(id, dto, user.permissions ?? []);
+    this.auditLogService.logSuccess({ actorId: user._id.toString(), actorEmail: user.email,
+      action: 'connectors.update', targetId: id, targetType: 'Connector',
+      metadata: { credentialMigration: 'query-to-encrypted-headers', headerCount: dto.mappings.length,
+        securityRevision: connector.securityRevision }, ipAddress: req.ip, userAgent: req.headers['user-agent'] });
+    return connector;
   }
 
   @Patch(':id')
@@ -201,8 +250,8 @@ export class AdminConnectorController {
     @Body() dto: UpdateConnectorDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
-  ): Promise<IConnectorResponse> {
-    const connector = await this.connectorService.update(id, dto);
+  ): Promise<PublicConnectorDto> {
+    const connector = await this.connectorService.update(id, dto, user.permissions ?? []);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
       actorEmail: user.email,
@@ -288,7 +337,7 @@ export class AdminConnectorController {
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
   ) {
-    const connector = await this.connectorService.findById(id);
+    const connector = await this.connectorService.getRuntimeById(id);
 
     if (!connector.connectedAppKey) {
       throw new BadRequestException(
@@ -315,7 +364,22 @@ export class AdminConnectorController {
     @CurrentUser() user: AuthUser,
     @Body() dto: InspectConnectorDto,
   ) {
-    const connector = await this.connectorService.findById(id);
+    // SERVER-ONLY runtime lookup (WP-02); stdio/unknown transports are denied
+    // before token retrieval or any inspection side effect (WP-01), and the
+    // destination passes the egress policy before any credential work (WP-05).
+    const connector = await this.connectorService.getRuntimeById(id);
+    this.connectorService.assertInspectableTransport(connector.mcpTransportType);
+    try {
+      await this.connectorService.assertRuntimeDestination(connector, user._id.toString());
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+          'This MCP server destination is not allowed.',
+        );
+      }
+      throw error;
+    }
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(
@@ -336,6 +400,8 @@ export class AdminConnectorController {
       undefined,
       connector.runtimeAuthConfig,
       resolvedToken,
+      undefined,
+      connector.id,
     );
   }
 }

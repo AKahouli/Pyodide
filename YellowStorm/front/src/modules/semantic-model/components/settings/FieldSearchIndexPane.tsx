@@ -42,7 +42,7 @@ export function FieldSearchIndexPane({ value, onChange, fieldLabel, disabled }: 
   const summary = parts.length ? t('searchSettings.field.custom', { parts: parts.join(', ') }) : t('searchSettings.field.global');
 
   return <div className='rounded-lg border border-dashed'>
-    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
+    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-start text-[11px] text-muted-foreground hover:bg-muted/50'
       aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
       {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
       <span className='shrink-0 font-medium text-foreground'>{t('searchSettings.field.title')}</span>

@@ -544,6 +544,20 @@ export class WorkspaceService implements OnModuleInit {
   /**
    * Check if workspace has storage quota for a file
    */
+  async getAdminStorage(workspaceId: string): Promise<{ id: string; name: string; isSystem: boolean; allocatedStorage: number; usedStorage: number }> {
+    const workspace = await this.workspaceStore.findById(workspaceId);
+    if (!workspace) throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    return { id: workspace.id, name: workspace.name, isSystem: Boolean(workspace.isSystem),
+      allocatedStorage: workspace.allocatedStorage, usedStorage: workspace.usedStorage };
+  }
+
+  async updateAdminStorage(workspaceId: string, allocatedStorageMb: number, expectedAllocatedStorage: number) {
+    await this.getAdminStorage(workspaceId);
+    const updated = await this.workspaceStore.updateStorageQuota(workspaceId, allocatedStorageMb * 1048576, expectedAllocatedStorage);
+    if (!updated) throw new ConflictException(ErrorCode.CONFLICT, 'Quota changed or requested limit is below current storage usage. Reload and try again.');
+    return this.getAdminStorage(workspaceId);
+  }
+
   async checkStorageQuota(
     workspaceId: string,
     fileSize: number,

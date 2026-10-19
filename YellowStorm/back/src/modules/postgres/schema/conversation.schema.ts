@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, type AnyPgColumn, char, check, doublePrecision, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
+import { bigserial, boolean, type AnyPgColumn, char, check, doublePrecision, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 
 export const conversationSchema = pgSchema('conversation');
 
@@ -219,6 +219,29 @@ export const messages = conversationSchema.table(
       .where(sql`${t.requestId} IS NOT NULL AND ${t.senderId} IS NOT NULL`),
   ],
 );
+
+export const openUiAppStates = conversationSchema.table('openui_app_states', {
+  actorId: char('actor_id', { length: 24 }).notNull(),
+  conversationId: char('conversation_id', { length: 24 }).notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  sourceMessageId: char('source_message_id', { length: 24 }).notNull().references(() => messages.id, { onDelete: 'cascade' }),
+  componentId: varchar('component_id', { length: 128 }).notNull(),
+  programDigest: char('program_digest', { length: 64 }).notNull(),
+  schemaVersion: integer('schema_version').notNull().default(1),
+  libraryVersion: varchar('library_version', { length: 40 }).notNull().default('yellowstorm-miniapp-v1'),
+  stateRevision: integer('state_revision').notNull().default(1),
+  state: jsonb('state').$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ columns: [t.actorId, t.conversationId, t.sourceMessageId, t.componentId, t.programDigest] }),
+  index('idx_openui_app_states_conversation').on(t.conversationId),
+  index('idx_openui_app_states_message').on(t.sourceMessageId),
+  check('openui_app_states_actor_id', objectIdCheck(t.actorId)),
+  check('openui_app_states_program_digest', sql`${t.programDigest} ~ '^[a-f0-9]{64}$'`),
+  check('openui_app_states_revision', sql`${t.stateRevision} > 0`),
+  check('openui_app_states_contract', sql`${t.schemaVersion} = 1 AND ${t.libraryVersion} = 'yellowstorm-miniapp-v1'`),
+  // PostgreSQL's canonical JSONB adds spaces; transport validation caps compact JSON at 20 KiB.
+  check('openui_app_states_json', sql`jsonb_typeof(${t.state}) = 'object' AND octet_length(${t.state}::text) <= 24576`),
+]);
 
 export const usageWindows = conversationSchema.table(
   'usage_windows',
@@ -557,3 +580,17 @@ export const conversationPlaybookHandoffs = conversationSchema.table(
   },
   (t) => [check('conversation_playbook_handoffs_id_object_id', objectIdCheck(t.id)), check('conversation_playbook_handoffs_contract', sql`${t.contractVersion} = 1`), check('conversation_playbook_handoffs_status', sql`${t.status} IN ('prepared', 'bound', 'consumed')`), uniqueIndex('uq_conversation_playbook_handoffs_handoff_id').on(t.handoffId), uniqueIndex('uq_conversation_playbook_handoffs_owner_request').on(t.ownerId, t.creationRequestId), index('idx_conversation_playbook_handoffs_platform_status').on(t.ownerId, t.platformConversationId, t.status), index('idx_handoffs_expires_v2').on(t.expiresAt, t.id)],
 );
+
+/** Recipient-scoped committed SSE replay; payload access is rechecked on delivery. */
+export const conversationSseEvents = conversationSchema.table('sse_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  userId: char('user_id', { length: 24 }).notNull(),
+  conversationId: char('conversation_id', { length: 24 }).references(() => conversations.id, { onDelete: 'cascade' }),
+  event: jsonb('event').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  index('idx_sse_events_user_cursor').on(t.userId, t.id),
+  index('idx_sse_events_expiry').on(t.createdAt),
+  check('sse_events_user_id_check', objectIdCheck(t.userId)),
+  check('sse_events_event_check', sql`jsonb_typeof(${t.event}) = 'object' AND octet_length(${t.event}::text) <= 1100000`),
+]);

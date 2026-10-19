@@ -44,7 +44,7 @@ export function ModelSetupChecks({ modelId, canEdit, items, activeKey, modelChec
       <div className='flex items-center justify-between gap-2'>
         <h3 className='font-semibold'>{t('validation.title')}</h3>
         {onRunCheck && <Button size='sm' variant='outline' className='h-8' disabled={!canRunCheck || checking} onClick={onRunCheck}>
-          {checking ? <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' /> : <CheckCircle2 className='mr-1.5 h-3.5 w-3.5' />}
+          {checking ? <Loader2 className='me-1.5 h-3.5 w-3.5 animate-spin' /> : <CheckCircle2 className='me-1.5 h-3.5 w-3.5' />}
           {t('action.validate')}
         </Button>}
       </div>
@@ -53,7 +53,7 @@ export function ModelSetupChecks({ modelId, canEdit, items, activeKey, modelChec
         : <div className='mt-3 space-y-2'>{validation.map((issue, index) => <button
             key={`${issue.code}-${issue.targetId}-${index}`}
             type='button'
-            className='flex w-full gap-2 rounded-xl border p-3 text-left hover:bg-muted'
+            className='flex w-full gap-2 rounded-xl border p-3 text-start hover:bg-muted'
             onClick={() => { if (issue.targetId) onOpenValidationIssue?.(issue.targetId); }}
           >
             <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${issue.severity === 'error' ? 'text-destructive' : 'text-amber-600'}`} />

@@ -8,7 +8,7 @@ describe('ConnectorTransferService', () => {
 
   function build() {
     const connectorService = {
-      findById: jest.fn().mockResolvedValue({
+      getRuntimeById: jest.fn().mockResolvedValue({
         id: connectorId,
         slug: 'sharepoint',
         createdBy: new Types.ObjectId(),
@@ -86,7 +86,7 @@ describe('ConnectorTransferService', () => {
         itemRef: { driveId: 'drive-1', itemId: 'item-1' },
       }),
     ).rejects.toThrow('denied');
-    expect(connectorService.findById).not.toHaveBeenCalled();
+    expect(connectorService.getRuntimeById).not.toHaveBeenCalled();
   });
 
   it('resolves provider auth and attributes upload to the requesting user', async () => {

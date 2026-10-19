@@ -13,6 +13,8 @@ export interface MessageContextValue {
   isStreaming: boolean;
   /** Display mode for file viewer: 'sidebar' (conversation) or 'floating' (playbook) */
   fileViewerDisplayMode?: 'sidebar' | 'floating';
+  /** Called when a citation is activated, before its source opens. */
+  onCitationOpen?: () => void;
 }
 
 const MessageContext = createContext<MessageContextValue | null>(null);
@@ -22,14 +24,15 @@ export interface MessageProviderProps {
   isLastAiMessage?: boolean;
   isStreaming?: boolean;
   fileViewerDisplayMode?: 'sidebar' | 'floating';
+  onCitationOpen?: () => void;
 }
 
 /**
  * Provider for message-level context.
  * Wrap message content with this to provide context to child components.
  */
-export const MessageProvider = ({ children, isLastAiMessage = false, isStreaming = false, fileViewerDisplayMode }: MessageProviderProps) => {
-  return <MessageContext.Provider value={{ isLastAiMessage, isStreaming, fileViewerDisplayMode }}>{children}</MessageContext.Provider>;
+export const MessageProvider = ({ children, isLastAiMessage = false, isStreaming = false, fileViewerDisplayMode, onCitationOpen }: MessageProviderProps) => {
+  return <MessageContext.Provider value={{ isLastAiMessage, isStreaming, fileViewerDisplayMode, onCitationOpen }}>{children}</MessageContext.Provider>;
 };
 
 /**
@@ -57,4 +60,10 @@ export const useShouldAutoOpenPreview = (): boolean => {
 export const useFileViewerDisplayMode = (): 'sidebar' | 'floating' => {
   const context = useContext(MessageContext);
   return context?.fileViewerDisplayMode ?? 'sidebar';
+};
+
+/** Called on every citation activation; undefined outside a provider. */
+export const useOnCitationOpen = (): (() => void) | undefined => {
+  const context = useContext(MessageContext);
+  return context?.onCitationOpen;
 };

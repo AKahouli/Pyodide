@@ -36,11 +36,11 @@ export const WorkspaceButton = memo(function WorkspaceButton({ label }: { label?
         </DropdownMenuTrigger>
         <DropdownMenuContent side='right' align='start'>
           <DropdownMenuItem onClick={() => openCreateModal()} className='cursor-pointer'>
-            <Plus className='mr-2 h-4 w-4' />
+            <Plus className='me-2 h-4 w-4' />
             {t('button.menu.createWorkspace')}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={openCreateTemplateModal} className='cursor-pointer'>
-            <FileText className='mr-2 h-4 w-4' />
+            <FileText className='me-2 h-4 w-4' />
             {t('button.menu.createTemplate')}
           </DropdownMenuItem>
         </DropdownMenuContent>

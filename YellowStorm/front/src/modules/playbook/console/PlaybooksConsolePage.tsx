@@ -215,7 +215,7 @@ export function PlaybooksConsolePage() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3.5 sm:px-6">
         <h1 className="text-[19px] font-semibold leading-tight">
           {t('list.title')}
-          {vms.length > 0 && <span className="ml-2 font-mono text-xs tabular-nums text-muted-foreground">{vms.length}</span>}
+          {vms.length > 0 && <span className="ms-2 font-mono text-xs tabular-nums text-muted-foreground">{vms.length}</span>}
         </h1>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setPaletteOpen(true)}>

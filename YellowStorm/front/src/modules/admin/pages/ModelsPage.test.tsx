@@ -67,4 +67,75 @@ describe('ModelsPage', () => {
       expect.objectContaining({ inputModalities: ['text', 'image'], defaultReasoningEffort: null }),
     ));
   });
+  it.each([
+    { initial: undefined, selected: 'responses', initialLabel: 'chatCompletions', selectedLabel: 'responses' },
+    { initial: 'responses' as const, selected: 'chat_completions', initialLabel: 'responses', selectedLabel: 'chatCompletions' },
+  ])('saves the selected conversation API ($selected)', async ({ initial, selected, initialLabel, selectedLabel }) => {
+    vi.mocked(getAllModels).mockResolvedValue({ models: [{ ...model, conversationApi: initial }], total: 1 });
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+
+    const api = screen.getByRole('combobox', { name: 'models.edit.fields.conversationApi' });
+    expect(api).toHaveTextContent(`models.edit.fields.conversationApi.${initialLabel}`);
+    await user.click(api);
+    await user.click(await screen.findByRole('option', { name: `models.edit.fields.conversationApi.${selectedLabel}` }));
+    await user.click(screen.getByRole('button', { name: 'models.edit.actions.save' }));
+
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith(
+      'text-model', expect.objectContaining({ conversationApi: selected }),
+    ));
+  });
+
+  it('hides Responses controls for legacy models and saves safe defaults', async () => {
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+    expect(screen.queryByRole('combobox', { name: 'models.edit.fields.reasoningHistory' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'models.edit.actions.save' }));
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith('text-model', expect.objectContaining({
+      conversationApi: 'chat_completions', responsesHistoryMode: 'application', reasoningHistory: 'auto', reasoningSummary: 'off',
+    })));
+  });
+
+  it('saves independent application replay and summary preferences', async () => {
+    vi.mocked(getAllModels).mockResolvedValue({ models: [{ ...model, conversationApi: 'responses', reasoningHistory: 'last', reasoningSummary: 'auto' }], total: 1 });
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+    const replay = screen.getByRole('combobox', { name: 'models.edit.fields.reasoningHistory' });
+    expect(replay).toHaveTextContent('models.edit.fields.reasoningHistory.last');
+    await user.click(replay);
+    await user.click(await screen.findByRole('option', { name: 'models.edit.fields.reasoningHistory.all' }));
+    await user.click(screen.getByRole('combobox', { name: 'models.edit.fields.reasoningSummary' }));
+    await user.click(await screen.findByRole('option', { name: 'models.edit.fields.reasoningSummary.detailed' }));
+    await user.click(screen.getByRole('button', { name: 'models.edit.actions.save' }));
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith('text-model', expect.objectContaining({
+      responsesHistoryMode: 'application', reasoningHistory: 'all', reasoningSummary: 'detailed',
+    })));
+  });
+
+  it('forces Auto replay for provider history and preserves dormant settings for Completions', async () => {
+    vi.mocked(getAllModels).mockResolvedValue({ models: [{ ...model, conversationApi: 'responses', reasoningHistory: 'last', reasoningSummary: 'concise' }], total: 1 });
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+    await user.click(screen.getByRole('combobox', { name: 'models.edit.fields.responsesHistoryMode' }));
+    await user.click(await screen.findByRole('option', { name: 'models.edit.fields.responsesHistoryMode.provider' }));
+    expect(screen.getByRole('combobox', { name: 'models.edit.fields.reasoningHistory' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'models.edit.fields.reasoningHistory' })).toHaveTextContent('models.edit.fields.reasoningHistory.auto');
+    expect(screen.getByText('models.edit.fields.reasoningHistoryProviderHelper')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'models.edit.fields.conversationApi' }));
+    await user.click(await screen.findByRole('option', { name: 'models.edit.fields.conversationApi.chatCompletions' }));
+    expect(screen.queryByRole('combobox', { name: 'models.edit.fields.reasoningSummary' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'models.edit.actions.save' }));
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith('text-model', expect.objectContaining({
+      conversationApi: 'chat_completions', responsesHistoryMode: 'provider', reasoningHistory: 'auto', reasoningSummary: 'concise',
+    })));
+  });
+
+  it('normalizes persisted provider replay to Auto', async () => {
+    vi.mocked(getAllModels).mockResolvedValue({ models: [{ ...model, conversationApi: 'responses', responsesHistoryMode: 'provider', reasoningHistory: 'none' }], total: 1 });
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+    expect(screen.getByRole('combobox', { name: 'models.edit.fields.reasoningHistory' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'models.edit.fields.reasoningHistory' })).toHaveTextContent('models.edit.fields.reasoningHistory.auto');
+  });
+
 });

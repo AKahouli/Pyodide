@@ -1,6 +1,7 @@
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { WorkspaceDocumentTree } from './document-tree';
 import { WorkspaceDocumentWrite } from './document-write';
+import { WorkspaceDocumentLinks } from './document-links';
 import { WorkspaceDocumentSupport, isUniqueDocumentNameViolation } from './document-support';
 import { BadRequestException, ConflictException } from '../../exceptions';
 import { DocumentStatus, IndexingStatus } from '../interfaces/document-status.enum';
@@ -170,13 +171,15 @@ describe('WorkspaceDocumentWrite direct upload reserves the name before writing 
   function build(uploadImpl: () => Promise<unknown>) {
     const calls: string[] = [];
     const documentStore = {
+      withUploadingDocument: jest.fn(async (_id: string, action: () => Promise<unknown>) => action()),
       updateById: jest.fn(async (id: string, patch: Record<string, unknown>) => {
-        calls.push(`complete:${patch.status}`);
+        if (patch.status) calls.push(`complete:${patch.status}`);
         return { ...doc(id), ...patch };
       }),
       deleteById: jest.fn(async (id: string) => { calls.push(`release:${id}`); }),
     };
     const documentService = {
+      delete: jest.fn(async () => undefined),
       upload: jest.fn(async (_file: Buffer, name: string) => {
         calls.push(`upload:${name}`);
         return uploadImpl();
@@ -185,6 +188,7 @@ describe('WorkspaceDocumentWrite direct upload reserves the name before writing 
     const support = {
       validateFile: jest.fn(async () => undefined),
       sanitizeFilename: (n: string) => n,
+      uploadFilename: (id: string, name: string) => `${id}-${name}`,
       mapToResponse: (d: unknown) => d,
       createWithUniqueName: jest.fn(async (_ws: string, name: string, build: (n: string) => Record<string, unknown>) => {
         const input = build(name);
@@ -342,5 +346,41 @@ describe('PgUploadSessionStore.findExpired', () => {
     expect(limit).toHaveBeenCalledWith(500);
     expect(queries).toEqual(['sessions', 'files']);
     expect(result.map((r) => r.files.length)).toEqual([1, 2]);
+  });
+});
+
+describe('WorkspaceDocumentSupport configured upload limit', () => {
+  it('reads the current admin limit for every upload, including generated images', async () => {
+    let maxFileSizeMb = 2;
+    const settings = { getAllowedExtensions: jest.fn().mockResolvedValue(['.png']), getAllowedMimeTypesForExtension: jest.fn().mockReturnValue(['image/png']), getSettings: jest.fn(async () => ({ maxFileSizeMb })) };
+    const support = new WorkspaceDocumentSupport({} as never, settings as never, { get: jest.fn((_k, d) => d) } as never, {} as never, logger() as never);
+    await expect(support.validateFile('test.png', 'image/png', 2 * 1048576)).resolves.toBeUndefined();
+    maxFileSizeMb = 1;
+    await expect(support.validateFile('test.png', 'image/png', 2 * 1048576)).rejects.toThrow('exceeds maximum 1MB');
+  });
+});
+
+
+describe('converted link registration cleanup', () => {
+  it('deletes only its unique uploaded blob when quota changes before registration', async () => {
+    const deleted = jest.fn(async () => undefined);
+    const updateById = jest.fn(async (_id: string, patch: Record<string, unknown>) => {
+      if (patch.size) throw new Error('quota changed');
+      return null;
+    });
+    const upload = jest.fn(async () => ({ storedName: 'doc-report.pdf', blobPath: 'owner/ws/doc-report.pdf' }));
+    const links = new WorkspaceDocumentLinks({ updateById } as never, {
+      checkStorageQuota: async () => ({ allowed: true }),
+      getStorageContext: async () => ({ ownerUserId: 'owner', storagePrefix: 'ws' }),
+    } as never, { upload, delete: deleted } as never, {} as never, {} as never,
+    { convert: async () => Buffer.from('PDF') } as never, {} as never,
+    { assertUrlIsSafe: async () => undefined } as never,
+    { uploadFilename: (id: string, name: string) => `${id}-${name}` } as never, logger() as never);
+    await (links as unknown as { convertAndStore: (...args: unknown[]) => Promise<void> })
+      .convertAndStore('doc', WS, 'https://example.com', 'report.pdf', false);
+    expect(upload).toHaveBeenCalledWith(expect.any(Buffer), 'report.pdf', 'application/pdf',
+      expect.objectContaining({ customFileName: 'doc-report.pdf' }));
+    expect(deleted).toHaveBeenCalledWith('owner/ws/doc-report.pdf');
+    expect(updateById).toHaveBeenLastCalledWith('doc', expect.objectContaining({ status: 'failed' }));
   });
 });

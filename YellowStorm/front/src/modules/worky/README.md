@@ -172,4 +172,4 @@ npx vitest run src/modules/worky/components/WorkyWhatsAppConnectModal.test.tsx
 - [Backend Worky module](../../../back/src/modules/worky/README.md)
 - [Backend WhatsApp bridge (detailed)](../../../back/src/modules/worky/README-WHATSAPP.md)
 - [Admin module — system bot page](../admin/pages/WorkyWhatsAppSystemBotPage.tsx)
-- [Frontend guidelines](../../FRONTEND_GUIDELINES.md)
+- [Frontend scoped instructions](../../../AGENTS.md)

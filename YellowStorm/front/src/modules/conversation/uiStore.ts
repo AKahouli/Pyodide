@@ -13,9 +13,21 @@ export interface OutlineScrollRequest {
   nonce: number;
 }
 
+export const MAX_SELECTED_CONVERSATION_ASSETS = 8;
+export interface SelectedConversationAsset { ref: string; name: string; nonce: number; sourceMessageId?: string }
 export interface ConversationUiState {
-  contextPanel: 'outline' | 'work' | null;
-  setContextPanel: (panel: 'outline' | 'work' | null) => void;
+  selectedAssets: { actorId: string; conversationId: string; items: SelectedConversationAsset[] } | null;
+  scopeAssetSelection: (actorId: string, conversationId: string) => void;
+  addAssetSelection: (actorId: string, conversationId: string, ref: string, name: string, sourceMessageId?: string) => boolean;
+  removeAssetSelection: (actorId: string, conversationId: string, nonce: number) => void;
+  clearSubmittedAssets: (actorId: string, conversationId: string, nonces: number[]) => void;
+  contextPanel: 'outline' | 'work' | 'files' | null;
+  setContextPanel: (panel: 'outline' | 'work' | 'files' | null) => void;
+  assetPromptRequest: { actorId: string; conversationId: string; ref: string; name: string; nonce: number; intent?: 'refine'; sourceMessageId?: string } | null;
+  requestAssetPrompt: (actorId: string, conversationId: string, ref: string, name: string, intent?: 'refine', sourceMessageId?: string) => void;
+  consumeAssetPrompt: () => void;
+  assetListRevision: number;
+  invalidateAssets: () => void;
   contextPanelWidth: number;
   setContextPanelWidth: (width: number) => void;
   /** Anchor ids live in the DOM (rendered headings / message wrappers), keyed by AI message id. */
@@ -42,14 +54,20 @@ export const initialConversationUiState = {
   contextPanel: null,
   contextPanelWidth: 320,
   autoReliabilityEnabled: false,
+  assetPromptRequest: null,
+  assetListRevision: 0,
+  selectedAssets: null,
 } as {
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   outlineScrollRequest: OutlineScrollRequest | null;
   activeOutlineAnchorId: string | null;
   outlineCollapsed: boolean;
-  contextPanel: 'outline' | 'work' | null;
+  contextPanel: 'outline' | 'work' | 'files' | null;
   contextPanelWidth: number;
   autoReliabilityEnabled: boolean;
+  assetPromptRequest: ConversationUiState['assetPromptRequest'];
+  selectedAssets: ConversationUiState['selectedAssets'];
+  assetListRevision: number;
 };
 
 let outlineScrollNonce = 0;
@@ -58,7 +76,7 @@ export const CONTEXT_PANEL_PREFS_KEY = 'conversation.contextPanel';
 export function readContextPanelPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem(CONTEXT_PANEL_PREFS_KEY) || '{}');
-    const contextPanel = saved?.panel === 'outline' || saved?.panel === 'work' ? saved.panel as 'outline' | 'work' : null;
+    const contextPanel = saved?.panel === 'outline' || saved?.panel === 'work' || saved?.panel === 'files' ? saved.panel as ConversationUiState['contextPanel'] : null;
     const contextPanelWidth = typeof saved?.width === 'number' && Number.isFinite(saved.width) ? Math.min(480, Math.max(260, saved.width)) : 320;
     return { contextPanel, contextPanelWidth, outlineCollapsed: contextPanel !== 'outline' };
   } catch {
@@ -85,6 +103,31 @@ export const useConversationUiStore = create<ConversationUiState>()(
     (set, get) => ({
       ...initialConversationUiState,
       ...readContextPanelPreferences(),
+      scopeAssetSelection: (actorId, conversationId) => {
+        const current = get().selectedAssets;
+        if (current?.actorId !== actorId || current.conversationId !== conversationId) set({ selectedAssets: { actorId, conversationId, items: [] } }, false, 'scopeAssetSelection');
+      },
+      addAssetSelection: (actorId, conversationId, ref, name, sourceMessageId) => {
+        if (!actorId || !conversationId || !/^[A-Za-z0-9_-]{1,2048}$/.test(ref)) return false;
+        const current = get().selectedAssets;
+        const items = current?.actorId === actorId && current.conversationId === conversationId ? current.items : [];
+        if (items.some(item => item.ref === ref) && !sourceMessageId) return true;
+        if (!items.some(item => item.ref === ref) && items.length >= MAX_SELECTED_CONVERSATION_ASSETS) return false;
+        outlineScrollNonce += 1;
+        set({ selectedAssets: { actorId, conversationId, items: [...items.filter(item => item.ref !== ref).map(item => sourceMessageId ? { ...item, sourceMessageId: undefined } : item), { ref, name: name.replace(/[\r\n]/g, ' ').slice(0, 240), nonce: outlineScrollNonce, ...(sourceMessageId ? { sourceMessageId } : {}) }] } }, false, 'addAssetSelection');
+        return true;
+      },
+      removeAssetSelection: (actorId, conversationId, nonce) => get().clearSubmittedAssets(actorId, conversationId, [nonce]),
+      clearSubmittedAssets: (actorId, conversationId, nonces) => {
+        const current = get().selectedAssets;
+        if (current?.actorId === actorId && current.conversationId === conversationId) set({ selectedAssets: { ...current, items: current.items.filter(item => !nonces.includes(item.nonce)) } }, false, 'clearSubmittedAssets');
+      },
+      requestAssetPrompt: (actorId, conversationId, ref, name, intent, sourceMessageId) => {
+        outlineScrollNonce += 1;
+        set({ assetPromptRequest: { actorId, conversationId, ref, name, nonce: outlineScrollNonce, ...(intent ? { intent } : {}), ...(intent === 'refine' && sourceMessageId ? { sourceMessageId } : {}) } }, false, 'requestAssetPrompt');
+      },
+      consumeAssetPrompt: () => set({ assetPromptRequest: null }, false, 'consumeAssetPrompt'),
+      invalidateAssets: () => set(state => ({ assetListRevision: state.assetListRevision + 1 }), false, 'invalidateAssets'),
       setContextPanel: (contextPanel) => {
         set({ contextPanel, outlineCollapsed: contextPanel !== 'outline' }, false, 'setContextPanel');
         persistContextPanel(contextPanel, get().contextPanelWidth);
@@ -131,3 +174,8 @@ export const useConversationUiStore = create<ConversationUiState>()(
     { name: 'conversation-ui-store' },
   ),
 );
+
+/** A citation takes over the right side of the conversation: hide outline/assets/work. */
+export function closeConversationContextPanel(): void {
+  useConversationUiStore.getState().setContextPanel(null);
+}

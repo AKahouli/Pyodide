@@ -38,7 +38,7 @@ function CatalogSkeleton() {
             </div>
           </div>
           <div className='border-t border-border/50 bg-muted/20 px-3 py-3'>
-            <Skeleton className='ml-auto h-8 w-24' />
+            <Skeleton className='ms-auto h-8 w-24' />
           </div>
         </div>
       ))}
@@ -163,7 +163,7 @@ export function AppMarketAppsView({ children }: { children?: ReactNode }) {
           </div>
           {filters.hasActiveFilters ? (
             <Button variant='outline' size='sm' onClick={filters.clearAll}>
-              <X className='mr-1.5 size-3.5' />
+              <X className='me-1.5 size-3.5' />
               {t('hub.filters.clear')}
             </Button>
           ) : null}

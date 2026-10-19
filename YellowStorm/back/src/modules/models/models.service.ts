@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { LoggerService } from '../logger';
 import { LiteLLMClient } from './litellm.client';
 import { type ModelPatch,   type ModelRow,   type NewModelRow } from './persistence/model.store';
-import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot } from './interfaces/model.interface';
+import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot, ConversationApi, ResponsesHistoryMode, ReasoningHistory, ReasoningSummary } from './interfaces/model.interface';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { withTransaction } from '@common/postgres/transaction';
@@ -402,6 +402,10 @@ export class ModelsService implements OnApplicationBootstrap {
       types: string[];
       isActive: boolean;
       omitTemperature: boolean;
+      conversationApi: ConversationApi;
+      responsesHistoryMode: ResponsesHistoryMode;
+      reasoningHistory: ReasoningHistory;
+      reasoningSummary: ReasoningSummary;
       inputModalities: ModelInputModality[];
       reasoningEfforts: ReasoningEffortOption[];
       defaultReasoningEffort: string | null;
@@ -415,6 +419,13 @@ export class ModelsService implements OnApplicationBootstrap {
     }
     if (update.defaultReasoningEffort && update.reasoningEfforts && !update.reasoningEfforts.some((effort) => effort.id === update.defaultReasoningEffort)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Default reasoning effort must be included in the supported efforts.');
+    }
+    // Validate the merged record: PATCH may change only the API or one setting.
+    const current = await this.modelStore.findByModelId(id);
+    if (!current) return null;
+    const merged = { ...current, ...update };
+    if (merged.conversationApi === 'responses' && merged.responsesHistoryMode === 'provider' && merged.reasoningHistory !== 'auto') {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Responses-managed history requires automatic reasoning history.');
     }
     const model = await this.modelStore.updateByModelId(id, update);
 
@@ -556,6 +567,10 @@ export class ModelsService implements OnApplicationBootstrap {
       // Wire key stays `isConversationV2Default`; source is the internal flag.
       isConversationV2Default: (doc.isAppBuilderDefault as boolean) || false,
       omitTemperature: (doc.omitTemperature as boolean) || false,
+      conversationApi: doc.conversationApi === 'responses' ? 'responses' : 'chat_completions',
+      responsesHistoryMode: doc.responsesHistoryMode === 'provider' ? 'provider' : 'application',
+      reasoningHistory: doc.reasoningHistory === 'none' || doc.reasoningHistory === 'last' || doc.reasoningHistory === 'all' ? doc.reasoningHistory : 'auto',
+      reasoningSummary: doc.reasoningSummary === 'auto' || doc.reasoningSummary === 'concise' || doc.reasoningSummary === 'detailed' ? doc.reasoningSummary : 'off',
       inputModalities,
       maxInputTokens: typeof doc.maxInputTokens === 'number' ? doc.maxInputTokens : null,
       maxOutputTokens: typeof doc.maxOutputTokens === 'number' ? doc.maxOutputTokens : null,

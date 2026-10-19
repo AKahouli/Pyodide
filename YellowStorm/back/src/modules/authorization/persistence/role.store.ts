@@ -18,6 +18,8 @@ export interface RoleStore {
   /** All roles, priority desc then name asc (admin list). */
   findAll(): Promise<RoleRecord[]>;
   findAllActive(): Promise<RoleRecord[]>;
+  /** Fresh active memberships for an existing user, in membership order. */
+  findActiveForUser(userId: string): Promise<RoleRecord[]>;
   findById(id: string): Promise<RoleRecord | null>;
   findByIds(ids: string[]): Promise<Map<string, RoleRecord>>;
   findByName(name: string): Promise<RoleRecord | null>;

@@ -771,7 +771,9 @@ async def test_iterator_child_inherits_current_item_in_inputs():
             "iterations": {node_id: 1},
         }
 
-    with patch.dict("src.flow_engine.builder.iterator.NODE_KIND_DISPATCH", {"step": mock_step_fn}):
+    with patch.dict("src.flow_engine.builder.iterator.NODE_KIND_DISPATCH", {"step": mock_step_fn}), \
+         patch("src.flow_engine.agent_runtime.model.litellm.acompletion",
+               return_value=MockAsyncStream(["mock response"])):
         graph = compose(snapshot)
         result = await graph.ainvoke({
             "execution_id": "test-iter-inputs",
@@ -876,19 +878,15 @@ async def test_invoke_iterator_stops_when_cancelled_before_items():
 
 
 @pytest.mark.asyncio
-async def test_invoke_iterator_cancelled_mid_loop_skips_remaining():
-    """Items after cancellation are skipped — verifies the cancellation guard in the loop."""
+async def test_invoke_iterator_processes_all_items_without_cancellation():
+    """cancelled stays False, so the cancellation guard must not skip any item."""
     snapshot = load_fixture("iterator.json")
-    call_count = 0
 
-    async def mock_with_cancel(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return MockAsyncStream(["first"])
-        raise Exception("Should not be reached")
-
-    with patch("src.flow_engine.nodes.step.litellm.acompletion", side_effect=mock_with_cancel):
+    # The step node runs the native step agent graph, which calls the model once
+    # per executed node (top-level steps and every iterator child).  Cancellation
+    # stays False throughout, so the guard must not fire and every call succeeds.
+    with patch("src.flow_engine.agent_runtime.model.litellm.acompletion",
+               return_value=MockAsyncStream(["first"])):
         graph = compose(snapshot)
         result = await graph.ainvoke({
             "execution_id": "test-cancel-2",
@@ -906,9 +904,7 @@ async def test_invoke_iterator_cancelled_mid_loop_skips_remaining():
     iter_output = result.get("task_outputs", {}).get(("iter-node", 0), {})
     iterations = iter_output.get("iterator_iterations", [])
     assert len(iterations) == 3
-    # Cancellation guard is checked at start of each iteration — with initial cancelled=False,
-    # all items process.  Simulating mid-loop cancellation would require the runtime to set
-    # state["cancelled"] on the live ExecutionState, which is not supported yet (future enhancement).
+    # This is the non-cancelled case; it does not claim mid-loop cancellation coverage.
 
 
 @pytest.mark.asyncio

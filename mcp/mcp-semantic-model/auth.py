@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
 from hmac import compare_digest
@@ -7,7 +8,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from starlette.types import ASGIApp, Receive, Scope, Send
-from structlog.contextvars import bind_contextvars, unbind_contextvars
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
@@ -30,6 +31,13 @@ class PlatformActorContext:
 
 actor_context: ContextVar[PlatformActorContext | None] = ContextVar("semantic_model_mcp_actor_context", default=None)
 acting_user_id: ContextVar[str | None] = ContextVar("semantic_model_mcp_acting_user_id", default=None)
+# The verified, backend-issued MCP JWT of the current call. Forwarded to the
+# backend as a signed actor assertion (WP06.4); never logged.
+verified_mcp_jwt: ContextVar[str | None] = ContextVar("semantic_model_mcp_verified_jwt", default=None)
+
+# Backend-issued MCP tokens live at most five minutes (WP06.2); a longer
+# lifetime means the token was not minted by the backend issuer.
+MAX_TOKEN_LIFETIME_SECONDS = 300
 
 
 def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: str) -> bool:
@@ -72,21 +80,29 @@ class TrustedIdentityMiddleware:
         self.jwt_issuer = jwt_issuer
         self.jwt_audience = jwt_audience
 
-    def _jwt_user_id(self, headers: list[tuple[bytes, bytes]]) -> str:
+    def _jwt_identity(self, headers: list[tuple[bytes, bytes]]) -> tuple[str, str]:
+        """Verify without changing ambient request context, including on rejection."""
         values = [value for name, value in headers if name.lower() == b"authorization"]
         if len(values) != 1:
-            return ""
+            return "", ""
         parts = values[0].decode("utf-8", errors="replace").split()
         if len(parts) != 2 or parts[0].lower() != "bearer":
-            return ""
+            return "", ""
         try:
             claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
                 issuer=self.jwt_issuer, audience=self.jwt_audience,
                 options={"require": ["sub", "iss", "aud", "iat", "exp"]})
+            issued_at, expires_at = claims["iat"], claims["exp"]
+            if not isinstance(issued_at, int) or not isinstance(expires_at, int):
+                return "", ""
+            if expires_at - issued_at > MAX_TOKEN_LIFETIME_SECONDS:
+                return "", ""
             user_id = claims["sub"]
-            return user_id if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ""
+            if not (isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id)):
+                return "", ""
+            return user_id, parts[1]
         except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
-            return ""
+            return "", ""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -98,7 +114,7 @@ class TrustedIdentityMiddleware:
             return
 
         raw_headers = scope.get("headers", [])
-        jwt_user_id = self._jwt_user_id(raw_headers) if self.auth_mode == "JWT" else ""
+        jwt_user_id, assertion = self._jwt_identity(raw_headers) if self.auth_mode == "JWT" else ("", "")
         authenticated = bool(jwt_user_id) if self.auth_mode == "JWT" else _has_valid_bearer_auth(raw_headers, self.ingress_token)
         if not authenticated:
             await send({
@@ -110,6 +126,18 @@ class TrustedIdentityMiddleware:
             return
 
         headers = {key.lower(): value for key, value in raw_headers}
+        if self.auth_mode == "JWT":
+            # The signed sub is the only identity (WP06.3): a user-id header is
+            # ignored, and rejected outright when it disagrees with the token.
+            header_user_id = headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
+            if header_user_id and header_user_id != jwt_user_id:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+                return
         user_id = jwt_user_id if self.auth_mode == "JWT" else headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
         if user_id and not _IDENTIFIER.fullmatch(user_id):
             # The acting user drives authorization; a malformed value is rejected.
@@ -127,22 +155,20 @@ class TrustedIdentityMiddleware:
             conversation_id=_identity_value(headers, b"x-yellowstorm-conversation-id") or _UNKNOWN_CONVERSATION,
             correlation_id=_identity_value(headers, b"x-correlation-id") or _UNKNOWN_CORRELATION,
         ) if user_id else None
-        user_token = acting_user_id.set(user_id or None)
-        actor_token = actor_context.set(context)
-        # Unified-logging context (plan P05): the SDK merges these contextvars at
-        # emit time, so every envelope from this tool call carries the actor.
-        bound = bind_contextvars(
-            username=user_id or "",
-            agent_id=(context.agent_id if context else ""),
-            conversation_id=(context.conversation_id if context else ""),
-            request_id=(context.correlation_id if context else ""),
-        )
-        try:
+        # Register restoration immediately inside one cleanup boundary. ExitStack
+        # also unwinds partial setup and BaseException (including cancellation).
+        with ExitStack() as cleanup:
+            cleanup.callback(acting_user_id.reset, acting_user_id.set(user_id or None))
+            cleanup.callback(actor_context.reset, actor_context.set(context))
+            cleanup.callback(verified_mcp_jwt.reset, verified_mcp_jwt.set(assertion or None))
+            bound = bind_contextvars(
+                username=user_id or "",
+                agent_id=(context.agent_id if context else ""),
+                conversation_id=(context.conversation_id if context else ""),
+                request_id=(context.correlation_id if context else ""),
+            )
+            cleanup.callback(reset_contextvars, **bound)
             await self.app(scope, receive, send)
-        finally:
-            unbind_contextvars(*bound)
-            actor_context.reset(actor_token)
-            acting_user_id.reset(user_token)
 
 
 def require_actor_context() -> PlatformActorContext:

@@ -243,6 +243,7 @@ async function createE2EService(
 
   (service as any).isGrpcAvailable = true;
   (service as any).playbookFlowClient = { Run: mockRun };
+  (service as any).artifactService = { issuePublicationAuthority: jest.fn().mockResolvedValue('test-dispatch-authority') };
   // Drive queue drains synchronously instead of through the real 1s dispatch
   // timer so the test can observe runtime dispatch within microtask flushes.
   (service as any).executionDispatcherService = {

@@ -28,7 +28,7 @@ interface DocumentsTableProps {
 
 export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const { t } = useModuleTranslation('workspace');
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
   const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
@@ -77,7 +77,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0 || !selectedWorkspace) return;
 
-    const { validFiles } = validateFiles(files);
+    const { validFiles } = validateFiles(files, maxFileSize);
     if (validFiles.length > 0) {
       addFilesToQueue(validFiles, selectedWorkspace.id, currentUploadFolderId ?? undefined);
       void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
@@ -115,7 +115,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
     const endIndex = Math.min(currentPage * DEFAULT_PAGE_LIMIT, totalDocuments);
     return (
       <div className='flex flex-col sm:flex-row items-center justify-between gap-2 px-3 md:px-4 py-3 border-t bg-background shrink-0'>
-        <p className='text-xs sm:text-sm text-muted-foreground text-center sm:text-left'>
+        <p className='text-xs sm:text-sm text-muted-foreground text-center sm:text-start'>
           <span className='hidden sm:inline'>{t('documents.pagination.range', { start: startIndex, end: endIndex, total: totalDocuments })}</span>
           <span className='sm:hidden'>{t('documents.pagination.mobile', { total: totalDocuments })}</span>
         </p>

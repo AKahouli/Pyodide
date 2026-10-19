@@ -184,7 +184,7 @@ export function AgentMemoriesModal({
                   if (e.key === 'Enter') applySearch();
                 }}
                 placeholder="Rechercher… (Entrée pour valider)"
-                className="pl-8 pr-8"
+                className="ps-8 pe-8"
               />
               {loading && (
                 <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />

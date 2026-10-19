@@ -177,14 +177,18 @@ async def test_runtask_forwards_planner_and_executor_overrides():
     assert kw["executor_id"] == "exec-42"
 
 
-async def test_run_turn_routes_to_resume_when_waiting():
+async def test_run_turn_plans_a_new_turn_while_waiting_on_mail():
+    """A session 'waiting' on an external mail reply is NOT answered by the
+    user's chat message: the awaited reply arrives via DeliverMailReply (which
+    resumes). A RunTask while waiting therefore plans a NEW turn — resume_turn
+    stays reserved for ask/confirm card answers and mail replies."""
     rm = MagicMock(snapshot=AsyncMock(
         return_value={"session": {"status": "waiting", "interrupt_id": "i1"}}))
     service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
     await s._run_turn(pb.RunRequest(user_id="u", session_id="s1", message="blue", agents=_AGENTS), "m", "run1")
-    service.resume_turn.assert_awaited_once()
-    service.plan_turn.assert_not_awaited()
+    service.plan_turn.assert_awaited_once()
+    service.resume_turn.assert_not_awaited()
 
 
 async def test_get_session_maps_snapshot_to_proto():

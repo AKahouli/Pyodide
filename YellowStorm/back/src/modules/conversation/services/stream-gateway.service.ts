@@ -1,6 +1,10 @@
-import { Injectable, OnModuleDestroy, MessageEvent } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
 import {
   Subject,
   Observable,
@@ -62,9 +66,24 @@ export class StreamGatewayService implements OnModuleDestroy {
   private readonly replayBuffers = new Map<string, UserReplayBuffer>();
   private replaySweepTimer: ReturnType<typeof setInterval> | null = null;
 
+  private pending: { userId: string; conversationId: string | null; event: StreamEvent; bytes: number }[] = [];
+  private pendingBytes = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushing = false;
+  private destroyed = false;
+  private readonly globalResyncRecipient = '000000000000000000000000';
+  private readonly maxPendingEvents = 1000;
+  private readonly maxPendingBytes = 8 * 1024 * 1024;
+
+  async onModuleInit(): Promise<void> {
+    if (!this.db) throw new Error('Conversation SSE requires PostgreSQL');
+    await this.db.execute(sql`SELECT 1 FROM conversation.sse_events LIMIT 0`);
+  }
+
   constructor(
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    @Inject(DRIZZLE_DB) private readonly db?: NodePgDatabase<typeof schema>,
   ) {
     this.logger.setContext('StreamGatewayService');
     this.replayEnabled = this.configService.get<boolean>(
@@ -95,6 +114,8 @@ export class StreamGatewayService implements OnModuleDestroy {
   }
 
   onModuleDestroy() {
+    this.destroyed = true;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
     // Close all connections on shutdown
     for (const [, conn] of this.connections) {
       conn.subject.complete();
@@ -160,6 +181,10 @@ export class StreamGatewayService implements OnModuleDestroy {
       map((outbound) => this.toMessageEvent(outbound)),
     );
 
+    if (this.db) {
+      return merge(this.distributedEvents$(connection, lastSeenCursor), heartbeat$).pipe(takeUntil(disconnect$));
+    }
+
     // Replay (or resync notice) is snapshotted synchronously inside
     // registerConnection, before any live event can interleave: replayed
     // frames are strictly ordered ahead of the live stream with no gap.
@@ -192,6 +217,10 @@ export class StreamGatewayService implements OnModuleDestroy {
   }
 
   sendToUser(userId: string, event: StreamEvent): boolean {
+    if (this.db) {
+      this.enqueue(userId, event);
+      return this.isUserConnected(userId);
+    }
     // Record before the fan-out: a user with zero live connections keeps a
     // replay window so a soon-to-connect client can recover this event.
     const cursorId = this.recordReplay(userId, event);
@@ -233,6 +262,159 @@ export class StreamGatewayService implements OnModuleDestroy {
 
   getUserConnectionCount(userId: string): number {
     return this.userConnections.get(userId)?.size ?? 0;
+  }
+
+  /** No database round trip on the per-token producer path. */
+  private enqueue(userId: string, event: StreamEvent): void {
+    if (this.destroyed) return;
+    const conversationId = 'conversationId' in event.data && typeof event.data.conversationId === 'string'
+      ? event.data.conversationId : null;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
+    if (bytes > 1024 * 1024 || this.pending.length >= this.maxPendingEvents || this.pendingBytes + bytes > this.maxPendingBytes) {
+      // Replacing this recipient's queued deltas with a small durable marker
+      // makes overload explicit on every replica, including later reconnects.
+      const kept = this.pending.filter(entry => entry.userId !== userId);
+      this.pending = kept;
+      this.pendingBytes = kept.reduce((total, entry) => total + entry.bytes, 0);
+      const resync = this.buildResyncEvent('cursor_gap', '', undefined);
+      if (this.pending.length >= this.maxPendingEvents || this.pendingBytes + 128 > this.maxPendingBytes) {
+        // Bound recipient cardinality as well. Disconnecting forces the next
+        // connection to reconcile canonical state before the retained window.
+        this.closeForResync();
+        this.pending = [];
+        this.pendingBytes = 0;
+        userId = this.globalResyncRecipient;
+      }
+      this.pending.push({ userId, conversationId: null, event: resync, bytes: 128 });
+      this.pendingBytes += 128;
+    } else {
+      this.pending.push({ userId, conversationId, event, bytes });
+      this.pendingBytes += bytes;
+    }
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush(delayMs = 25): void {
+    if (this.flushTimer || this.flushing || this.destroyed) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      void this.flushPending();
+    }, delayMs);
+    this.flushTimer.unref();
+  }
+
+  private async flushPending(): Promise<void> {
+    if (!this.db || this.flushing || !this.pending.length || this.destroyed) return;
+    this.flushing = true;
+    let failed = false;
+    const batch = this.pending.splice(0, 100);
+    this.pendingBytes -= batch.reduce((sum, entry) => sum + entry.bytes, 0);
+    try {
+      await this.db.transaction(async tx => {
+        // Identity allocation after a transaction lock ensures visibility in
+        // committed sequence order. Never allocate cursors before this lock.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(73125, 1)`);
+        const values = batch.map(entry => sql`(${entry.userId}, ${entry.conversationId}, ${JSON.stringify(entry.event)}::jsonb)`);
+        await tx.execute(sql`INSERT INTO conversation.sse_events (user_id, conversation_id, event) VALUES ${sql.join(values, sql`, `)}`);
+        const users = [...new Set(batch.map(entry => entry.userId))];
+        await tx.execute(sql`DELETE FROM conversation.sse_events WHERE id IN (
+          SELECT id FROM (SELECT id, row_number() OVER (PARTITION BY user_id ORDER BY id DESC) AS rank
+            FROM conversation.sse_events WHERE event->>'type' = 'stream_resync_required'
+            AND user_id IN (${sql.join(users.map(user => sql`${user}`), sql`, `)})) markers WHERE rank > 1
+        )`);
+        await tx.execute(sql`DELETE FROM conversation.sse_events WHERE id IN (
+          SELECT id FROM (SELECT id, created_at, row_number() OVER (PARTITION BY user_id ORDER BY (event->>'type' = 'stream_resync_required') DESC, id DESC) AS rank
+          FROM conversation.sse_events WHERE user_id IN (${sql.join(users.map(user => sql`${user}`), sql`, `)})) retained
+          WHERE rank > ${this.replayMaxEvents} OR created_at < now() - ${this.replayTtlMs} * interval '1 millisecond'
+        )`);
+        await tx.execute(sql`DELETE FROM conversation.sse_events WHERE id IN (
+          SELECT id FROM conversation.sse_events WHERE created_at < now() - ${this.replayTtlMs} * interval '1 millisecond' LIMIT 2000
+        )`);
+      });
+    } catch {
+      failed = true;
+      // Keep bounded, durable recovery markers instead of claiming live
+      // success after a failed write. No content or driver diagnostics logged.
+      for (const userId of new Set(batch.map(entry => entry.userId))) {
+        this.enqueue(userId, this.buildResyncEvent('cursor_gap', '', undefined));
+      }
+      this.logger.warn('Conversation SSE persistence unavailable');
+      this.closeForResync();
+    } finally {
+      this.flushing = false;
+      if (this.pending.length) this.scheduleFlush(failed ? 1000 : 25);
+    }
+  }
+
+  private closeForResync(): void {
+    for (const connection of [...this.connections.values()]) {
+      if (connection.resync) connection.resync();
+      else connection.subject.next({ event: this.buildResyncEvent('cursor_gap', '', undefined) });
+      this.removeConnection(connection.userId, connection.connectionId);
+    }
+  }
+
+  /** Every connection reads committed recipient rows and rechecks current access. */
+  private distributedEvents$(connection: SSEConnection, cursor?: string): Observable<MessageEvent> {
+    return new Observable(subscriber => {
+      let stopped = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let lastId: string | null = /^pg:1:[0-9]{1,15}$/.test(cursor ?? '') ? cursor!.split(':')[2] : null;
+      let lastReconciledAt = Date.now();
+      const resync = () => {
+        lastReconciledAt = Date.now();
+        subscriber.next(this.toMessageEvent({ event: this.buildResyncEvent('cursor_gap', cursor ?? '', undefined) }));
+      };
+      connection.resync = resync;
+      // New connections reconcile snapshots as well: a producer can crash
+      // before an asynchronous batch commits, so absence cannot prove continuity.
+      if (!lastId) resync();
+      const poll = async () => {
+        try {
+          // An asynchronous producer can die before committing its final
+          // batch while this remote pipe remains healthy. Bound that blind
+          // spot with canonical reconciliation, independently of reconnect.
+          if (Date.now() - lastReconciledAt >= 30000) resync();
+          const result = await this.db!.execute(sql`SELECT anchor.anchor_valid, event_rows.* FROM (
+            SELECT (${lastId}::bigint IS NULL OR EXISTS (SELECT 1 FROM conversation.sse_events
+              WHERE (user_id = ${connection.userId} OR user_id = ${this.globalResyncRecipient})
+              AND id = ${lastId}::bigint AND created_at >= now() - ${this.replayTtlMs} * interval '1 millisecond'
+              AND id >= COALESCE((SELECT min(retained.id) FROM conversation.sse_events retained
+                WHERE (retained.user_id = ${connection.userId} OR retained.user_id = ${this.globalResyncRecipient})
+                AND retained.event->>'type' <> 'stream_resync_required'
+                AND retained.created_at >= now() - ${this.replayTtlMs} * interval '1 millisecond'), id))) AS anchor_valid
+            ) anchor LEFT JOIN LATERAL (SELECT e.id::text AS id, e.event,
+            (e.conversation_id IS NULL OR EXISTS (SELECT 1 FROM conversation.conversations c
+              WHERE c.id = e.conversation_id AND (c.created_by = ${connection.userId} OR
+                (c.is_group AND EXISTS (SELECT 1 FROM conversation.conversation_group_members m
+                WHERE m.conversation_id = c.id AND m.user_id = ${connection.userId}))))) AS allowed
+            FROM conversation.sse_events e WHERE (e.user_id = ${connection.userId} OR e.user_id = ${this.globalResyncRecipient})
+            AND e.id > ${lastId ?? '0'}::bigint
+            AND e.created_at >= now() - ${this.replayTtlMs} * interval '1 millisecond'
+            ORDER BY e.id LIMIT ${this.replayMaxEvents}) event_rows ON true`);
+          if (stopped) return;
+          if (result.rows[0]?.anchor_valid === false) { resync(); lastId = null; return; }
+          for (const row of result.rows) {
+            if (row.id == null) continue;
+            lastId = String(row.id);
+            if (row.allowed) subscriber.next(this.toMessageEvent({ event: row.event as StreamEvent, cursorId: `pg:1:${lastId}` }));
+          }
+        } catch {
+          if (!stopped) {
+            resync();
+            subscriber.complete();
+            this.removeConnection(connection.userId, connection.connectionId);
+          }
+        } finally {
+          if (!stopped && !subscriber.closed) {
+            timer = setTimeout(() => void poll(), 200);
+            timer.unref();
+          }
+        }
+      };
+      void poll();
+      return () => { stopped = true; connection.resync = undefined; if (timer) clearTimeout(timer); };
+    });
   }
 
   private recordReplay(userId: string, event: StreamEvent): string | null {
@@ -365,4 +547,5 @@ interface SSEConnection {
   disconnect$: Subject<void>;
   createdAt: Date;
   lastActivity: Date;
+  resync?: () => void;
 }

@@ -8,6 +8,7 @@
 import type { MessageComponent } from '../types';
 import { componentToMarkdown, getComponentType, isVisibleConversationComponent, normalizeChartComponentData } from '../utils';
 import type { CapturedImage } from './docx-capture';
+import type { OpenUiExportPart } from '../components/openui/plain-text';
 
 interface InlineRun {
   text: string;
@@ -131,7 +132,7 @@ const base64ToUint8 = (dataUrl: string) =>
 
 /** Build the DOCX blob. Delay-loads `docx` (and the capture module) to keep it out of the main chunk. */
 export async function exportBlocksToDocx(
-  blocks: Array<{ label: string; timestamp?: string; markdown?: string; components?: MessageComponent[] }>,
+  blocks: Array<{ label: string; timestamp?: string; markdown?: string; components?: MessageComponent[]; parts?: OpenUiExportPart[] }>,
   title: string,
 ): Promise<Blob> {
   const { Document, Packer, Paragraph, HeadingLevel, AlignmentType, TextRun, Table, TableRow, TableCell, WidthType, ImageRun } = await import('docx');
@@ -184,7 +185,7 @@ export async function exportBlocksToDocx(
     }
   };
 
-  const pushImage = (image: CapturedImage, caption?: string) => {
+  const pushImage = (image: CapturedImage, caption?: string, type: 'png' | 'jpg' = 'png') => {
     if (caption) {
       children.push(new Paragraph({ spacing: { before: 240 }, children: [new TextRun({ text: caption, bold: true, size: 20 })] }));
     }
@@ -192,7 +193,7 @@ export async function exportBlocksToDocx(
     const height = Math.round(image.height * (width / image.width));
     children.push(new Paragraph({
       alignment: AlignmentType.CENTER,
-      children: [new ImageRun({ type: 'png', data: base64ToUint8(image.dataUrl), transformation: { width, height } })],
+      children: [new ImageRun({ type, data: base64ToUint8(image.dataUrl), transformation: { width, height } })],
     }));
   };
 
@@ -203,7 +204,20 @@ export async function exportBlocksToDocx(
       spacing: { before: 240 },
       children: [new TextRun({ text: `${block.label}${block.timestamp ? ` · ${block.timestamp}` : ''}`, bold: true, color: '6B7280', size: 18 })],
     }));
-    if (block.components?.length) {
+    if (block.parts) {
+      for (const part of block.parts) {
+        if (part.kind === 'markdown') { parseMarkdownBlocks(part.markdown).forEach(pushParsed); continue; }
+        if (!/^data:image\/(?:png|jpeg);base64,/.test(part.source)) throw new Error('Unresolved export image');
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error('Invalid export image'));
+          element.src = part.source;
+        });
+        if (!image.naturalWidth || !image.naturalHeight) throw new Error('Empty export image');
+        pushImage({ dataUrl: part.source, width: image.naturalWidth, height: image.naturalHeight }, part.caption, part.source.startsWith('data:image/jpeg;') ? 'jpg' : 'png');
+      }
+    } else if (block.components?.length) {
       for (const component of block.components.filter(isVisibleConversationComponent)) {
         const type = getComponentType(component);
         if (type === 'chart') {

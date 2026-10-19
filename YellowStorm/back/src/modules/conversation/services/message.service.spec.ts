@@ -1,3 +1,4 @@
+import { mapPostgresMessage } from '../persistence/postgres/postgres-message-record.mapper';
 import { Types } from 'mongoose';
 import { MessageService } from './message.service';
 
@@ -55,6 +56,7 @@ describe('MessageService store lifecycle', () => {
       updateUser: jest.fn(),
       deleteByConversation: jest.fn(),
       findBranchesByQuestion: jest.fn(),
+      findByIdInConversation: jest.fn(),
       findAiComponents: jest.fn(),
       findReportMessageById: jest.fn(),
       recordConversationUsageEvents: jest.fn().mockResolvedValue(undefined),
@@ -95,6 +97,63 @@ describe('MessageService store lifecycle', () => {
     jest.spyOn(service as any, 'extractAndNotifyMentions').mockResolvedValue(undefined);
   });
 
+  it('rejects foreign message reads, feedback, edits and branch lookup before writes or broadcasts', async () => {
+    messageStore.findByIdInConversation.mockResolvedValue(null);
+    await expect(service.findByIdInConversation(conversationId, 'foreign')).rejects.toThrow('Message not found');
+    await expect(service.updateFeedback(conversationId, 'foreign', 'like')).rejects.toThrow('Message not found');
+    await expect(service.updateUserMessage(conversationId, senderId, 'foreign', 'changed')).rejects.toThrow('Message not found');
+    await expect(service.findBranchesByQuestion(conversationId, 'foreign')).rejects.toThrow('Message not found');
+    expect(messageStore.updateUser).not.toHaveBeenCalled();
+    expect(messageStore.updateFeedback).not.toHaveBeenCalled();
+    expect(messageStore.findBranchesByQuestion).not.toHaveBeenCalled();
+    expect(streamGateway.broadcastToConversation).not.toHaveBeenCalled();
+  });
+
+  it('does not let a group member edit another sender message', async () => {
+    messageStore.findByIdInConversation.mockResolvedValue(record({ senderId: 'other', conversationType: 'user' }));
+    await expect(service.updateUserMessage(conversationId, senderId, 'message', 'changed')).rejects.toThrow('Message not found');
+    expect(messageStore.updateUser).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('rejects missing/foreign parent before any write (atomic=%s)', async atomic => {
+    const parentMessageId = new Types.ObjectId().toString();
+    messageStore.findByIdInConversation.mockResolvedValue(null);
+    messageStore.createUserWithAiPlaceholder = jest.fn();
+    const data = { conversationId, senderId, content: 'Refine this', parentMessageId };
+    await expect(atomic ? service.createUserMessageWithAiPlaceholder({ ...data, placeholder: { conversationId, senderId } })
+      : service.createUserMessage(data)).rejects.toThrow('Message not found');
+    expect(messageStore.findByIdInConversation).toHaveBeenCalledWith(conversationId, parentMessageId);
+    expect(messageStore.createUser).not.toHaveBeenCalled();
+    expect(messageStore.createUserWithAiPlaceholder).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exact same-conversation parent and retains lineage', async () => {
+    const parentMessageId = new Types.ObjectId().toString();
+    messageStore.findByIdInConversation.mockResolvedValue(record({ id: parentMessageId }));
+    await service.createUserMessage({ conversationId, senderId, content: 'Refine this', parentMessageId });
+    expect(messageStore.createUser).toHaveBeenCalledWith(expect.objectContaining({ parentMessageId }));
+  });
+
+  it('rejects malformed parent without querying another identity', async () => {
+    await expect(service.createUserMessage({ conversationId, senderId, content: 'Refine', parentMessageId: '../other' })).rejects.toThrow('Message not found');
+    expect(messageStore.findByIdInConversation).not.toHaveBeenCalled();
+    expect(messageStore.createUser).not.toHaveBeenCalled();
+  });
+
+  it('resolves turn recipients once and broadcasts user before placeholder despite delayed lookup', async () => {
+    const user = record(), placeholder = record({ conversationType: 'ai' });
+    messageStore.createUserWithAiPlaceholder = jest.fn().mockResolvedValue({ user, placeholder });
+    let resolveMembers!: (value: { createdBy: string }) => void;
+    conversationService.findById.mockImplementation(() => new Promise((resolve) => { resolveMembers = resolve; }));
+    await service.createUserMessageWithAiPlaceholder({ conversationId, senderId, content: 'hello',
+      placeholder: { conversationId, senderId } });
+    expect(conversationService.findById).toHaveBeenCalledTimes(1);
+    expect(streamGateway.broadcastToConversation).not.toHaveBeenCalled();
+    resolveMembers({ createdBy: senderId });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(streamGateway.broadcastToConversation.mock.calls.map((call) => call[1].data.message.id)).toEqual([user.id, placeholder.id]);
+  });
+
   it('persists neutral agent IDs through the store', async () => {
     const result = await service.createUserMessage({
       conversationId,
@@ -119,6 +178,13 @@ describe('MessageService store lifecycle', () => {
   it('does not update conversation tags when agent IDs are absent', async () => {
     await service.createUserMessage({ conversationId, senderId, content: 'hello' });
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
+  });
+
+  it.each(['cancelled', 'failed', 'interrupted', 'completed'])('retains durable terminal status %s after reload', terminalStatus => {
+    const mapped = mapPostgresMessage({id: 'a'.repeat(24), conversationId: 'b'.repeat(24), executionStatus: terminalStatus, components: []} as never);
+    expect(mapped.terminalStatus).toBe(terminalStatus);
+    const response = (service as any).mapToResponse(record({ conversationType: 'ai', terminalStatus: mapped.terminalStatus }));
+    expect(response.terminalStatus).toBe(terminalStatus);
   });
 
   it('omits tool results from mapped responses while keeping sanitized params', () => {

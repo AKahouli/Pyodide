@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "documentationIndex": "docs/agent-context/README.md",
+  "documentationRoutes": [
+    { "prefix": "frontend/", "document": "frontend/AGENTS.md" },
+    { "prefix": "backend/", "document": "backend/AGENTS.md" },
+    { "prefix": "tools/opencode-harness/", "document": "tools/opencode-harness/README.md" }
+  ]
+}

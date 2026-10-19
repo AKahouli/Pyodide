@@ -210,7 +210,7 @@ export function DecisionFlowEditorPage() {
           <h1 className='text-lg font-semibold'>{loadError ? t('editor.loadFailed') : t('editor.loading')}</h1>
           {loadError && <p className='text-sm text-muted-foreground'>{loadError}</p>}
         </div>
-        {loadError && <Button onClick={() => void load()}><RotateCcw className='mr-2 h-4 w-4' />{t('editor.retryLoad')}</Button>}
+        {loadError && <Button onClick={() => void load()}><RotateCcw className='me-2 h-4 w-4' />{t('editor.retryLoad')}</Button>}
       </div>
     </main>
   </div>;
@@ -247,7 +247,7 @@ export function DecisionFlowEditorPage() {
             })}
           </ol>}
           {failed && canWrite && <Button onClick={() => void retryGeneration()} disabled={retrying}>
-            {retrying ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RotateCcw className='mr-2 h-4 w-4' />}
+            {retrying ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <RotateCcw className='me-2 h-4 w-4' />}
             {retrying ? t('editor.retrying') : t('editor.retryGeneration')}
           </Button>}
           {failed && !canWrite && <span className='inline-flex rounded bg-muted px-2 py-1 text-xs text-muted-foreground'>{t('editor.readOnly')}</span>}
@@ -262,7 +262,7 @@ export function DecisionFlowEditorPage() {
       <span className='hidden text-xs text-muted-foreground lg:inline'>{t('editor.source', { name: artifact.primarySource.documentName })}</span>
       {!canWrite && <span className='rounded bg-muted px-2 py-1 text-xs'>{t('editor.readOnly')}</span>}
       {dirty && <span className='text-xs text-amber-600'>{t('editor.unsaved')}</span>}
-      <Button className='ml-auto' onClick={() => void save()} disabled={saving || !dirty || !canWrite}>{saving ? t('editor.saving') : t('editor.save')}</Button>
+      <Button className='ms-auto' onClick={() => void save()} disabled={saving || !dirty || !canWrite}>{saving ? t('editor.saving') : t('editor.save')}</Button>
     </header>
     <main className='relative min-h-0 flex-1'>
       <section className='decision-flow-canvas h-full min-w-0'>
@@ -278,7 +278,7 @@ export function DecisionFlowEditorPage() {
       </div>
       {paletteOpen && <aside className='absolute bottom-3 left-3 top-14 z-10 w-52 overflow-y-auto rounded-md border bg-background/95 p-3 shadow-lg'><div className='mb-2 flex items-center justify-between'><p className='text-sm font-medium'>{t('editor.addNode')}</p><Button size='icon' variant='ghost' title={t('editor.closePalette')} onClick={() => setPaletteOpen(false)}><ChevronLeft className='h-4 w-4' /></Button></div><div className='space-y-2'>{nodeTypes.map((type) => <Button key={type} variant='outline' className='w-full justify-start' disabled={!canWrite} onClick={() => addNode(type)}>{t(`editor.nodeType.${type}`)}</Button>)}</div></aside>}
       {inspectorOpen && <aside className='absolute bottom-3 right-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] overflow-y-auto rounded-md border bg-background/95 p-3 shadow-lg'><div className='mb-3 flex items-center justify-between'><p className='text-sm font-medium'>{selectedNode ? t('editor.properties') : selectedEdge ? t('editor.edgeProperties') : t('editor.inspector')}</p><Button size='icon' variant='ghost' title={t('editor.closeInspector')} onClick={() => setInspectorOpen(false)}><ChevronRight className='h-4 w-4' /></Button></div>{selectedNode ? <div className='space-y-3'><Input value={selectedNode.data.label} disabled={!canWrite} onChange={(event) => updateSelectedNode('label', event.target.value)} /><select className='w-full rounded border bg-background p-2 text-sm' disabled={!canWrite} value={selectedNode.data.type} onChange={(event) => updateSelectedNode('type', event.target.value)}>{nodeTypes.map((type) => <option key={type} value={type}>{t(`editor.nodeType.${type}`)}</option>)}</select><Textarea placeholder={t('editor.description')} disabled={!canWrite} value={selectedNode.data.description} onChange={(event) => updateSelectedNode('description', event.target.value)} />{selectedNode.data.needsConfirmation && <p className='rounded bg-amber-100 p-2 text-xs text-amber-900'>{t('editor.needsConfirmation', { reason: selectedNode.data.uncertaintyReason || t('editor.unspecified') })}</p>}{selectedNode.data.sourceRefs?.length ? <div className='space-y-2'><p className='text-sm font-medium'>{t('editor.sources')}</p>{selectedNode.data.sourceRefs.map((reference, index) => <p key={`${reference.page}-${index}`} className='rounded bg-muted p-2 text-xs'><span className='font-medium'>{t('editor.sourcePage', { page: reference.page })}</span>{' — '}{reference.passage}</p>)}</div> : null}{canWrite && <Button variant='destructive' onClick={() => { setNodes((current) => current.filter((node) => node.id !== selectedNode.id)); setEdges((current) => current.filter((edge) => edge.source !== selectedNode.id && edge.target !== selectedNode.id)); setSelectedNodeId(null); setDirty(true); }}>{t('editor.deleteNode')}</Button>}</div> : selectedEdge ? <div className='space-y-3'><Input value={typeof selectedEdge.label === 'string' ? selectedEdge.label : ''} disabled={!canWrite} onChange={(event) => updateSelectedEdge(event.target.value)} />{canWrite && <Button variant='destructive' onClick={() => { setEdges((current) => current.filter((edge) => edge.id !== selectedEdge.id)); setSelectedEdgeId(null); setDirty(true); }}>{t('editor.deleteEdge')}</Button>}</div> : <p className='text-sm text-muted-foreground'>{t('editor.selectElement')}</p>}</aside>}
-      {!inspectorOpen && <Button className='absolute right-3 top-3 z-10' size='sm' variant='outline' onClick={() => setInspectorOpen(true)}><PanelRight className='mr-2 h-4 w-4' />{t('editor.inspector')}</Button>}
+      {!inspectorOpen && <Button className='absolute right-3 top-3 z-10' size='sm' variant='outline' onClick={() => setInspectorOpen(true)}><PanelRight className='me-2 h-4 w-4' />{t('editor.inspector')}</Button>}
     </main>
     <Dialog open={conflictOpen} onOpenChange={setConflictOpen}><DialogContent><DialogHeader><DialogTitle>{t('editor.conflictTitle')}</DialogTitle><DialogDescription>{t('editor.conflictDescription')}</DialogDescription></DialogHeader><DialogFooter><Button variant='outline' onClick={() => { setConflictOpen(false); void load(); }}>{t('editor.reloadLatest')}</Button><Button onClick={() => void keepAsClone()} disabled={saving}>{t('editor.keepAsClone')}</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={blocker.state === 'blocked'}><DialogContent><DialogHeader><DialogTitle>{t('editor.leaveTitle')}</DialogTitle><DialogDescription>{t('editor.leaveDescription')}</DialogDescription></DialogHeader><DialogFooter><Button variant='outline' onClick={() => blocker.state === 'blocked' && blocker.reset()}>{t('editor.stay')}</Button><Button variant='destructive' onClick={() => blocker.state === 'blocked' && blocker.proceed()}>{t('editor.discard')}</Button></DialogFooter></DialogContent></Dialog>

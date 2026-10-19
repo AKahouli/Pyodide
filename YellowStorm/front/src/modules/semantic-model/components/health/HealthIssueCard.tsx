@@ -34,12 +34,12 @@ export function HealthIssueCard({ issue, concepts, canEdit, onAction }: Readonly
           <span className='truncate font-mono text-sm' title={issue.breakdown?.kind === 'reading' ? translate(`health.issue.archive_reading.category.${item.label}`) : item.label}>
             {issue.breakdown?.kind === 'ai_cost' ? formatNumber(Number(item.label))
               : issue.breakdown?.kind === 'reading' ? translate(`health.issue.archive_reading.category.${item.label}`) : item.label}
-            {item.current && <span className='ml-1 text-xs text-muted-foreground'>({translate('health.issue.ai_row_limit.now')})</span>}
+            {item.current && <span className='ms-1 text-xs text-muted-foreground'>({translate('health.issue.ai_row_limit.now')})</span>}
           </span>
           <span className='h-3.5 overflow-hidden rounded bg-muted' aria-hidden>
             <span className='block h-full rounded bg-primary/70' style={{ width: `${Math.max(1, (item.value / widest) * 100)}%` }} />
           </span>
-          <span className='text-right font-mono text-xs text-muted-foreground'>{formatNumber(item.value)}</span>
+          <span className='text-end font-mono text-xs text-muted-foreground'>{formatNumber(item.value)}</span>
         </li>)}
       </ul>
     </div>}

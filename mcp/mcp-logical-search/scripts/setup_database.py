@@ -8,6 +8,7 @@ reports incompatible schema/index definitions and never drops or rebuilds them.
 """
 import argparse
 import json
+import logging
 from pathlib import Path
 import re
 
@@ -18,6 +19,8 @@ from sqlalchemy.engine import make_url
 from src.config.settings import get_settings
 from src.db.models import LogicalDocument, LogicalSection, LogicalBlock, LogicalImage, LogicalTextPosition
 from src.mcp_server.search_scope import filename_tokens_expression, filename_issuer_expression
+
+logger = logging.getLogger(__name__)
 
 MODELS = (LogicalDocument, LogicalSection, LogicalBlock, LogicalImage, LogicalTextPosition)
 EXTENSIONS = ("vector", "pg_search")
@@ -247,6 +250,7 @@ def verify_and_apply(connection, schema, *, apply=False):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="One-time repair of missing extensions/indexes")
     parser.add_argument("--schema", help="Defaults to PostgreSQL current_schema()")
@@ -282,7 +286,7 @@ def main():
         engine.dispose()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({"status": report["status"], "mode": report["mode"],
+    logger.info(json.dumps({"status": report["status"], "mode": report["mode"],
         "missing_indexes": len(report.get("missing_indexes", [])), "created": report.get("created", []),
         "issues": report.get("issues", []), "error_type": report.get("error_type"),
         "sqlstate": report.get("sqlstate"), "output": str(args.output)}, indent=2))

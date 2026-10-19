@@ -1,4 +1,5 @@
-import { Inject, Injectable, OnApplicationBootstrap, BadRequestException } from '@nestjs/common';
+import { Inject, Injectable, OnApplicationBootstrap, BadRequestException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import { EXTENSION_MIME_ALIASES, EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
@@ -27,6 +28,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     @Inject(SYSTEM_SETTING_STORE)
     private readonly systemSettings: SystemSettingStore,
     private readonly logger: LoggerService,
+    @Optional() private readonly configService?: ConfigService,
   ) {
     this.logger.setContext(WorkspaceUploadSettingsService.name);
   }
@@ -53,7 +55,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
 
     const setting = await this.systemSettings.get(WORKSPACE_UPLOAD_SETTINGS_KEY);
     if (setting && this.isUploadSettingsValue(setting.value)) {
-      this.cache = { allowedExtensions: [...setting.value.allowedExtensions] };
+      this.cache = { ...setting.value, allowedExtensions: [...setting.value.allowedExtensions] };
       this.cacheLoadedAt = Date.now();
       return this.buildSettingsResponse(this.cache, setting.updatedAt);
     }
@@ -97,7 +99,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     return mime ? [mime, ...(EXTENSION_MIME_ALIASES[normalized] ?? [])] : [];
   }
 
-  async updateSettings(rawExtensions: string[], actorId?: string): Promise<WorkspaceUploadSettings> {
+  async updateSettings(rawExtensions: string[], actorId?: string, limits: { maxFileSizeMb?: number; conversationWorkspaceStorageMb?: number } = {}): Promise<WorkspaceUploadSettings> {
     const { normalized, rejected } = this.normalizeAndValidate(rawExtensions);
     if (rejected.length > 0) {
       this.logger.warn('Rejected upload extension entries', {
@@ -109,10 +111,17 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
       throw new BadRequestException('At least one valid extension is required');
     }
 
-    const value: WorkspaceUploadSettingsValue = { allowedExtensions: normalized };
+    const current = await this.getSettings();
+    const maxFileSizeMb = limits.maxFileSizeMb ?? current.maxFileSizeMb;
+    const conversationWorkspaceStorageMb = limits.conversationWorkspaceStorageMb ?? current.conversationWorkspaceStorageMb;
+    if (!Number.isInteger(maxFileSizeMb) || maxFileSizeMb < 1 || maxFileSizeMb > 10240 ||
+        !Number.isInteger(conversationWorkspaceStorageMb) || conversationWorkspaceStorageMb < 1 || conversationWorkspaceStorageMb > 1048576) {
+      throw new BadRequestException('Storage and upload limits must be whole MiB within the supported range');
+    }
+    const value: WorkspaceUploadSettingsValue = { allowedExtensions: normalized, maxFileSizeMb, conversationWorkspaceStorageMb };
     const updated = await this.systemSettings.upsert(WORKSPACE_UPLOAD_SETTINGS_KEY, value);
 
-    this.cache = { allowedExtensions: [...normalized] };
+    this.cache = { ...value, allowedExtensions: [...normalized] };
     this.cacheLoadedAt = Date.now();
 
     this.logger.log('Workspace upload settings updated', {
@@ -170,12 +179,19 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     );
   }
 
+  private validLimit(value: unknown, maximum: number): number | undefined {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= maximum ? value : undefined;
+  }
+
   private buildSettingsResponse(
     value: WorkspaceUploadSettingsValue,
     updatedAt?: Date,
   ): WorkspaceUploadSettings {
     return {
       allowedExtensions: [...value.allowedExtensions],
+      maxFileSizeMb: this.validLimit(value.maxFileSizeMb, 10240) ?? this.configService?.get<number>('workspace.maxFileSizeMb', 500) ?? 500,
+      conversationWorkspaceStorageMb: this.validLimit(value.conversationWorkspaceStorageMb, 1048576) ??
+        (this.configService?.get<number>('conversation.systemWorkspaceStorageBytes', 52428800) ?? 52428800) / 1048576,
       supportedExtensions: this.getSupportedExtensions(),
       updatedAt,
     };

@@ -9,6 +9,7 @@ import type {
   ConversationSettings,
   ConversationSettingsAgentOption,
   ConversationSettingsValue,
+  GenerativeUiSettings,
 } from './interfaces/conversation-settings.interface';
 import { DEFAULT_CONVERSATION_SETTINGS } from './interfaces/conversation-settings.interface';
 
@@ -47,6 +48,9 @@ export class ConversationSettingsService implements OnModuleInit {
     const setting = await this.settings.get(KEY);
     const stored = setting?.value as Partial<ConversationSettingsValue> | undefined;
     const settings: ConversationSettings = {
+      generativeUi: {
+        htmlMode: stored?.generativeUi?.htmlMode === 'interactive' ? 'interactive' : 'strict',
+      },
       redactSensitiveText: stored?.redactSensitiveText !== false,
       latencyInstrumentationEnabled: stored?.latencyInstrumentationEnabled !== false,
       composerSuggestions: {
@@ -154,6 +158,7 @@ export class ConversationSettingsService implements OnModuleInit {
       latencyInstrumentationEnabled?: boolean;
       compaction?: CompactionSettings;
       attachmentIntelligence?: AttachmentIntelligenceSettings;
+      generativeUi?: GenerativeUiSettings;
     },
   ): Promise<ConversationSettings> {
     if (value.composerSuggestions.agentId) {
@@ -162,6 +167,7 @@ export class ConversationSettingsService implements OnModuleInit {
     // Cache-first so an admin update never blocks on a stalled settings refresh.
     const current = this.cache?.settings ?? await this.getSettings();
     const persisted: ConversationSettingsValue = {
+      generativeUi: { ...(value.generativeUi ?? current.generativeUi) },
       redactSensitiveText: value.redactSensitiveText ?? current.redactSensitiveText,
       latencyInstrumentationEnabled:
         value.latencyInstrumentationEnabled ?? current.latencyInstrumentationEnabled,

@@ -149,6 +149,7 @@ async def test_an_unchanged_row_reuses_its_ai_answer(monkeypatch) -> None:  # ty
     [result] = await again.read_rows([(9, {"notes": NOTES})])
     assert len(calls) == 1 and again.stats["aiReused"] == 1
     assert result["values"] == {"country": "France"} and result["evidence"]["country"]["rowNumber"] == 9
+    assert result["evidence"]["country"]["evidenceReferences"] == ['section:1/block:2']
 
 
 def test_old_sheet_mappings_compile_and_fingerprint_as_before() -> None:

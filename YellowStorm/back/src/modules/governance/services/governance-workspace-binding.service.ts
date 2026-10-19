@@ -87,11 +87,24 @@ export class GovernanceWorkspaceBindingService {
     await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(actorId, actorEmail, programId, scopeId)));
     return updated;
   }
-  async delete(actorId: string, programId: string, bindingId: string, actorEmail = ''): Promise<void> {
+  async delete(actorId: string, programId: string, bindingId: string, actorEmail = '', detachScopeId?: string): Promise<void> {
     const binding = await this.find(actorId, programId, bindingId);
-    const scopeIds = await this.resolveAffectedScopeIds(programId, binding.visibility, binding.scopeIds);
-    await this.bindingStore.deleteById(binding.id);
-    await Promise.all(scopeIds.map((scopeId) => this.draftPreparation.prepare(actorId, actorEmail, programId, scopeId)));
+    if (!detachScopeId) {
+      const scopeIds = await this.resolveAffectedScopeIds(programId, binding.visibility, binding.scopeIds);
+      await this.bindingStore.deleteById(binding.id);
+      await Promise.all(scopeIds.map((scopeId) => this.draftPreparation.prepare(actorId, actorEmail, programId, scopeId)));
+      return;
+    }
+    await this.detachScope(actorId, actorEmail, programId, binding, detachScopeId);
+  }
+  private async detachScope(actorId: string, actorEmail: string, programId: string, binding: GovernanceBindingRecord, detachScopeId: string): Promise<void> {
+    if (binding.visibility === 'program_shared') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'A program-wide binding applies to every scope and cannot be detached from a single scope');
+    if (!binding.scopeIds.includes(detachScopeId)) throw new NotFoundException(ErrorCode.VALIDATION_ERROR, 'Workspace is not bound to this scope');
+    await this.access.assertScopeSelection(actorId, programId, [detachScopeId]);
+    const remainingScopeIds = binding.scopeIds.filter((scopeId) => scopeId !== detachScopeId);
+    if (remainingScopeIds.length === 0) await this.bindingStore.deleteById(binding.id);
+    else await this.bindingStore.replaceScopeIds(binding.id, remainingScopeIds, remainingScopeIds.length === 1 ? 'scope_specific' : 'multi_scope');
+    await this.draftPreparation.prepare(actorId, actorEmail, programId, detachScopeId);
   }
   async assertAccessible(actorId: string, programId: string, bindingId: string): Promise<void> {
     await this.programs.assertOwnedProgram(actorId, programId);

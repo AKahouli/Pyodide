@@ -367,7 +367,7 @@ export function ConnectedAppsAdminPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchApps} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -393,7 +393,7 @@ export function ConnectedAppsAdminPage() {
           </Button>
           {canCreate && (
             <Button onClick={openCreateDialog}>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="me-2 h-4 w-4" />
               {tApp('admin.create')}
             </Button>
           )}
@@ -407,7 +407,7 @@ export function ConnectedAppsAdminPage() {
           placeholder="Search apps..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
+          className="ps-9"
         />
       </div>
 
@@ -442,7 +442,7 @@ export function ConnectedAppsAdminPage() {
                     {tApp('admin.fields.connectedUsers')}
                   </TableHead>
                   <TableHead>{tApp('admin.fields.enabled')}</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-end">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -483,7 +483,7 @@ export function ConnectedAppsAdminPage() {
                           disabled={!canUpdate}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex justify-end gap-1">
                           {canUpdate && (
                             <Button
@@ -745,7 +745,7 @@ export function ConnectedAppsAdminPage() {
             <Button onClick={handleSave} disabled={saving || !isFormValid}>
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   Saving...
                 </>
               ) : editingApp ? (
@@ -800,7 +800,7 @@ export function ConnectedAppsAdminPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   Deleting...
                 </>
               ) : (

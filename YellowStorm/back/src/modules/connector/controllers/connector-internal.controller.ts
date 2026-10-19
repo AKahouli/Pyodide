@@ -1,42 +1,41 @@
-import { Body, Controller, Post, UseGuards, Optional, Header } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Optional, Header, Req } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
+import { AdkNativeActorGuard, type AdkNativeRequest } from '../../auth/guards/adk-native-actor.guard';
+import { AdkRuntimeMcpRenewalGuard } from '../../auth/guards/internal-service-principal.guard';
 import { ConnectorTransferService } from '../connector-transfer.service';
 import { InternalImportConnectorItemDto } from '../dto/connector-transfer.dto';
 import { InternalMcpTokenDto } from '../dto/mcp-token.dto';
 import { ConnectorService } from '../connector.service';
-import { SemanticModelMcpJwtService } from '../services/semantic-model-mcp-jwt.service';
-import { BadRequestException } from '../../exceptions';
-import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { McpJwtService } from '../services/mcp-jwt.service';
 
 @ApiTags('Connectors (Internal)')
 @Controller('connectors/internal')
-@Public()
-@UseGuards(InternalServiceGuard)
 export class ConnectorInternalController {
   constructor(private readonly transferService: ConnectorTransferService,
     @Optional() private readonly connectors?: ConnectorService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService) {}
+    @Optional() private readonly mcpJwt?: McpJwtService) {}
 
   @Post('mcp-token')
+  @Public()
   @Header('Cache-Control', 'no-store')
-  @ApiHeader({ name: 'X-Internal-Token', required: true })
-  @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for a trusted runtime' })
+  // Renewal authority belongs to the runtime, not receiving MCP services.
+  @UseGuards(AdkRuntimeMcpRenewalGuard)
+  @ApiHeader({ name: 'X-Yellowstorm-Service-Principal', required: true })
+  @ApiHeader({ name: 'X-Yellowstorm-Service-Token', required: true })
+  @ApiOperation({ summary: 'Renew an MCP JWT from a current connector-bound assertion' })
   async issueMcpToken(@Body() dto: InternalMcpTokenDto) {
-    const connector = await this.connectors!.findById(dto.connectorId);
-    if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
-      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
-    }
-    return this.mcpJwt!.issue(connector.mcpServerUrl, dto.userId);
+    return this.mcpJwt!.renew(dto.connectorId, dto.assertion);
   }
 
   @Post('transfer/import')
+  @Public()
+  @UseGuards(AdkNativeActorGuard)
   @ApiOperation({ summary: 'Import connector items on behalf of a user (internal)' })
-  @ApiHeader({ name: 'X-Internal-Token', required: true })
-  async importFromConnector(@Body() dto: InternalImportConnectorItemDto): Promise<unknown> {
+  @ApiHeader({ name: 'X-YellowStorm-Execution-Authority', required: true })
+  async importFromConnector(@Body() dto: InternalImportConnectorItemDto, @Req() request: AdkNativeRequest): Promise<unknown> {
     return this.transferService.importToWorkspace(
-      dto.userId,
+      request.nativeActor.sub,
       dto.connectorId,
       dto.workspaceId,
       {

@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { RootWorkService } from './root-work.service';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
@@ -17,7 +18,8 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
   private closing = false;
 
   constructor(private readonly jobs: RootBackgroundJobStore, private readonly stream: StreamService,
-    private readonly config: ConfigService, private readonly followups?: RootFollowupService) {}
+    private readonly config: ConfigService, private readonly followups?: RootFollowupService,
+    @Optional() private readonly authorityWork?: RootWorkService) {}
 
   onModuleInit() {
     if (!this.config.get<boolean>('conversation.rootBackgroundEnabled', false)) return;
@@ -80,10 +82,13 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
       const timeoutMs = job.deadline.getTime() - Date.now();
       if (timeoutMs <= 0 || abort.signal.aborted) return;
       const client = this.stream.getChatbotClient();
+      if (!this.authorityWork) throw new Error('Background authority unavailable');
+      const metadata = createGrpcMetadata(this.config);
+      metadata.set('x-yellowstorm-root-authority', await this.authorityWork.issueBackgroundAuthority(job));
       const call = client.RunBackgroundInvocation({ protocol_version: 1, execution_id: job.executionId,
         conversation_id: job.conversationId, actor_id: job.actorId, conversation_epoch: job.conversationEpoch,
         owner: this.owner, fence: job.fence, request_digest: job.requestDigest,
-        control_database_fingerprint: await this.jobs.controlInstance() }, createGrpcMetadata(this.config));
+        control_database_fingerprint: await this.jobs.controlInstance() }, metadata);
       await AdkInvocationClient.consume<{ execution_id: string; status: string }>(call, { timeoutMs, signal: abort.signal, onChunk: (chunk) => {
         if (chunk?.execution_id !== job.executionId || !['running', 'completed', 'waiting', 'failed', 'cancelled', 'outcome_unknown'].includes(chunk.status)) {
           throw new Error('Invalid background observer update');

@@ -92,29 +92,49 @@ class CapacityClient:
                 _streams.reset(token)
 
     async def acompletion(self, **kwargs):
+        return await self._call(self.client.acompletion, {**kwargs, 'num_retries': 0})
+
+    async def create(self, **kwargs):
+        # The native OpenAI client is constructed with max_retries=0 by its owner.
+        from src.smart_rag.infrastructure.monitoring.model_response_recovery import ResponsesStream
+        return await self._call(self.client.create, kwargs, ResponsesStream)
+
+    async def _call(self, create, kwargs, stream_wrapper=None):
         pool = self.pool or capacity_pool()
+        from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+        trace = get_current_conversation_latency_trace()
+        timing = trace if trace is not None and trace.claim_provider_timing() else None
         permit = await pool.acquire()
+        if timing is not None:
+            timing.mark_provider_timing('acquire_end')
         dispatched = False
         try:
             await pool.transition(permit, 'running')
+            if timing is not None:
+                timing.mark_provider_timing('dispatch')
             dispatched = True
             # A timeout retry could overlap the original provider request.
-            response = await self.client.acompletion(**{**kwargs, 'num_retries': 0})
+            response = await create(**kwargs)
         except BaseException as error:
             rejected = getattr(error, 'status_code', None) in (400, 401, 403, 404, 413, 422, 429)
             await _finish(pool, permit, 'free' if not dispatched or rejected else 'outcome_unknown')
             raise
         if kwargs.get('stream'):
-            stream = CapacityStream(response, pool, permit)
+            if stream_wrapper:
+                response = stream_wrapper(response)
+            stream = CapacityStream(response, pool, permit, timing)
             if _streams.get() is not None:
                 _streams.get().append(stream)
             return stream
+        if timing is not None:
+            timing.mark_provider_timing('first_chunk')
         await _finish(pool, permit, 'free')
         return response
 
 
 class CapacityStream:
-    def __init__(self, stream, pool, permit):
+    def __init__(self, stream, pool, permit, timing=None):
+        self.timing = timing
         self.stream, self.pool, self.permit = stream, pool, permit
         self.iterator = stream.__aiter__()
         self.finished = False
@@ -127,7 +147,10 @@ class CapacityStream:
 
     async def __anext__(self):
         try:
-            return await self.iterator.__anext__()
+            chunk = await self.iterator.__anext__()
+            if self.timing is not None:
+                self.timing.mark_provider_timing('first_chunk')
+            return chunk
         except StopAsyncIteration:
             if not self.finished:
                 self.finished = True

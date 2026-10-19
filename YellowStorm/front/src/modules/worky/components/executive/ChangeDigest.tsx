@@ -30,7 +30,7 @@ export function ChangeDigest({ streamId, tasks, recentTasks, onTaskClick }: { st
       {tasks.length > 0 && <button type='button' onClick={markReviewed} className='shrink-0 text-xs font-semibold text-primary hover:underline focus-visible:underline'>{t(previous ? 'command.changes.markReviewed' : 'command.changes.startTracking')}</button>}
     </div>
     <p className='mt-1 text-xs text-muted-foreground'>{t(previous ? 'command.changes.sinceReview' : 'command.changes.recent')}</p>
-    {visible.length ? <div className='mt-3 divide-y divide-border/60'>{visible.map((task) => <button key={task.id} type='button' onClick={() => onTaskClick(task)} className='flex w-full items-center gap-2 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-primary'>
+    {visible.length ? <div className='mt-3 divide-y divide-border/60'>{visible.map((task) => <button key={task.id} type='button' onClick={() => onTaskClick(task)} className='flex w-full items-center gap-2 py-2 text-start hover:text-primary focus-visible:ring-2 focus-visible:ring-primary'>
       <span className='min-w-0 flex-1'><span className='block truncate text-xs font-medium'>{task.title}</span><TaskTimestamp task={task} /></span><ArrowUpRight className='size-3.5 shrink-0' />
     </button>)}</div> : <p className='mt-3 text-xs text-muted-foreground'>{t('command.changes.empty')}</p>}
     {changed.length > visible.length && <p className='mt-2 text-xs text-muted-foreground'>{t('command.changes.more', { count: changed.length - visible.length })}</p>}

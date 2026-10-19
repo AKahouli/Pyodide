@@ -188,11 +188,12 @@ export class SemanticGraphSearchService {
   }
 
   /** Building an index costs embedding calls, so only the people who edit the model can start one. */
-  async ensureIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment) {
+  async ensureIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment,
+    expectation: { expectedDataRevisionId?: string; expectedIndexId?: string } = {}) {
     const model = await this.models.requireActiveRole(userId, modelId, EDIT_ROLES);
     const { index, build } = await this.settingsFor(model, environment);
     // How the index is built (batch size, parallel calls…) goes with the request; it never changes the index's identity.
-    const request = { actorUserId: userId, modelId: model.id, environment, settings: { index, ...(build ? { build } : {}) } };
+    const request = { actorUserId: userId, modelId: model.id, environment, ...expectation, settings: { index, ...(build ? { build } : {}) } };
     return this.bound(environment, () => this.runtime.ensureGraphSearchIndex(request));
   }
 

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  Body,
   ConflictException,
   Controller,
   Get,
   Headers,
   PayloadTooLargeException,
   Put,
+  Post,
   Query,
   Req,
   Res,
@@ -20,7 +22,8 @@ import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import { pipeline } from 'stream/promises';
 import { Public } from '../auth/decorators/public.decorator';
-import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
+import { internalServicePrincipalGuardFor } from '../auth/guards/internal-service-principal.guard';
+import { SemanticAssetGrantService, type AssetExecutionProof, type AssetOperation, type AssetTarget } from '../semantic-model/services/semantic-asset-grant.service';
 import { DocumentService } from '../document/document.service';
 import { SkipResponseWrap } from '../response/decorators/skip-response-wrap.decorator';
 import { WorkspaceDocumentRead } from './document/document-read';
@@ -78,7 +81,7 @@ class SemanticDatasetQueryDto extends SemanticAssetQueryDto {
 
 @ApiTags('Workspace Internal')
 @Controller({ path: 'workspaces/internal', version: VERSION_NEUTRAL })
-@UseGuards(InternalServiceGuard)
+@UseGuards(internalServicePrincipalGuardFor('semantic-runtime'))
 export class WorkspaceAssetInternalController {
   private readonly datasetPrefix: string;
   private readonly datasetMaxBytes: number;
@@ -89,6 +92,7 @@ export class WorkspaceAssetInternalController {
     private readonly storage: DocumentService,
     config: ConfigService,
     private readonly writer: WorkspaceDocumentWrite,
+    private readonly grants: SemanticAssetGrantService,
   ) {
     this.datasetPrefix = config.get<string>('storage.semanticDatasetPrefix', 'semantic-model/datasets')
       .replace(/^\/+|\/+$/g, '');
@@ -104,11 +108,24 @@ export class WorkspaceAssetInternalController {
   }
 
   @Public()
+  @Post('semantic-asset-grant')
+  @SkipResponseWrap()
+  async grant(@Body() body: AssetExecutionProof & { workspaceId: string; assetId: string; operation: AssetOperation; target?: AssetTarget }) {
+    return this.grants.issue(body, body.workspaceId, body.assetId, body.operation, body.target);
+  }
+
+  private async authorize(query: SemanticAssetQueryDto, token: string, operation: AssetOperation, target: AssetTarget = {}): Promise<string | undefined> {
+    const actor = await this.grants.check(token, query.workspaceId, query.documentId, operation, target);
+    if (actor !== query.actorUserId) throw new BadRequestException('Asset actor does not match grant');
+    return operation === 'metadata' || operation === 'read' ? undefined : this.grants.storageNamespace(token);
+  }
+
+  @Public()
   @Get('semantic-asset-metadata')
   @SkipResponseWrap()
   @ApiOperation({ summary: 'Reauthorize and describe a Workspace asset for the semantic runtime' })
-  async metadata(@Query() query: SemanticAssetQueryDto) {
-    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+  async metadata(@Query() query: SemanticAssetQueryDto, @Headers('x-semantic-asset-grant') token: string) {
+    await this.authorize(query, token, 'metadata');
     const document = await this.documents.findById(query.workspaceId, query.documentId);
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException('Document is not available for semantic discovery');
@@ -130,8 +147,8 @@ export class WorkspaceAssetInternalController {
   @Get('semantic-asset')
   @SkipResponseWrap()
   @ApiOperation({ summary: 'Stream an authorized Workspace asset to the semantic runtime' })
-  async content(@Query() query: SemanticAssetQueryDto, @Res() response: Response): Promise<void> {
-    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+  async content(@Query() query: SemanticAssetQueryDto, @Res() response: Response, @Headers('x-semantic-asset-grant') token: string): Promise<void> {
+    await this.authorize(query, token, 'read');
     const document = await this.documents.findById(query.workspaceId, query.documentId);
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED || !document.path) {
       throw new BadRequestException('Document is not available for semantic discovery');
@@ -184,8 +201,9 @@ export class WorkspaceAssetInternalController {
     @Headers('content-length') rawLength: string | undefined,
     @Headers('x-content-sha256') contentHash: string | undefined,
     @Req() request: Request,
+    @Headers('x-semantic-asset-grant') token: string,
   ): Promise<{ documentId: string; originalName: string; created: boolean; indexingStatus: string }> {
-    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+    const namespace = await this.authorize(query, token, 'derived-put', { fileName: query.fileName });
     const source = await this.documents.findById(query.workspaceId, query.documentId);
     if (source.isFolder || source.status !== DocumentStatus.COMPLETED || !EMAIL_ARCHIVE_MIME_TYPES.has(source.mimeType)) {
       throw new BadRequestException('Derived files can only come from an e-mail archive');
@@ -216,8 +234,11 @@ export class WorkspaceAssetInternalController {
       workspaceId: query.workspaceId,
       userId: query.actorUserId,
       sourceDocumentId: source.id,
-      sourceName: source.originalName,
-      fileName: query.fileName,
+      sourceName: `${source.id}_${createHash('sha256').update(namespace!).digest('hex')}`,
+      // The writer deduplicates by name across the entire workspace. Prefix both
+      // namespace and full-name digest so that another source/version/attempt
+      // cannot reuse or overwrite an unrelated derived document.
+      fileName: `${createHash('sha256').update(namespace!).digest('hex')}_${createHash('sha256').update(query.fileName).digest('hex').slice(0, 24)}_${query.fileName.slice(-100)}`,
       mimeType,
       file: body,
     });
@@ -235,8 +256,9 @@ export class WorkspaceAssetInternalController {
     @Headers('content-length') rawLength: string | undefined,
     @Headers('x-content-sha256') contentHash: string | undefined,
     @Req() request: Request,
+    @Headers('x-semantic-asset-grant') token: string,
   ): Promise<{ datasetId: string; sizeBytes: number; contentHash: string }> {
-    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+    const namespace = await this.authorize(query, token, 'dataset-put', { datasetId: query.datasetId });
     const document = await this.documents.findById(query.workspaceId, query.documentId);
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException('Source document is not available for dataset preparation');
@@ -251,7 +273,7 @@ export class WorkspaceAssetInternalController {
     if (!contentHash || !/^[a-f0-9]{64}$/.test(contentHash)) {
       throw new BadRequestException('A lowercase SHA-256 content hash is required');
     }
-    const objectKey = `${this.datasetPrefix}/${query.workspaceId}/${query.documentId}/${query.datasetId}.parquet`;
+    const objectKey = `${this.datasetPrefix}/${query.workspaceId}/${query.documentId}/${namespace}/${query.datasetId}.parquet`;
     await this.storage.putStream(
       objectKey,
       request,
@@ -266,13 +288,13 @@ export class WorkspaceAssetInternalController {
   @Get('semantic-dataset')
   @SkipResponseWrap()
   @ApiOperation({ summary: 'Stream an authorized prepared semantic dataset' })
-  async dataset(@Query() query: SemanticDatasetQueryDto, @Res() response: Response): Promise<void> {
-    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+  async dataset(@Query() query: SemanticDatasetQueryDto, @Res() response: Response, @Headers('x-semantic-asset-grant') token: string): Promise<void> {
+    const namespace = await this.authorize(query, token, 'dataset-get', { datasetId: query.datasetId });
     const document = await this.documents.findById(query.workspaceId, query.documentId);
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException('Source document is not available for dataset access');
     }
-    const objectKey = `${this.datasetPrefix}/${query.workspaceId}/${query.documentId}/${query.datasetId}.parquet`;
+    const objectKey = `${this.datasetPrefix}/${query.workspaceId}/${query.documentId}/${namespace}/${query.datasetId}.parquet`;
     const stream = await this.storage.openReadStream(objectKey);
     const size = stream.contentLength;
     const hash = stream.metadata?.sha256;

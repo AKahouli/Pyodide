@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'async_hooks';
+import { logDomainEvent } from '@modules/logger';
 import type {
   AdkLatencyTracePayload,
   BackendPreAdkBreakdownV1,
@@ -125,6 +126,22 @@ export function beginBackendPreAdkStage(stage: BackendPreAdkStage): void {
 
 export function endBackendPreAdkStage(stage: BackendPreAdkStage): void {
   trackerStorage.getStore()?.end(stage);
+}
+
+/** Numeric diagnostics only, gated by the existing Admin latency switch. */
+export async function measureBackendPreparation<T>(operation: string, work: () => Promise<T>): Promise<T> {
+  if (!getBackendPreAdkTracker()) return work();
+  const start = process.hrtime.bigint();
+  let outcome = 'failed';
+  try {
+    const result = await work();
+    outcome = 'success';
+    return result;
+  } finally {
+    logDomainEvent('info', 'conversation.preparation.completed', {
+      operation, duration_ms: Number(process.hrtime.bigint() - start) / 1_000_000, outcome,
+    });
+  }
 }
 
 export function markGrpcDispatchedForLatency(): void {

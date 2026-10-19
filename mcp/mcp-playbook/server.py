@@ -614,4 +614,5 @@ if __name__ == "__main__":
         auth_mode=settings.auth_mode, jwt_public_key=public_key,
         jwt_issuer=settings.jwt_issuer, jwt_audience=settings.jwt_audience,
     )]
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=settings.port, middleware=middleware)
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=settings.port, middleware=middleware,
+            stateless_http=True)
