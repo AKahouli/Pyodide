@@ -13,6 +13,7 @@ import { PlaybookFlowOutputContractService } from './playbook-flow-output-contra
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
+import { publicPlaybookTaskResult } from '../utils/playbook-artifact';
 import {
   createExecutionRepositoryMock,
   createRouterDecisionRepositoryMock,
@@ -271,6 +272,14 @@ function createReplayWorkflowHarness() {
   );
   (executionService as any).isGrpcAvailable = true;
   (executionService as any).playbookFlowClient = { Run: mockRun };
+  const issuePublicationAuthority = jest.fn().mockResolvedValue('test-replay-dispatch-authority');
+  // Match other orchestration fixtures; real signing/fencing is covered by the
+  // dedicated artifact-authority integration suite.
+  Object.assign(executionService, { artifactService: {
+    issuePublicationAuthority,
+    projectPublicTaskResult: (result: Record<string, unknown>, owner: string, execution: string, redact: boolean) =>
+      publicPlaybookTaskResult(result, owner, execution, new Set(), redact),
+  } });
 
   return {
     replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOneForWrite: jest.fn().mockResolvedValue({ id: FLOW_ID }) } as any),
@@ -278,6 +287,7 @@ function createReplayWorkflowHarness() {
     reports,
     replays,
     mockRun,
+    issuePublicationAuthority,
     triggerEvents: async () => {
       const settle = async () => new Promise((resolve) => setImmediate(resolve));
       while (mockRun.mock.calls.length === 0 || !streamHandlers.data || !streamHandlers.end) {
@@ -342,6 +352,9 @@ describe('E2E: Replay workflow', () => {
     await harness.triggerEvents();
 
     const runArgs = harness.mockRun.mock.calls[0][0];
+    expect(harness.issuePublicationAuthority).toHaveBeenCalledWith(started.executionId, 'owner-1');
+    expect(harness.mockRun.mock.calls[0][1].get('x-yellowstorm-artifact-authority'))
+      .toEqual(['test-replay-dispatch-authority']);
     const replayNode = runArgs.snapshot.nodes[0];
     expect(replayNode.metadata.fields.execution_mode.stringValue).toBe('replay_strict');
     const replayInstructions = replayNode.metadata.fields.replay_instructions?.stringValue;

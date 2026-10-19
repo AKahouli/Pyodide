@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 
 /**
  * Remediation 5.4: migration journal integrity. Guards against the R-23
@@ -49,10 +50,28 @@ describe('drizzle migration journal integrity', () => {
   // stay byte-identical to what was recorded, so it is exempt instead of edited. One idempotent ADD COLUMN.
   const APPLIED_OUT_OF_BAND = new Set(['0026_model_drop_params.sql']);
 
-  it('every migration numbered 0025+ starts with SET LOCAL lock_timeout', () => {
+  // Already-deployed SQL cannot gain headers without changing its ledger hash.
+  // Migration entry points enforce the timeout at connection startup instead.
+  // Git blob IDs (LF-normalized) pin these exact historical exceptions.
+  const HISTORICAL_HEADER_EXCEPTIONS: Record<string, string> = {
+    '0046_concurrent_root_turns.sql': '461bd68d296e4033e8aa8c693c6a07be5a41616a',
+    '0050_model_conversation_api.sql': 'e375dce66d21241bcf7b26ff453f7a3d734d914c',
+    '0051_model_responses_history_controls.sql': 'd5667438053060ca825757c0a526d78127069ae4',
+  };
+
+  it('preserves deployed SQL for historical header exceptions', () => {
+    for (const [file, blobId] of Object.entries(HISTORICAL_HEADER_EXCEPTIONS)) {
+      const sql = fs.readFileSync(path.join(drizzleDir, file), 'utf8').replace(/\r\n/g, '\n');
+      const hash = createHash('sha1').update(`blob ${Buffer.byteLength(sql)}\0`).update(sql).digest('hex');
+      expect({ file, hash }).toEqual({ file, hash: blobId });
+    }
+  });
+
+  it('every non-historical migration numbered 0025+ declares SET LOCAL lock_timeout', () => {
     const offenders = sqlFiles
       .filter((f) => Number(f.slice(0, 4)) >= 25)
       .filter((f) => !APPLIED_OUT_OF_BAND.has(f))
+      .filter((f) => !Object.prototype.hasOwnProperty.call(HISTORICAL_HEADER_EXCEPTIONS, f))
       .filter((f) => !fs.readFileSync(path.join(drizzleDir, f), 'utf8').includes("SET LOCAL lock_timeout = '5s';"))
       .map((f) => f);
     expect(offenders).toEqual([]);

@@ -313,7 +313,7 @@ jobs:
           PGPASSWORD: manus
           PGDATABASE: manus
         run: |
-          python -m pytest src/flow_engine/tests/ tests/orchestrator/ \
+          python -m pytest tests/flow_engine/ tests/orchestrator/ \
             tests/test_chatbot_servicer_fatal_errors.py tests/test_chatbot_servicer_stream_heartbeat.py tests/test_corrective_replay.py -v \
             --cov=src/flow_engine --cov=grpc --cov=src/companion_ai --cov=src/grpc_server \
             --cov-fail-under=0 \

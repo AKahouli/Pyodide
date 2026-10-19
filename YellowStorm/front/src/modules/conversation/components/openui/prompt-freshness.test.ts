@@ -9,7 +9,8 @@ import { describe, expect, it } from 'vitest';
 describe('OpenUI output-format prompt (committed back-end module)', () => {
   it('is up to date with the generator', () => {
     const result = spawnSync(process.execPath, [resolve(process.cwd(), 'scripts/generate-openui-prompt.mjs'), '--check'], { encoding: 'utf8' });
-    expect(result.stderr).toBe('');
+    expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
+    expect(result.stderr).toMatch(/^(?:Warning: the OpenUI prompt is \d+ characters, over the \d+ target\.\r?\n)?$/);
   }, 60_000);
 });

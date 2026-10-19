@@ -1,4 +1,6 @@
 {
+  "store.errors.uploadSettingsFailed": "تعذر تحميل حدود الرفع. يرجى المحاولة مجددًا.",
+  "uploadDropZone.limits": "حتى {{count}} من الملفات، بحد أقصى {{size}} لكل ملف",
   "hub.title": "مساحات العمل",
   "hub.description": "نظّم المصادر المعتمدة والسياق المشترك للأشخاص والذكاء الاصطناعي.",
   "hub.create": "مساحة عمل جديدة",

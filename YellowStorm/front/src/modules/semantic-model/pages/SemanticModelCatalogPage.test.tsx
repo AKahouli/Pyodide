@@ -30,6 +30,10 @@ vi.mock('../components/catalog/CreateSemanticModelDialog', () => ({
   CreateSemanticModelDialog: ({ open }: { open: boolean }) => open ? <div role='dialog'>create-model-dialog</div> : null,
 }));
 
+vi.mock('../components/population/MyJobsDrawer', () => ({
+  MyJobsButton: () => null,
+}));
+
 describe('SemanticModelCatalogPage', () => {
   beforeEach(() => {
     queryState.data = { items: [] };

@@ -1,4 +1,5 @@
 {
+  "promptInput.maxFileSizeExceeded": "تتجاوز بعض الملفات الحد الأقصى لحجم الرفع.",
   "appName": "Yellowmind",
   "languageLabel": "اللغة",
   "languageDescription": "اختر اللغة المستخدمة في الواجهة",

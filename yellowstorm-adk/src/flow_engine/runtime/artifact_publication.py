@@ -85,7 +85,8 @@ def with_artifact_authority(method):
     """Authenticated gRPC metadata only; never checkpoint/model state or Struct."""
     @wraps(method)
     async def wrapped(self, request, context):
-        proofs = [value for key, value in context.invocation_metadata()
+        metadata = context.invocation_metadata() if context is not None else ()
+        proofs = [value for key, value in metadata
                   if key.lower() == "x-yellowstorm-artifact-authority"]
         if len(proofs) != 1 or not isinstance(proofs[0], str) or not proofs[0] or "," in proofs[0]:
             raise ValueError("Authenticated dispatch artifact authority is required")

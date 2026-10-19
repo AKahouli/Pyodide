@@ -78,7 +78,7 @@ def test_dispatch_private_context_scoped_headers_refresh_and_cleanup(monkeypatch
     assert 'X-Internal-Token' not in headers
 
 
-@pytest.mark.parametrize('metadata', [[], [('x-yellowstorm-artifact-authority', 'one'), ('x-yellowstorm-artifact-authority', 'two')]])
+@pytest.mark.parametrize('metadata', [None, [], [('x-yellowstorm-artifact-authority', 'one'), ('x-yellowstorm-artifact-authority', 'two')]])
 def test_missing_or_duplicate_dispatch_proof_never_starts_runtime(metadata):
     started = []
     class Runtime:
@@ -89,7 +89,7 @@ def test_missing_or_duplicate_dispatch_proof_never_starts_runtime(metadata):
     async def run():
         with pytest.raises(ValueError, match='dispatch artifact authority'):
             async for _ in Runtime().Run(SimpleNamespace(execution_id='exec', owner_id='actor'),
-                    SimpleNamespace(invocation_metadata=lambda: metadata)): pass
+                    None if metadata is None else SimpleNamespace(invocation_metadata=lambda: metadata)): pass
         assert not started
     asyncio.run(run())
 

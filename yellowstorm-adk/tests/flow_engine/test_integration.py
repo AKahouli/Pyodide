@@ -26,6 +26,22 @@ from src.grpc_generated import playbook_flow_pb2 as pb
 from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
 
 
+class _FakeDispatchContext:
+    """Stand-in for the gRPC servicer context supplying dispatch authority metadata."""
+
+    def invocation_metadata(self):
+        return (("x-yellowstorm-artifact-authority", "integration-dispatch-proof"),)
+
+
+@pytest.fixture(autouse=True)
+def artifact_dispatch_credential(monkeypatch):
+    """Test-only machine credential; production settings validation stays fail-closed."""
+    from types import SimpleNamespace
+    from src.flow_engine.runtime import artifact_publication
+    monkeypatch.setattr(artifact_publication, "get_settings",
+                        lambda: SimpleNamespace(ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN="artifact-test-machine-token"))
+
+
 class MockIteratorChunk:
     def __init__(self, text: str):
         self.choices = [_MockChoice(text)]
@@ -147,7 +163,7 @@ async def test_integration_run_linear_flow(servicer):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock response"]),
     ):
-        events = [event async for event in servicer.Run(request, None)]
+        events = [event async for event in servicer.Run(request, _FakeDispatchContext())]
 
     # Verify we got events through the full pipeline
     assert len(events) > 0, "Expected at least one event"
@@ -181,7 +197,7 @@ async def test_integration_run_with_input_context(servicer):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock response"]),
     ):
-        events = [event async for event in servicer.Run(request, None)]
+        events = [event async for event in servicer.Run(request, _FakeDispatchContext())]
 
     event_types = [e.event_type for e in events]
     assert "NodeCompleted" in event_types
@@ -204,7 +220,7 @@ async def test_integration_run_empty_snapshot_fails_gracefully(servicer):
         settings=pb.RunSettings(recursion_limit=25, max_parallelism=5),
     )
 
-    events = [event async for event in servicer.Run(request, None)]
+    events = [event async for event in servicer.Run(request, _FakeDispatchContext())]
 
     assert len(events) > 0
     event_types = [e.event_type for e in events]
@@ -288,7 +304,7 @@ async def test_integration_cancel_during_human_approval(servicer):
 
         async def _collect():
             events = []
-            async for event in servicer.Run(request, None):
+            async for event in servicer.Run(request, _FakeDispatchContext()):
                 events.append(event)
                 if event.event_type == "ApprovalRequested":
                     approval_requested.set()
@@ -341,7 +357,7 @@ async def test_integration_resume_from_step_interrupt(servicer):
         suspended = asyncio.Event()
 
         async def _collect():
-            async for event in servicer.Run(request, None):
+            async for event in servicer.Run(request, _FakeDispatchContext()):
                 events.append(event)
                 if event.event_type == "NodeSuspended":
                     suspended.set()
@@ -417,7 +433,7 @@ async def test_integration_run_iterator_flow_through_servicer(servicer):
         "src.flow_engine.nodes.step.litellm.acompletion",
         return_value=_MockAsyncStream(["mock response"]),
     ):
-        events = [event async for event in servicer.Run(request, None)]
+        events = [event async for event in servicer.Run(request, _FakeDispatchContext())]
 
     assert len(events) > 0, "Expected at least one event"
 
@@ -481,7 +497,7 @@ async def test_recursion_limit_enforced(servicer):
             input_context=_make_struct({}),
             settings=pb.RunSettings(recursion_limit=3, max_parallelism=5),
         )
-        events = [event async for event in servicer.Run(request, None)]
+        events = [event async for event in servicer.Run(request, _FakeDispatchContext())]
 
     assert len(events) > 0
     event_types = [e.event_type for e in events]

@@ -381,13 +381,6 @@
       "breakpoints": true
     },
     {
-      "idx": 46,
-      "version": "7",
-      "when": 1792200000000,
-      "tag": "0045_yellowmind_graph_walks",
-      "breakpoints": true
-    },
-    {
       "idx": 54,
       "version": "7",
       "when": 1792340001000,
@@ -423,17 +416,24 @@
       "breakpoints": true
     },
     {
-      "idx": 60,
+      "idx": 59,
       "version": "7",
       "when": 1792454400002,
       "tag": "0052_openui_app_states",
       "breakpoints": true
     },
     {
-      "idx": 61,
+      "idx": 60,
       "version": "7",
       "when": 1792454400003,
       "tag": "0053_conversation_sse_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792454400004,
+      "tag": "0045_yellowmind_graph_walks",
       "breakpoints": true
     }
   ]

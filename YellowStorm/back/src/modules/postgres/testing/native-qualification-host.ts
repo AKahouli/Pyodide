@@ -16,6 +16,35 @@ function redact(text: string): string {
     .replace(/((?:api[-_]?key|access[-_]?token|secret|password|authorization)["'\s:=]+)[^\s"',}]+/gi, '$1***');
 }
 
+/**
+ * Disposable placeholder values for the ADK runtime's mandatory settings
+ * (yellowstorm-adk/src/config/settings.py validates them fail-closed). They
+ * override inherited developer settings for ordinary fixture runs. Real provider
+ * settings are used only by the explicit live-model qualification; even then,
+ * database and backend URLs remain pinned to this test run.
+ */
+export function qualificationSettingsEnv(databaseUrl: string, apiUrl: string, realModelQualification = false): Record<string, string> {
+  const endpoints = { DATABASE_URL: databaseUrl.replace(/^postgresql:/, 'postgresql+asyncpg:'), API_URL: apiUrl };
+  if (realModelQualification) return endpoints;
+  const placeholders: Record<string, string> = {
+    AZURE_DATALAKE_CONNECTION_STRING: 'qualification-fixture',
+    AZURE_DATALAKE_FILE_SYSTEM_NAME: 'qualification-fixture',
+    // ADK session services require the asyncpg driver scheme.
+    DATABASE_URL: endpoints.DATABASE_URL,
+    lINKUP_API_KEY: 'qualification-fixture',
+    WEB_SEARCH_PROMPT: 'qualification fixture web search prompt',
+    API_URL: apiUrl,
+    LITELLM_API_BASE_URL: 'http://127.0.0.1:9',
+    LITELLM_API_SECRET_KEY: 'qualification-fixture',
+    REDIS_HOST: '127.0.0.1',
+    REDIS_PORT: '6379',
+    ADK_API_KEY: 'qualification-fixture',
+    VECTORSTORE_API_KEY: 'qualification-fixture',
+    EMBEDDING_MODEL: 'qualification-fixture-embedding',
+  };
+  return placeholders;
+}
+
 let condaMeta: boolean | undefined;
 
 /** Whether the shared conda env the qualification was authored against is installed here. */
@@ -68,9 +97,13 @@ export async function startNativeQualificationHost(apiUrl: string, internalToken
   const runtime = resolve(process.cwd(), '../../yellowstorm-adk');
   const { command, args } = hostCommand(runtime);
   const child = spawn(command, args, { cwd: runtime, windowsHide: true,
-    env: { ...process.env, PYTHONPATH: runtime, PYTHONUTF8: '1',
+    env: { ...process.env, ...qualificationSettingsEnv(database.toString(), apiUrl, process.env.VECTOR_REAL_MODEL_QUALIFY === '1'),
+      PYTHONPATH: runtime, PYTHONUTF8: '1',
       ROOT_WORK_DATABASE_URL: database.toString(), ROOT_WORK_BACKGROUND_ENABLED: String(enabled),
       ROOT_WORK_LLM_CAPACITY_ENABLED: String(enabled), INTERNAL_SERVICE_SECRET: internalToken,
+      // The host relays execution authority back to the Nest test app, whose
+      // ConfigService stub only accepts this run's principal token.
+      ADK_ROOT_RUNTIME_SERVICE_TOKEN: internalToken,
       GRPC_API_KEY: key, PLATFORM_API_URL: apiUrl, VECTOR_NATIVE_WAIT_FIXTURE: String(waitFixture) } });
   // Native logs are not echoed while it runs: settings/provider diagnostics may contain credentials.
   // The tail is kept, redacted, for the startup-failure rejection below so the real reason is visible.

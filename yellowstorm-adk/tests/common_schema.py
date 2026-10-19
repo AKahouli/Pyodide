@@ -81,6 +81,9 @@ class MockSettings(BaseModel):
 
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
+    # Root-work LLM capacity metering (mirrors production default: disabled)
+    ROOT_WORK_LLM_CAPACITY_ENABLED: bool = False
+
     # Code Interpreter Backend
     CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
 

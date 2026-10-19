@@ -36,8 +36,8 @@ export class RootDelegateDefinitionService {
       || rootState.scope.executionId !== root.id || rootState.actorId !== state.actorId
       || root.conversationId !== execution.conversationId || root.conversationEpoch !== execution.conversationEpoch
       || root.rootAgentId !== execution.rootAgentId || !['running', 'waiting', 'completed'].includes(root.status)) throw deny();
-    if (execution.role !== 'root' && (execution.depth !== 1 || state.scope.parentExecutionId !== root.id
-      || !rootState.capabilityCeiling)) throw deny();
+    if (execution.role !== 'root' && execution.role !== 'followup' && (execution.depth !== 1
+      || state.scope.parentExecutionId !== root.id || !rootState.capabilityCeiling)) throw deny();
     const conversation = await this.conversations.getConversationDocument(root.conversationId);
     if (!conversation || conversation.createdBy !== state.actorId || conversation.isGroup || conversation.isArchived
       || conversation.rootAgentId !== root.rootAgentId || (conversation.rootWorkEpoch ?? 0) !== root.conversationEpoch) throw deny();
@@ -58,6 +58,12 @@ export class RootDelegateDefinitionService {
         || (state.admittedRequest?.contextRefs ?? []).some(ref => !rootState.capabilityCeiling!.workspaceIds.includes(ref))) throw deny();
     } else if (execution.role === 'fanout_driver') {
       if (!current.policy.fanout.enabled || state.scope.immutableSnapshotRef !== rootState.scope.immutableSnapshotRef) throw deny();
+    } else if (execution.role === 'followup') {
+      // Followup synthesis is derived from the completed root itself: same
+      // actor/chain (checked above), same frozen snapshot, background policy only.
+      if (execution.depth !== 0 || state.scope.role !== 'followup' || state.scope.depth !== 0
+        || !current.policy?.background?.enabled || state.scope.parentExecutionId !== root.id
+        || state.scope.immutableSnapshotRef !== rootState.scope.immutableSnapshotRef) throw deny();
     } else if (execution.role !== 'root') {
       throw deny();
     }

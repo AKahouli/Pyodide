@@ -108,3 +108,89 @@ no negotiated explicit success marker; a contentful, otherwise clean early
 gRPC return cannot be distinguished from a legacy successful stream. Fatal
 exceptions and empty clean returns are covered; no stronger truncation claim
 is made. P1-07 remains explicitly unimplemented and unqualified.
+
+## Follow-on audit: PR-01 CI baseline (2026-10-19)
+
+The 2026-10-18 follow-on audit targets `3e598d911`; implementation started from
+`61ef7c4a5` on `security/p0p1-remediation`. Its PR-01..PR-08 ordering is distinct
+from the historical finding numbers above. In particular its PR-05 includes the
+producer backpressure previously excluded; that work has not started. PR-02+
+remain gated on the required CI baseline.
+
+PR-01 corrects the Python CI target to `tests/flow_engine/` with coverage and
+failure propagation retained. PostgreSQL fixtures retain the real execution
+authority guard and provide its collaborators, assert intentional
+`nativeState.clarifications: []`, and supply isolated test-only ADK settings.
+Ordinary child-host fixtures override inherited developer provider settings;
+live-model qualification requires its existing explicit opt-in.
+
+The tests also exposed a production authority mismatch: background synthesis
+uses the `followup` role at depth zero, while the definition authorizer rejected
+that role. It now accepts it only with current background policy, canonical
+parent/root snapshot and matching role/depth scope, retaining the surrounding
+actor/conversation/epoch checks. Python artifact publication now rejects a
+missing context through the intended authority error rather than an incidental
+attribute error. Legacy Python mocks were aligned with current runtime seams;
+no skips or xfails were introduced to hide failures.
+
+The existing migration journal independently reproduced three failures. The
+[history-preserving repair](../backend/persistence.md#historical-migration-repair-pr-01-2026-10-19)
+keeps deployed SQL and non-idempotent timestamps unchanged. Before the repair,
+journal checks were 1 passing / 3 failing; afterward they are 5 passing. Real
+PostgreSQL 17 fresh/repeat and two historical upgrade/repeat cases pass (3 tests),
+and production backend TypeScript passes.
+
+Earlier PR-01 local verification recorded 85 focused backend tests, 36 audited
+PostgreSQL tests with two existing live-model skips, and 738 Python tests passing
+with five existing skips, three xfails and one non-strict xpass. The subsequent
+iterator/artifact-publication rerun passes 63 tests. These are local scoped
+results, not a green release SHA: complete CI-equivalent jobs, GitHub run links
+and required-status protection evidence remain outstanding.
+The broad backend attempt exhausted its configured heap and was interrupted;
+it has no passing outcome. Rollout must retain the production guards and
+fail-closed settings; migration rollback constraints are in the persistence note.
+
+Current complete PostgreSQL selection: **84 suites / 785 tests passing**, five
+existing skips, including the new history regressions; report
+`.tmp/pr01-pg-integration-20261019.json`. Required scoped review found no
+critical/major findings. Current authority/settings/security selection passes
+174 tests, and the real authority HTTP suite separately passes 34. The initial
+combined invocation included a nonexistent HTTP spec path and failed with
+ENOENT; the corrected HTTP path was verified separately. Both CI proto mirror
+comparisons pass. The owned disposable PostgreSQL container was stopped afterward.
+
+The earlier frontend coverage failures have been repaired: seven failing files
+covered 200 missing Arabic keys across five dictionaries (with genuine Arabic
+translations), stale fixtures/expectations, and these diagnosed causes: a Router
+context/workspace partial-mock export, an unrelated MyJobsQuery child without
+its provider, intentional component identity, the HtmlView registry, and a
+generator advisory incorrectly expected to be an error. Existing translation
+parity remains 25 passing; the six stale-fixture/expectation files pass 12 tests,
+and frontend `tsc` passes. Production components were unchanged. Bounded Arabic
+browser-fixture QA passed at the classic-conversation Vite origin using the
+actual dictionaries and a separate i18next instance, including desktop/mobile
+RTL and interpolation. The real route returned `AUTH_REQUIRED`, so this is not
+authenticated product QA. Evidence: `qa-artifacts/pr01-ar-baseline/pr01-ar-baseline-20261019-eacbc3b2/`.
+The final full frontend coverage result remains **pending** at
+`.tmp/pr01-frontend-final-20261019.json`; do not treat scoped passes as a
+green full-coverage job.
+
+The full backend idle-recycled run used a 2GB heap and a 60-minute timeout; it
+ended in a 2GB heap OOM and replay-fixture timeout. The experimental
+`workerIdleMemoryLimit` package setting was removed because no verified fix was
+established and its compile cost was high. A focused replay test initially
+failed before gRPC due to a missing artifact fixture. Repairing that fixture
+with the existing sibling `issuePublicationAuthority` and public projection,
+and asserting actor/execution plus metadata token, made the focused replay and
+real artifact-authority suites pass: 2 suites / 20 tests under Node 20.20.2 with
+a 2GB heap. Reports are `.tmp/pr01-replay-authority-node20-20261019.{json,log}`.
+The same combined tests under local Node 25.5.0 passed replay then OOMed at 2GB;
+the local default differs from CI Node 20. This focused Node 20 result does not
+qualify full backend CI or prove a full-job memory fix. Previously established
+results remain: 84 PostgreSQL suites / 785 tests passing with five existing
+skips; migration journal 5 passing; history 3 passing; current authority/settings
+selection 174 passing plus the real authority HTTP suite 34 passing; both proto
+mirror comparisons pass. The initial scoped review passed before the latest
+test/Arabic delta, and the primary self-reviewed that delta. Full backend
+coverage, remote release SHA and required-status protection remain unqualified.
+Publishing this repair does not by itself qualify the release gate.

@@ -31,3 +31,32 @@ The conversation domain — conversations, messages (including the `components` 
 - **Message payloads are one jsonb column:** text parts, citations, artifacts, and tool components live in `conversation.messages.components` (jsonb). There is no per-component collection or table; when the payload shape changes, update the mapper (`persistence/postgres/postgres-message-record.mapper.ts`) and every consumer in the same change.
 - **Cross-store boundary:** workspace documents (the files citations and artifacts point at) remain in Mongo (`workspace_documents`) and blob storage. Resolution paths (e.g. `ConversationArtifactService`) read Postgres for the citation identity, then Mongo for the document — verify both sides when changing either, and remember the two stores can disagree on naming (citation `fileName` may be the storage `filename` while Mongo keeps a different `originalName`). Mongo `messages`/`conversations` collections are legacy: do not read them as current data and do not write new code to them.
 - **Testing:** unit specs mock the store tokens. For real-SQL integration tests, opt in via `src/modules/postgres/testing/pg-integration.ts` — `describeIntegration` skips unless `POSTGRES_HOST` is set, and `makeTestDb()` targets `POSTGRES_TEST_DB` so the real `agentstore` is never polluted. Use that helper instead of ad-hoc pools.
+
+### Historical migration repair (PR-01, 2026-10-19)
+
+Drizzle selects pending migrations using the latest ledger `created_at`, not the
+journal index or a per-file hash lookup. Do not renumber historical timestamps or
+edit already-applied SQL to make integrity tests pass: non-idempotent DDL could
+replay, and deployed ledger hashes would no longer describe the checked-in SQL.
+
+The former `0045_yellowmind_graph_walks` registration reused timestamp
+`1792200000000` after later entries. PR-01 re-registers only this guarded,
+idempotent update at the journal tail (`1792454400004`). Existing ledger rows are
+retained; databases already past the old registration can receive the missed
+rule, and its SQL guard prevents duplicate insertion. All other timestamps and
+all historical SQL files remain unchanged. Journal indexes are metadata-only and
+are made contiguous.
+
+Migration runners and the Drizzle CLI connection enforce `lock_timeout=5s` at
+startup. The pre-existing missing-header SQL files `0046`, `0050`, and `0051` are
+frozen by normalized Git blob identity in `drizzle-journal.spec.ts`; future
+migrations still require the SQL timeout declaration. The existing `0026`
+out-of-band exception remains separate.
+
+`drizzle-history.integration.spec.ts` requires loopback PostgreSQL and creates and
+drops a private database per case. It verifies fresh installation and repeat,
+plus upgrades from the old full journal and the `0050` watermark, preserving old
+ledger rows and applying the graph rule once. Run with explicit disposable
+connection settings; no shared application database is needed. Rollback must not
+delete ledger rows or restore the colliding registration on a migrated database;
+retain the corrected metadata when rolling back application code.

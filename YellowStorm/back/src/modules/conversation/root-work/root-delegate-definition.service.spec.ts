@@ -333,4 +333,39 @@ describe('lazy selected root delegate definition', () => {
     await expect(h.service.assertCurrentAuthorityRights(h.childId)).rejects.toThrow();
     expect(h.work.registerExecution).not.toHaveBeenCalled();
   });
+
+  async function followupRightsHarness() {
+    const h = harness();
+    Object.assign(h.pool, { policy: { background: { enabled: true }, fanout: { enabled: true, allowBackground: true } } });
+    const parent = await h.work.getExecution();
+    Object.assign(parent.resultPayload.nativeState.scope, { executionId: parentId, role: 'root', depth: 0 });
+    parent.status = 'completed'; // Followup synthesis outlives the foreground root turn.
+    const followupId = '4'.repeat(24);
+    const followup = { ...parent, id: followupId, role: 'followup', depth: 0, status: 'running', parentExecutionId: parentId,
+      resultPayload: { nativeState: { actorId: 'actor', scope: { executionId: followupId, role: 'followup', depth: 0,
+        parentExecutionId: parentId, immutableSnapshotRef: 'root-snapshot' }, rootContext: {} } } };
+    h.work.getExecution.mockImplementation(async (id: string) => id === parentId ? parent : id === followupId ? followup : null);
+    return { ...h, followup, followupId };
+  }
+
+  it('authorizes a live followup synthesis against its unchanged completed root snapshot', async () => {
+    const h = await followupRightsHarness();
+    await expect(h.service.assertCurrentAuthorityRights(h.followupId)).resolves.toBeUndefined();
+    expect(h.resolver.resolveForActor).toHaveBeenCalledWith(parentId, 'actor', 'conversation', null);
+    expect(h.agents.buildGrpcAgentsForPlaybook).not.toHaveBeenCalled();
+  });
+
+  it.each(['snapshot divergence', 'background disabled', 'wrong parent', 'actor mismatch', 'root revision', 'wrong depth', 'wrong scope role'])
+    ('rejects followup synthesis when %s changes', async scenario => {
+    const h = await followupRightsHarness();
+    if (scenario === 'snapshot divergence') h.followup.resultPayload.nativeState.scope.immutableSnapshotRef = 'foreign-snapshot';
+    if (scenario === 'background disabled') Object.assign(h.pool, { policy: { background: { enabled: false } } });
+    if (scenario === 'wrong parent') h.followup.resultPayload.nativeState.scope.parentExecutionId = 'f'.repeat(24);
+    if (scenario === 'actor mismatch') h.followup.resultPayload.nativeState.actorId = 'foreign';
+    if (scenario === 'root revision') h.pool.rootSnapshotDigest = 'new-root';
+    if (scenario === 'wrong depth') h.followup.depth = 1;
+    if (scenario === 'wrong scope role') h.followup.resultPayload.nativeState.scope.role = 'library_worker';
+    await expect(h.service.assertCurrentAuthorityRights(h.followupId)).rejects.toThrow();
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+  });
 });
