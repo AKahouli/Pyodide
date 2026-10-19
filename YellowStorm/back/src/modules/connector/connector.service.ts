@@ -1,5 +1,5 @@
 import { DEFAULT_WORKER_POLICY, isPlatformOrchestration } from './utils/connector-worker-policy';
-import { assertMcpSecurityManager, assertNoReservedMcpOverrides, hasConfiguredMcpCredential, hasSeparateProviderCredential, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
+import { assertMcpSecurityManager, assertNoReservedMcpOverrides, hasConfiguredMcpCredential, hasSeparateProviderCredential, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy, storedMcpSecurityPolicy } from './utils/mcp-security-policy';
 import type { McpSecurityPolicy } from './connector.types';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -247,7 +247,7 @@ export class ConnectorService {
           result_mapping_json: JSON.stringify(action.resultMapping || {}),
         }));
       if (actions.length === 0) continue;
-      const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
+      const policy = storedMcpSecurityPolicy(connector.mcpSecurityPolicy);
       await this.assertRuntimeDestination(connector);
       if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
 
@@ -386,7 +386,7 @@ export class ConnectorService {
       }
     }
 
-    const oldPolicy = normalizeMcpSecurityPolicy(existing.mcpSecurityPolicy);
+    const oldPolicy = storedMcpSecurityPolicy(existing.mcpSecurityPolicy);
     const policy = dto.mcpSecurityPolicy === undefined ? oldPolicy : normalizeMcpSecurityPolicy(dto.mcpSecurityPolicy);
     const updateData: Record<string, unknown> = { ...dto };
     delete updateData.expectedSecurityRevision;
@@ -479,7 +479,7 @@ export class ConnectorService {
     }
     if (plan.expectedSecurityRevision !== (row.securityRevision ?? 1))
       throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before migrating');
-    const policy = normalizeMcpSecurityPolicy(row.mcpSecurityPolicy);
+    const policy = storedMcpSecurityPolicy(row.mcpSecurityPolicy);
     if (policy.profile === 'public' || row.authSourceType === 'connected_app' || row.connectedAppKey
       || (row.authSourceType === 'credential' && row.authType !== 'none')
       || Object.keys(row.runtimeAuthConfig || {}).length || Object.keys((row.mcpServerConfig?.headers || {}) as object).length)
@@ -735,7 +735,7 @@ export class ConnectorService {
       // MCP is designed to refuse. A declared credential that cannot resolve
       // fails closed instead of probing with the assertion alone.
       if (currentConnector && userId && currentConnector.authSourceType && currentConnector.authSourceType !== 'none'
-        && normalizeMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'internal_jwt') {
+        && storedMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'internal_jwt') {
         const providerAuth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
           authSourceType: currentConnector.authSourceType,
           connectedAppKey: currentConnector.connectedAppKey || '',
@@ -759,7 +759,7 @@ export class ConnectorService {
       }
 
       let requestInit = this.buildMcpRequestInit(finalServerConfig);
-      if (currentConnector && normalizeMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'configured'
+      if (currentConnector && storedMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'configured'
         && !hasConfiguredMcpCredential(currentConnector, resolvedAuthHeaders ?? this.buildMcpHeaders(finalServerConfig))) {
         throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
       }
@@ -878,7 +878,7 @@ export class ConnectorService {
       .map((value) => Number.parseInt(value.trim(), 10))
       .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
     const nodeEnv = config?.get<string>('NODE_ENV', 'development');
-    const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
+    const policy = storedMcpSecurityPolicy(connector?.mcpSecurityPolicy);
     const allowInsecureHttp = ((config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false)
       || policy.allowInsecureHttp) && nodeEnv !== 'production';
     return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, requireTls: nodeEnv === 'production',
@@ -1154,7 +1154,7 @@ export class ConnectorService {
       connectedAppKey: doc.connectedAppKey ?? '',
       credentialConfigured,
       mcpTransportType: doc.mcpTransportType,
-      mcpSecurityPolicy: normalizeMcpSecurityPolicy(doc.mcpSecurityPolicy),
+      mcpSecurityPolicy: storedMcpSecurityPolicy(doc.mcpSecurityPolicy),
       securityRevision: doc.securityRevision ?? 1,
       mcpServerUrl: sanitizeEndpointUrl(doc.mcpServerUrl),
       inspectionStatus: isRemoteInspectableMcpTransport(doc.mcpTransportType)
