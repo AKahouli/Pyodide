@@ -99,7 +99,7 @@ class SecurityBoundaryTests(unittest.TestCase):
                 with self.subTest(value=value), self.assertRaises(server.AuthorizationScopeError):
                     server._require_search_scope(value)
 
-    def test_mcp_header_remains_required_and_cannot_expand_tool_scope(self):
+    def test_mcp_data_access_requires_header_and_cannot_expand_tool_scope(self):
         async def endpoint(request):
             server._require_search_scope(request.query_params.get("workspace"))
             return JSONResponse({"allowed": server._get_effective_workspace_ids()})
@@ -107,13 +107,63 @@ class SecurityBoundaryTests(unittest.TestCase):
             Middleware(APIKeyAuthMiddleware, api_key=self.settings.MCP_API_KEY),
             Middleware(router.MCPWorkspaceIdMiddleware)])
         client = TestClient(app)
-        self.assertEqual(client.get("/http?workspace=a", headers=self.auth_headers).status_code, 403)
+        with self.assertRaises(server.AuthorizationScopeError):
+            client.get("/http?workspace=a", headers=self.auth_headers)
         self.assertEqual(client.get("/http?workspace=a", headers={**self.headers, "Workspace-Id": "a"}).json(), {"allowed": ["a"]})
         with self.assertRaises(server.AuthorizationScopeError):
             client.get("/http?workspace=b", headers={**self.headers, "Workspace-Id": "a"})
         # Context from an authenticated request cannot survive its completion.
         with self.assertRaises(server.AuthorizationScopeError):
             server._get_effective_workspace_ids()
+
+    def test_mcp_initialization_without_workspace_keeps_document_reads_scoped(self):
+        app = server.mcp.http_app(path="/http", json_response=True)
+        app.add_middleware(router.MCPWorkspaceIdMiddleware)
+        app.add_middleware(APIKeyAuthMiddleware, api_key=self.settings.MCP_API_KEY)
+        headers = {**self.auth_headers, "Accept": "application/json, text/event-stream"}
+        with TestClient(app) as client, patch.object(server, "_run_reader_db", AsyncMock()) as read:
+            initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-03-26", "capabilities": {},
+                "clientInfo": {"name": "workspace-regression", "version": "1"}}}
+            self.assertEqual(client.post("/http", json=initialize).status_code, 401)
+            response = client.post("/http", headers=headers, json=initialize)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("serverInfo", response.json()["result"])
+            headers["Mcp-Session-Id"] = response.headers["mcp-session-id"]
+            headers["MCP-Protocol-Version"] = response.json()["result"]["protocolVersion"]
+            response = client.post("/http", headers=headers, json={
+                "jsonrpc": "2.0", "method": "notifications/initialized"})
+            self.assertEqual(response.status_code, 202)
+            response = client.post("/http", headers=headers, json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            self.assertIn("search", {tool["name"] for tool in response.json()["result"]["tools"]})
+            for method, params in (
+                ("tools/call", {"name": "read_content", "arguments": {
+                    "workspace_id": "dynamic-workspace", "document_id": "doc"}}),
+                ("resources/read", {"uri": "logical://documents"}),
+            ):
+                with self.subTest(method=method):
+                    response = client.post("/http", headers=headers, json={
+                        "jsonrpc": "2.0", "id": 3, "method": method, "params": params})
+                    payload = response.json()
+                    self.assertTrue("error" in payload or payload.get("result", {}).get("isError"), payload)
+            read.assert_not_awaited()
+            read.side_effect = lambda operation, *args, **kwargs: operation(None)
+            for workspace in ("dynamic-first", "dynamic-second"):
+                expected = {"document_id": "doc", "workspace_id": workspace, "content": []}
+                with patch.object(server, "read_full_document_content", return_value=expected):
+                    response = client.post("/http", headers={**headers, "Workspace-Id": workspace}, json={
+                        "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                            "name": "read_content", "arguments": {
+                                "workspace_id": workspace, "document_id": "doc"}}})
+                self.assertEqual(json.loads(response.json()["result"]["content"][0]["text"]), expected)
+            self.assertEqual(read.await_count, 2)
+            response = client.post("/http", headers=headers, json={
+                "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+                    "name": "read_content", "arguments": {
+                        "workspace_id": "dynamic-second", "document_id": "doc"}}})
+            self.assertTrue(response.json()["result"]["isError"])
+            self.assertEqual(read.await_count, 2)
 
     def test_docs_and_remote_health_require_authentication(self):
         with patch.object(router, "get_engine") as engine:

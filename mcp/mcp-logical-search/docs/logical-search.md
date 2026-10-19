@@ -363,20 +363,22 @@ Every HTTP request requires this header:
 Authorization: Bearer <MCP_API_KEY>
 ```
 
-MCP transport requests also require one or more workspace IDs:
+MCP initialization and schema discovery do not require workspace IDs. Each
+document tool call or resource read requires the current workspace scope:
 
 ```http
 Workspace-Id: finance
 ```
 
 The `workspace_id` passed to an MCP tool must be contained in the `Workspace-Id`
-header. Multiple header values and comma-separated workspace IDs are supported.
+header. Initialization does not bind the session to a workspace; trusted callers
+can supply different workspace headers on later requests. Multiple header values
+and comma-separated workspace IDs are supported.
 Anyone holding `MCP_API_KEY` may select the workspace scope, so the key must only
 be shared with trusted callers.
 
-Standalone REST endpoints do not require `Workspace-Id`; they use workspace
-values from their request body when the endpoint accepts them. Their required
-headers are `Authorization` and, for JSON requests, `Content-Type`.
+Data-bearing REST endpoints also require `Workspace-Id` and validate body scope
+against it. JSON requests additionally require `Content-Type: application/json`.
 
 `logical_documents.user_id` exists in the schema, but retrieval authorization
 uses the authenticated caller's `Workspace-Id` header rather than that column.
