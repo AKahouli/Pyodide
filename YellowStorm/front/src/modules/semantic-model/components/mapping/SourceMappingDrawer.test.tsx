@@ -243,6 +243,11 @@ describe('Sheet mapping with the document field mapping', () => {
     renderDrawer();
     await openAll();
     await screen.findByText('Référence', { selector: 'span.truncate' });
+    // Let the initial rules-only read settle before testing that choosing AI
+    // does not trigger another automatic read. The 500ms debounce may finish
+    // before this click on a loaded CI runner.
+    await waitFor(() => expect(api.previewSheetFields).toHaveBeenCalled(), { timeout: 2000 });
+    api.previewSheetFields.mockClear();
     fireEvent.click(within(screen.getByRole('group', { name: 'mapping.readAll.label' })).getByRole('button', { name: /mapping\.strategy\.rules_then_ai/ }));
     expect(within(fieldRow('ID')).getByRole('combobox', { name: 'mapping.strategyFor' })).toHaveTextContent('mapping.strategy.rules_then_ai');
     // What a run costs in AI is in sight beside Save.

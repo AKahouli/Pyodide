@@ -43,7 +43,9 @@ describeIntegration('migration history repair on disposable loopback databases',
 
   afterEach(async () => {
     if (pool) await pool.end();
-    if (database) await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
+    // pool.end() can precede the server observing its socket closure. Let DROP
+    // wait for graceful disconnect rather than sending a late FATAL to the pool.
+    if (database) await admin.query(`DROP DATABASE IF EXISTS "${database}"`);
     if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
   }, 60_000);
 

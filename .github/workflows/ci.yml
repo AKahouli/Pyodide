@@ -182,14 +182,15 @@ jobs:
         # TypeScript compilation at test time; the build step is only for deployment.
       - name: Run backend tests with coverage
         env:
-          # 2048MB per process. GitHub runner has 7GB RAM.
-          # Main process + 2 workers = 3 × 2048 = 6144MB < 7168MB available.
-          NODE_OPTIONS: --max-old-space-size=2048
+          # One worker can approach the old 2GB per-process limit on the 7GB
+          # runner. Run serially with enough heap instead of two workers that
+          # can both exhaust their limits before coverage is written.
+          NODE_OPTIONS: --max-old-space-size=4096
         # Single pass: runs all specs except the one whose dangling gRPC timer
         # crashes the Node process before Jest can flush lcov.info to disk.
         # --forceExit ensures the process terminates after tests complete.
         run: |
-          npm test -- --ci --forceExit --bail=0 --maxWorkers=2 \
+          npm test -- --ci --forceExit --bail=0 --maxWorkers=1 \
             --coverage --coverageProvider=v8
       - name: Upload backend coverage
         if: always()

@@ -686,7 +686,7 @@ describe('MessageActions', () => {
     }], hasMore: false });
     render(<MessageActions message={answer as never} isLastAiMessage={false} conversationId="conv-1" />);
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportAgentDocx' }));
-    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1), { timeout: 10000 });
     expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', { mode: 'cursor', limit: 100, cursor: 'older' });
     const request = JSON.parse(sendMessageMock.mock.calls[0][1].content);
     const markdown = JSON.stringify(JSON.parse(request.manifest).parts);

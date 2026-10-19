@@ -171,9 +171,9 @@ browser-fixture QA passed at the classic-conversation Vite origin using the
 actual dictionaries and a separate i18next instance, including desktop/mobile
 RTL and interpolation. The real route returned `AUTH_REQUIRED`, so this is not
 authenticated product QA. Evidence: `qa-artifacts/pr01-ar-baseline/pr01-ar-baseline-20261019-eacbc3b2/`.
-The final full frontend coverage result remains **pending** at
-`.tmp/pr01-frontend-final-20261019.json`; do not treat scoped passes as a
-green full-coverage job.
+The final full frontend coverage run passes: **671 files passing / two skipped;
+4490 tests passing / 25 skipped / zero failed**, exit 0, 1532.62 seconds.
+`.tmp/pr01-frontend-final-20261019.json` confirms `success: true`.
 
 The full backend idle-recycled run used a 2GB heap and a 60-minute timeout; it
 ended in a 2GB heap OOM and replay-fixture timeout. The experimental
@@ -194,3 +194,31 @@ mirror comparisons pass. The initial scoped review passed before the latest
 test/Arabic delta, and the primary self-reviewed that delta. Full backend
 coverage, remote release SHA and required-status protection remain unqualified.
 Publishing this repair does not by itself qualify the release gate.
+
+PR-01 was published as `abfd3e147e3577c27d475d5d8104ba9a8b4719fa`;
+[CI run 39225167944](https://github.com/YellowsysOrg/YellowStorm-poc/actions/runs/39225167944)
+passed Python, classic conversation security, proto drift, code-runtime and the
+semantic guard. Its PostgreSQL job reported 82 suites passing / two failing:
+the clean runner lacked optional Ollama strings that the legacy LLM factory
+copies into `os.environ`, and forced database cleanup raced graceful pool socket
+closure. Follow-up test-only fixes pin Ollama placeholders and use ordinary
+`DROP DATABASE` after `pool.end()` rather than forced termination. Production
+provider settings and historical SQL remain unchanged. Focused Node 20 / PG17
+verification passes both affected suites (four tests, one existing live-model
+skip), plus seven settings/journal checks. Report:
+`.tmp/pr01-ci-pg-corrections-4gb-20261019.{json,log}`. A 2GB local invocation
+exhausted its heap; the passing PG verification used 4GB, as earlier local PG
+verification did. The same run showed a backend worker exceeding the 2GB ceiling
+and three frontend files assuming one-second provider/export waits. CI now runs
+backend tests serially with a 4GB heap, and those waits are bounded at 5-10
+seconds; the sheet-mapping test lets its initial debounced read settle before
+asserting that AI did not auto-read. Focused reruns pass 50 frontend tests plus
+both PG and settings/journal suites. These are verification-only changes, but
+full jobs at the follow-up SHA still need CI qualification.
+
+The user explicitly chose **Keep current policy** after inspection showed main
+has a ticket-number-only required-status ruleset and the work branch is
+unprotected. No remote protection/ruleset writes are authorized. The plan's six
+required CI checks therefore remain **unenforced/incomplete by explicit user
+decision**; passing job results must be checked manually and do not establish an
+automatically enforced merge gate.

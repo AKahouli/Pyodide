@@ -36,6 +36,9 @@ export function qualificationSettingsEnv(databaseUrl: string, apiUrl: string, re
     API_URL: apiUrl,
     LITELLM_API_BASE_URL: 'http://127.0.0.1:9',
     LITELLM_API_SECRET_KEY: 'qualification-fixture',
+    // Legacy LLMFactory copies these optional settings into os.environ on import.
+    OLLAMA_API_BASE_URL: 'http://127.0.0.1:9',
+    OLLAMA_API_KEY: 'qualification-fixture',
     REDIS_HOST: '127.0.0.1',
     REDIS_PORT: '6379',
     ADK_API_KEY: 'qualification-fixture',
