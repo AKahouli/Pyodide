@@ -19,6 +19,8 @@ import {
 } from 'rxjs';
 import { StreamEvent, StreamResyncRequiredEvent } from '../interfaces/stream.interface';
 import { LoggerService } from '../../logger';
+import { logDomainEvent } from '../../logger/logger.service';
+import { SseMeasurements } from '../utils/sse-measurements';
 
 /** Everything that travels through a connection's subject, cursor attached. */
 interface OutboundEvent {
@@ -66,7 +68,11 @@ export class StreamGatewayService implements OnModuleDestroy {
   private readonly replayBuffers = new Map<string, UserReplayBuffer>();
   private replaySweepTimer: ReturnType<typeof setInterval> | null = null;
 
-  private pending: { userId: string; conversationId: string | null; event: StreamEvent; bytes: number }[] = [];
+  private pending: { userId: string; conversationId: string | null; event: StreamEvent; bytes: number; queuedAt: number }[] = [];
+  private readonly measurements = new SseMeasurements();
+  private measurementTimer: ReturnType<typeof setInterval> | null = null;
+  private connectionMilliseconds = 0;
+  private measurementAt = performance.now();
   private pendingBytes = 0;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
@@ -78,6 +84,8 @@ export class StreamGatewayService implements OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     if (!this.db) throw new Error('Conversation SSE requires PostgreSQL');
     await this.db.execute(sql`SELECT 1 FROM conversation.sse_events LIMIT 0`);
+    this.measurementTimer = setInterval(() => this.reportMeasurements(), 30000);
+    this.measurementTimer.unref();
   }
 
   constructor(
@@ -114,6 +122,8 @@ export class StreamGatewayService implements OnModuleDestroy {
   }
 
   onModuleDestroy() {
+    if (this.measurementTimer) clearInterval(this.measurementTimer);
+    this.integrateConnections();
     this.destroyed = true;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     // Close all connections on shutdown
@@ -141,6 +151,7 @@ export class StreamGatewayService implements OnModuleDestroy {
 
     const userConns = this.userConnections.get(userId);
     if (userConns && userConns.size >= maxConnections) {
+      this.measurements.increment('rejected');
       this.logger.warn('SSE connection limit reached', { userId, max: maxConnections });
       return null;
     }
@@ -156,7 +167,10 @@ export class StreamGatewayService implements OnModuleDestroy {
       lastActivity: new Date(),
     };
 
+    this.integrateConnections();
     this.connections.set(connectionId, connection);
+    this.measurements.increment('accepted');
+    if (lastSeenCursor) this.measurements.increment('resumed');
 
     if (!this.userConnections.has(userId)) {
       this.userConnections.set(userId, new Set());
@@ -199,6 +213,7 @@ export class StreamGatewayService implements OnModuleDestroy {
   removeConnection(userId: string, connectionId: string): void {
     const connection = this.connections.get(connectionId);
     if (connection) {
+      this.integrateConnections();
       connection.subject.complete();
       connection.disconnect$.next();
       connection.disconnect$.complete();
@@ -264,6 +279,38 @@ export class StreamGatewayService implements OnModuleDestroy {
     return this.userConnections.get(userId)?.size ?? 0;
   }
 
+  /** Cumulative process-local data. Histogram buckets are disjoint, last is +Inf. */
+  getMeasurementSnapshot() {
+    this.integrateConnections();
+    return { ...this.measurements.snapshot(), connections: this.connections.size,
+      connectionMilliseconds: this.connectionMilliseconds, pendingEvents: this.pending.length,
+      pendingBytes: this.pendingBytes };
+  }
+
+  private integrateConnections(): void {
+    const now = performance.now();
+    this.connectionMilliseconds += (now - this.measurementAt) * this.connections.size;
+    this.measurementAt = now;
+  }
+
+  private reportMeasurements(): void {
+    const snapshot = this.getMeasurementSnapshot();
+    const cpu = process.cpuUsage();
+    for (const histogram of snapshot.histograms) {
+      logDomainEvent('info', 'conversation.sse.measurement', { operation: histogram.operation,
+        count: histogram.count, duration_ms: histogram.sum, detail: JSON.stringify(histogram.buckets) });
+    }
+    for (const [operation, count] of Object.entries(snapshot.counters)) {
+      logDomainEvent('info', 'conversation.sse.measurement', { operation, count });
+    }
+    for (const [operation, count] of Object.entries({ connections: snapshot.connections,
+      connection_ms: snapshot.connectionMilliseconds, pending_events: snapshot.pendingEvents,
+      pending_bytes: snapshot.pendingBytes, backend_rss_bytes: process.memoryUsage.rss(),
+      backend_cpu_user_ms: cpu.user / 1000, backend_cpu_system_ms: cpu.system / 1000 })) {
+      logDomainEvent('info', 'conversation.sse.measurement', { operation, count });
+    }
+  }
+
   /** No database round trip on the per-token producer path. */
   private enqueue(userId: string, event: StreamEvent): void {
     if (this.destroyed) return;
@@ -271,9 +318,11 @@ export class StreamGatewayService implements OnModuleDestroy {
       ? event.data.conversationId : null;
     const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
     if (bytes > 1024 * 1024 || this.pending.length >= this.maxPendingEvents || this.pendingBytes + bytes > this.maxPendingBytes) {
+      this.measurements.increment('overflow');
       // Replacing this recipient's queued deltas with a small durable marker
       // makes overload explicit on every replica, including later reconnects.
       const kept = this.pending.filter(entry => entry.userId !== userId);
+      this.measurements.increment('dropped', this.pending.length - kept.length + 1);
       this.pending = kept;
       this.pendingBytes = kept.reduce((total, entry) => total + entry.bytes, 0);
       const resync = this.buildResyncEvent('cursor_gap', '', undefined);
@@ -281,14 +330,16 @@ export class StreamGatewayService implements OnModuleDestroy {
         // Bound recipient cardinality as well. Disconnecting forces the next
         // connection to reconcile canonical state before the retained window.
         this.closeForResync();
+        this.measurements.increment('dropped', this.pending.length);
+        this.measurements.increment('global_marker');
         this.pending = [];
         this.pendingBytes = 0;
         userId = this.globalResyncRecipient;
       }
-      this.pending.push({ userId, conversationId: null, event: resync, bytes: 128 });
+      this.pending.push({ userId, conversationId: null, event: resync, bytes: 128, queuedAt: performance.now() });
       this.pendingBytes += 128;
     } else {
-      this.pending.push({ userId, conversationId, event, bytes });
+      this.pending.push({ userId, conversationId, event, bytes, queuedAt: performance.now() });
       this.pendingBytes += bytes;
     }
     this.scheduleFlush();
@@ -307,16 +358,20 @@ export class StreamGatewayService implements OnModuleDestroy {
     if (!this.db || this.flushing || !this.pending.length || this.destroyed) return;
     this.flushing = true;
     let failed = false;
+    const flushStarted = performance.now();
     const batch = this.pending.splice(0, 100);
     this.pendingBytes -= batch.reduce((sum, entry) => sum + entry.bytes, 0);
     try {
       await this.db.transaction(async tx => {
         // Identity allocation after a transaction lock ensures visibility in
         // committed sequence order. Never allocate cursors before this lock.
+        const lockStarted = performance.now();
         await tx.execute(sql`SELECT pg_advisory_xact_lock(73125, 1)`);
+        this.measurements.observe('lock', performance.now() - lockStarted);
         const values = batch.map(entry => sql`(${entry.userId}, ${entry.conversationId}, ${JSON.stringify(entry.event)}::jsonb)`);
         await tx.execute(sql`INSERT INTO conversation.sse_events (user_id, conversation_id, event) VALUES ${sql.join(values, sql`, `)}`);
         const users = [...new Set(batch.map(entry => entry.userId))];
+        const cleanupStarted = performance.now();
         await tx.execute(sql`DELETE FROM conversation.sse_events WHERE id IN (
           SELECT id FROM (SELECT id, row_number() OVER (PARTITION BY user_id ORDER BY id DESC) AS rank
             FROM conversation.sse_events WHERE event->>'type' = 'stream_resync_required'
@@ -330,8 +385,12 @@ export class StreamGatewayService implements OnModuleDestroy {
         await tx.execute(sql`DELETE FROM conversation.sse_events WHERE id IN (
           SELECT id FROM conversation.sse_events WHERE created_at < now() - ${this.replayTtlMs} * interval '1 millisecond' LIMIT 2000
         )`);
+        this.measurements.observe('cleanup', performance.now() - cleanupStarted);
       });
+      const committedAt = performance.now();
+      for (const entry of batch) this.measurements.observe('queue_commit', committedAt - entry.queuedAt);
     } catch {
+      this.measurements.increment('flush_error');
       failed = true;
       // Keep bounded, durable recovery markers instead of claiming live
       // success after a failed write. No content or driver diagnostics logged.
@@ -341,6 +400,7 @@ export class StreamGatewayService implements OnModuleDestroy {
       this.logger.warn('Conversation SSE persistence unavailable');
       this.closeForResync();
     } finally {
+      this.measurements.observe('flush', performance.now() - flushStarted);
       this.flushing = false;
       if (this.pending.length) this.scheduleFlush(failed ? 1000 : 25);
     }
@@ -362,6 +422,7 @@ export class StreamGatewayService implements OnModuleDestroy {
       let lastId: string | null = /^pg:1:[0-9]{1,15}$/.test(cursor ?? '') ? cursor!.split(':')[2] : null;
       let lastReconciledAt = Date.now();
       const resync = () => {
+        this.measurements.increment('resync');
         lastReconciledAt = Date.now();
         subscriber.next(this.toMessageEvent({ event: this.buildResyncEvent('cursor_gap', cursor ?? '', undefined) }));
       };
@@ -370,6 +431,7 @@ export class StreamGatewayService implements OnModuleDestroy {
       // before an asynchronous batch commits, so absence cannot prove continuity.
       if (!lastId) resync();
       const poll = async () => {
+        const pollStarted = performance.now();
         try {
           // An asynchronous producer can die before committing its final
           // batch while this remote pipe remains healthy. Bound that blind
@@ -397,15 +459,20 @@ export class StreamGatewayService implements OnModuleDestroy {
           for (const row of result.rows) {
             if (row.id == null) continue;
             lastId = String(row.id);
-            if (row.allowed) subscriber.next(this.toMessageEvent({ event: row.event as StreamEvent, cursorId: `pg:1:${lastId}` }));
+            if (row.allowed) {
+              this.measurements.increment('delivered');
+              subscriber.next(this.toMessageEvent({ event: row.event as StreamEvent, cursorId: `pg:1:${lastId}` }));
+            } else this.measurements.increment('withheld');
           }
         } catch {
+          this.measurements.increment('poll_error');
           if (!stopped) {
             resync();
             subscriber.complete();
             this.removeConnection(connection.userId, connection.connectionId);
           }
         } finally {
+          this.measurements.observe('poll', performance.now() - pollStarted);
           if (!stopped && !subscriber.closed) {
             timer = setTimeout(() => void poll(), 200);
             timer.unref();

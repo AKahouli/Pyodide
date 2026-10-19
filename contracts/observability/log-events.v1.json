@@ -23,6 +23,7 @@
     "rpc.call.failed":            { "message": "gRPC call failed", "attributes": ["method", "status", "duration_ms", "direction"] },
 
     "conversation.admission.store_error": { "message": "Conversation admission dependency failed", "attributes": ["operation", "outcome"] },
+    "conversation.sse.measurement": { "message": "Classic SSE cumulative process measurement", "attributes": ["operation", "count", "duration_ms", "detail"] },
     "conversation.admission.reclaimed": { "message": "Expired conversation admissions reclaimed", "attributes": ["operation", "outcome", "count"] },
     "conversation.execution.completed": { "message": "Conversation execution completed", "attributes": ["duration_ms", "outcome"] },
     "conversation.preparation.completed": { "message": "Conversation preparation stage completed", "attributes": ["operation", "duration_ms", "outcome"] },
