@@ -46,6 +46,8 @@ let resyncHoldActive = false;
 let resyncHoldConversationId: string | null = null;
 let resyncHeldChunks: BufferedStreamChunk[] = [];
 let forcedResyncInFlight = false;
+/** The gateway's periodic reconcile markers are routine: warn only once. */
+let hasWarnedStreamResync = false;
 let missingStartRecoveryInFlight = false;
 /**
  * Backlog caps: the snapshot repair supersedes anything beyond these bounds,
@@ -2299,9 +2301,20 @@ export const useConversationStore = create<ConversationState>()(
        * tracked run it falls back to the canonical message reload.
        */
       onStreamResyncRequired: (event) => {
-        console.warn('[ConversationStore] stream resync required', {
-          reason: event.reason,
-        });
+        // Expected, bounded control frame: the gateway sends one on every fresh
+        // connection and a periodic reconcile marker (every 30s in distributed
+        // mode) so clients re-install authoritative snapshots. Warn once per
+        // session for visibility; the routine repeats stay at debug level.
+        if (!hasWarnedStreamResync) {
+          hasWarnedStreamResync = true;
+          console.warn('[ConversationStore] stream resync required', {
+            reason: event.reason,
+          });
+        } else {
+          console.debug('[ConversationStore] stream resync required', {
+            reason: event.reason,
+          });
+        }
         const state = get();
         const conversationId = state.currentConversationId;
         if (!conversationId) return;
