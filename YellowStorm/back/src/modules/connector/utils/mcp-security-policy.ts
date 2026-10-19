@@ -15,7 +15,8 @@ export function normalizeMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
   if (value === undefined) return { ...DEFAULT_MCP_SECURITY_POLICY, requiredPermissions: [] };
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const policy = value as Record<string, unknown>;
-  if (Object.keys(policy).some(key => !['version', 'profile', 'audience', 'actorDelegation', 'allowPrivateNetwork', 'allowInsecureHttp', 'requiredPermissions'].includes(key))) invalid();
+  if (Object.keys(policy).some(key => !['version', 'profile', 'audience', 'actorDelegation', 'allowPrivateNetwork', 'allowInsecureHttp', 'requiredPermissions', 'workspaceAuthorization'].includes(key))) invalid();
+  if (policy.workspaceAuthorization !== undefined && typeof policy.workspaceAuthorization !== 'boolean') invalid();
   if (policy.version !== 1 || typeof policy.profile !== 'string' || !['configured', 'internal_jwt', 'public'].includes(policy.profile)
     || typeof policy.actorDelegation !== 'string' || !['none', 'verified_user'].includes(policy.actorDelegation)
     || typeof policy.allowPrivateNetwork !== 'boolean'
@@ -24,7 +25,8 @@ export function normalizeMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
     || policy.requiredPermissions.length > 100
     || policy.requiredPermissions.some(p => typeof p !== 'string' || !(Object.values(Permissions) as string[]).includes(p))) invalid();
   const audience = typeof policy.audience === 'string' ? policy.audience.trim() : '';
-  if (policy.profile === 'internal_jwt') {
+  if (policy.workspaceAuthorization === true && (policy.profile === 'public' || policy.actorDelegation !== 'verified_user')) invalid();
+  if (policy.profile === 'internal_jwt' || policy.workspaceAuthorization === true) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(audience)) invalid();
   } else if (policy.audience !== undefined || policy.actorDelegation !== 'none') invalid();
   if (policy.profile === 'public' && (policy.allowPrivateNetwork || policy.allowInsecureHttp)) invalid();
@@ -34,6 +36,7 @@ export function normalizeMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
     allowPrivateNetwork: policy.allowPrivateNetwork as boolean,
     allowInsecureHttp: policy.allowInsecureHttp === true,
     requiredPermissions: [...new Set(policy.requiredPermissions as string[])].sort(),
+    ...(policy.workspaceAuthorization !== undefined ? { workspaceAuthorization: policy.workspaceAuthorization as boolean } : {}),
   };
 }
 

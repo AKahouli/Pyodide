@@ -827,6 +827,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
         },
         auth_headers={
             "authorization": "Bearer token",
+            "x-yellowstorm-mcp-assertion": "trusted-scope-proof",
             "X-mistral": "secret",
             "X-User-Id": "user-1",
         },
@@ -840,6 +841,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
         "headers": {
             "aUtHoRiZaTiOn": "Bearer gateway-token",
             "X-Unsafe-Static": "must-not-pass",
+            "X-YellowStorm-Mcp-Assertion": "editable-must-not-pass",
             "Workspace-Id": "must-not-override-scope",
         },
     }
@@ -858,6 +860,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
     assert captured["auth_headers"] == {
         "Authorization": "Bearer token",
         "Workspace-Id": "workspace-alice,workspace-bob",
+        "X-YellowStorm-Mcp-Assertion": "trusted-scope-proof",
     }
     from src.mcp import _build_headers
 
@@ -866,6 +869,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
     ) == {
         "Authorization": "Bearer gateway-token",
         "Workspace-Id": "workspace-alice,workspace-bob",
+        "X-YellowStorm-Mcp-Assertion": "trusted-scope-proof",
     }
     assert captured["params"]["workspace_id"] == ["workspace-alice", "workspace-bob"]
 

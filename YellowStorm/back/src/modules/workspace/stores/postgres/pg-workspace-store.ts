@@ -88,6 +88,16 @@ export class PgWorkspaceStore {
     return rows.map((r) => r.id);
   }
 
+  /** Bounded read entitlement snapshot; same owner/share/public rule as assertUserHasAccess. */
+  async findReadableIds(userId: string, limit: number): Promise<string[]> {
+    const shared = this.q.select({ id: schema.workspaceShares.workspaceId }).from(schema.workspaceShares)
+      .where(eq(schema.workspaceShares.sharedWithUserId, userId));
+    const rows = await this.q.select({ id: WORKSPACES.id }).from(WORKSPACES)
+      .where(or(eq(WORKSPACES.createdBy, userId), eq(WORKSPACES.isPublic, true), inArray(WORKSPACES.id, shared)))
+      .orderBy(asc(WORKSPACES.id)).limit(limit);
+    return rows.map(row => row.id);
+  }
+
   async filterPublic(ids: string[]): Promise<string[]> {
     if (ids.length === 0) return [];
     const rows = await this.q

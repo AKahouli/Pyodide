@@ -12,6 +12,7 @@ describe('McpJwtService current-policy boundary', () => {
   const users = { findById: jest.fn() };
   const store = { findById: jest.fn() };
   const authorization = { getUserRoles: jest.fn(), getUserPermissions: jest.fn() };
+  const workspaces = { readableWorkspaceScope: jest.fn(), assertUserHasAccess: jest.fn() };
   let row: Record<string, unknown>;
   let service: McpJwtService;
   let values: Record<string, unknown>;
@@ -25,10 +26,12 @@ describe('McpJwtService current-policy boundary', () => {
     store.findById.mockImplementation(async id => id === row.id ? row : null);
     authorization.getUserRoles.mockResolvedValue([]);
     authorization.getUserPermissions.mockResolvedValue([]);
+    workspaces.readableWorkspaceScope.mockResolvedValue(['a'.repeat(24), 'b'.repeat(24)]);
+    workspaces.assertUserHasAccess.mockResolvedValue(undefined);
     (readFileSync as jest.Mock).mockReturnValue(privateKey.export({ type: 'pkcs8', format: 'pem' }));
     values = { MCP_JWT_PRIVATE_KEY_FILE: 'key.pem', MCP_JWT_ISSUER: 'issuer' };
     service = new McpJwtService({ get: (name: string, fallback?: unknown) => values[name] ?? fallback } as never,
-      users as never, store as never, authorization as never);
+      users as never, store as never, authorization as never, workspaces as never);
   });
   it.each(['configured', 'public'])('preserves %s SSE binding without granting JWT authority', async profile => {
     row.mcpTransportType = 'sse';
@@ -103,6 +106,61 @@ describe('McpJwtService current-policy boundary', () => {
     const renewed = await service.renew('connector-1', issued.token);
     expect(renewed.token).not.toBe(issued.token);
     expect(JSON.parse(Buffer.from(renewed.token.split('.')[1], 'base64url').toString()).sub).toBe('user-1');
+  });
+  it('issues and renews a 180-second scope from fresh workspace permissions', async () => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, workspaceAuthorization: true };
+    const issued = await service.issue('connector-1', 'user-1');
+    const decode = (token: string) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+    expect(decode(issued.token).workspaceScope).toEqual({ version: 1, permission: 'read', ids: ['a'.repeat(24), 'b'.repeat(24)] });
+    expect(decode(issued.token).exp - decode(issued.token).iat).toBe(180);
+    workspaces.readableWorkspaceScope.mockResolvedValueOnce(['a'.repeat(24)]);
+    const renewed = await service.renew('connector-1', issued.token);
+    expect(decode(renewed.token).workspaceScope.ids).toEqual(['a'.repeat(24)]);
+    expect(workspaces.readableWorkspaceScope).toHaveBeenCalledWith('user-1');
+  });
+  it('keeps the bearer credential when binding/renewing a configured scope assertion', async () => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
+    const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', { Authorization: 'Bearer service-key' }, {});
+    expect(bound.headers.Authorization).toBe('Bearer service-key');
+    expect(bound.env).toEqual({ YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1' });
+    expect((await service.renew('connector-1', bound.headers['X-YellowStorm-Mcp-Assertion'])).token).toBeTruthy();
+    await expect(service.headers(row.mcpServerUrl as string, 'user-1', {}, 'connector-1')).rejects.toThrow();
+  });
+  it('supports saved-config Bearer without accepting ambiguous credentials or connected-app fallback', async () => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
+    row.mcpServerConfig = { headers: { authorization: 'Bearer saved' } };
+    const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {});
+    expect(bound.headers.Authorization).toBe('Bearer saved');
+    await expect(service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1',
+      { Authorization: 'Bearer one', authorization: 'Bearer two' }, {})).rejects.toThrow();
+    row.authSourceType = 'connected_app';
+    await expect(service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {})).rejects.toThrow();
+  });
+  it('binds native search to the approved receiver and rejects denied workspace batches', async () => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
+    const headers = await service.workspaceReadHeaders('connector-1', 'user-1', 'https://example.com/search_native/batch',
+      ['a'.repeat(24), 'b'.repeat(24)], { Authorization: 'Bearer service' });
+    expect(headers['Workspace-Id']).toBe(['a'.repeat(24), 'b'.repeat(24)].join(','));
+    expect(headers['X-YellowStorm-Mcp-Assertion']).toBeTruthy();
+    await expect(service.workspaceReadHeaders('connector-1', 'user-1', 'https://evil.example/search_native',
+      ['a'.repeat(24)], { Authorization: 'Bearer service' })).rejects.toThrow();
+    workspaces.assertUserHasAccess.mockRejectedValueOnce(new Error('denied'));
+    await expect(service.workspaceReadHeaders('connector-1', 'user-1', 'https://example.com/search_native',
+      ['a'.repeat(24), 'b'.repeat(24)], { Authorization: 'Bearer service' })).rejects.toThrow('denied');
+  });
+  it.each([0, 301, 1.5, 'invalid'])('rejects invalid workspace lifetime %s', value => {
+    values.MCP_WORKSPACE_SCOPE_TTL_SECONDS = value;
+    expect(() => new McpJwtService({ get: (name: string, fallback?: unknown) => values[name] ?? fallback } as never,
+      users as never, store as never, authorization as never, workspaces as never)).toThrow(/MCP_WORKSPACE_SCOPE_TTL_SECONDS/);
+  });
+  it('uses the configured scope lifetime without changing ordinary assertion lifetimes', async () => {
+    values.MCP_WORKSPACE_SCOPE_TTL_SECONDS = 45;
+    const configured = new McpJwtService({ get: (name: string, fallback?: unknown) => values[name] ?? fallback } as never,
+      users as never, store as never, authorization as never, workspaces as never);
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, workspaceAuthorization: true };
+    const { token } = await configured.issue('connector-1', 'user-1');
+    const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+    expect(claims.exp - claims.iat).toBe(45);
   });
   it('rejects wrong audience and another connector renewal', async () => {
     const { token } = await service.issue('connector-1', 'user-1');

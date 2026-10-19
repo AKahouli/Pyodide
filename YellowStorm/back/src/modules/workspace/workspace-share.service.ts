@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ConfigService } from '@nestjs/config';
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import type { UserSummary } from '@common/ports/user-lookup.port';
 import { isObjectId } from '@common/postgres';
@@ -41,6 +42,7 @@ export class WorkspaceShareService {
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly semanticGrantRevocations: SemanticDataGrantRevocationService,
+    private readonly config: ConfigService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceShareService');
@@ -79,6 +81,15 @@ export class WorkspaceShareService {
         `You do not have access to workspace(s): ${missing.join(', ')}`,
       );
     }
+  }
+
+  async readableWorkspaceScope(userId: string): Promise<string[]> {
+    const maxIds = this.config.get<number>('MCP_WORKSPACE_SCOPE_MAX_IDS') ?? 1000;
+    const ids = await this.workspaceStore.findReadableIds(userId, maxIds + 1);
+    if (ids.length > maxIds) {
+      throw new ForbiddenException(ErrorCode.WORKSPACE_FORBIDDEN, 'MCP workspace scope exceeds the supported limit');
+    }
+    return ids;
   }
 
   async assertUserHasWriteAccess(userId: string, workspaceId: string): Promise<void> {

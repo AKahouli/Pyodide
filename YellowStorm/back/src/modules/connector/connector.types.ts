@@ -7,6 +7,8 @@ export interface McpSecurityPolicy {
   allowPrivateNetwork: boolean;
   allowInsecureHttp: boolean;
   requiredPermissions: string[];
+  /** ADR-0031: receiver supports locally verified multi-workspace read scope. */
+  workspaceAuthorization?: boolean;
 }
 
 export enum ConnectorActionSafety {

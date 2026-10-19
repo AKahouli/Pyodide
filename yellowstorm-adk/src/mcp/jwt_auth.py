@@ -16,6 +16,11 @@ def _server_identity(value: str) -> tuple:
 
 
 def current_assertion(headers: dict) -> str:
+    assertions = [value for key, value in headers.items() if key.lower() == "x-yellowstorm-mcp-assertion"]
+    if assertions:
+        if len(assertions) != 1 or not isinstance(assertions[0], str) or not assertions[0] or any(c.isspace() for c in assertions[0]):
+            raise RuntimeError("MCP JWT requires a current assertion; rebind authenticated execution")
+        return assertions[0]
     values = [value for key, value in headers.items() if key.lower() == "authorization"]
     if len(values) != 1 or not isinstance(values[0], str):
         raise RuntimeError("MCP JWT requires a current assertion; rebind authenticated execution")
@@ -101,5 +106,7 @@ async def renew_mcp_jwt(server_url: str, auth_env: dict, headers: dict) -> tuple
     except (httpx.HTTPError, ValueError, TypeError, KeyError):
         # Responses can contain credentials; never propagate their body or token.
         raise RuntimeError("MCP JWT renewal failed") from None
-    return {**{key: value for key, value in headers.items() if key.lower() != "authorization"},
-            "Authorization": f"Bearer {token}"}, expiry
+    two_header = any(key.lower() == "x-yellowstorm-mcp-assertion" for key in headers)
+    slot = "X-YellowStorm-Mcp-Assertion" if two_header else "Authorization"
+    return {**{key: value for key, value in headers.items() if key.lower() != slot.lower()},
+            slot: token if two_header else f"Bearer {token}"}, expiry

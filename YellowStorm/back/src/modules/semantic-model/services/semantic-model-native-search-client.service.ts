@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
 import { ConfigType } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 import semanticModelConfig from '@config/semantic-model.config';
@@ -41,9 +42,10 @@ export class SemanticModelNativeSearchClient {
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {}
 
-  async search(request: SemanticModelNativeSearchRequest): Promise<SemanticModelNativeSearchSection[]> {
+  async search(request: SemanticModelNativeSearchRequest, userId?: string): Promise<SemanticModelNativeSearchSection[]> {
     if (!this.config.nativeSearchAuthToken) {
       throw new SemanticModelNativeSearchFatalError(
         ErrorCode.SERVICE_UNAVAILABLE,
@@ -53,6 +55,7 @@ export class SemanticModelNativeSearchClient {
 
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
+        const headers = await this.authorizedHeaders(userId, [request.workspace_id], this.config.nativeSearchUrl);
         const fileMetadata = this.fileMetadata(request.file_name);
         this.logger.debug('Semantic native search request', {
           endpoint: this.config.nativeSearchUrl,
@@ -64,10 +67,8 @@ export class SemanticModelNativeSearchClient {
         });
         const res = await fetch(this.config.nativeSearchUrl, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
-            'Content-Type': 'application/json',
-          },
+          redirect: 'error',
+          headers,
           body: JSON.stringify(request),
           // No timeout: the semantic-model pipeline is a background job driven by the
           // build orchestrator + heartbeat. Native search can legitimately take a long time
@@ -124,6 +125,7 @@ export class SemanticModelNativeSearchClient {
     requests: SemanticModelNativeSearchRequest[],
     timeoutMs = 0,
     maxAttempts = 2,
+    userId?: string,
   ): Promise<SemanticModelNativeSearchBatchResult[]> {
     if (requests.length === 0) return [];
     if (requests.length > NATIVE_SEARCH_BATCH_SIZE) {
@@ -145,6 +147,7 @@ export class SemanticModelNativeSearchClient {
     }));
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        const headers = await this.authorizedHeaders(userId, requests.map(request => request.workspace_id), this.config.nativeSearchBatchUrl);
         this.logger.debug('Semantic native search batch request', {
           endpoint: this.config.nativeSearchBatchUrl,
           requestCount: requests.length,
@@ -152,10 +155,8 @@ export class SemanticModelNativeSearchClient {
         });
         const res = await fetch(this.config.nativeSearchBatchUrl, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
-            'Content-Type': 'application/json',
-          },
+          redirect: 'error',
+          headers,
           body: JSON.stringify({ requests: batchedRequests }),
           // No timeout: the semantic-model pipeline is a background job driven by the
           // build orchestrator + heartbeat. Native search can legitimately take a long time
@@ -201,6 +202,16 @@ export class SemanticModelNativeSearchClient {
       ErrorCode.SERVICE_UNAVAILABLE,
       'Semantic native search batch failed',
     );
+  }
+
+  private async authorizedHeaders(userId: string | undefined, ids: string[], endpoint: string): Promise<Record<string, string>> {
+    if (!userId || !this.config.nativeSearchConnectorId || !this.mcpJwt) {
+      throw new SemanticModelNativeSearchFatalError(ErrorCode.SERVICE_UNAVAILABLE,
+        'Native search requires a verified actor and SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID');
+    }
+    return this.mcpJwt.workspaceReadHeaders(this.config.nativeSearchConnectorId, userId, endpoint, ids, {
+      Authorization: `Bearer ${this.config.nativeSearchAuthToken}`, 'Content-Type': 'application/json',
+    });
   }
 
   /** Thrown on non-2xx; carries the response status and parsed body like axios errors did. */

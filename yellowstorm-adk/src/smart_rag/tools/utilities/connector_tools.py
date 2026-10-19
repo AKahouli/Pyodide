@@ -974,6 +974,8 @@ def _logical_search_headers(headers: Dict[str, str]) -> Dict[str, str]:
     for name, value in headers.items():
         if name.lower() == "authorization":
             canonical["Authorization"] = value
+        elif name.lower() == "x-yellowstorm-mcp-assertion":
+            canonical["X-YellowStorm-Mcp-Assertion"] = value
         elif name.lower() == "workspace-id":
             canonical["Workspace-Id"] = value
     return canonical
@@ -986,6 +988,7 @@ def _logical_search_server_config(server_config: Dict[str, Any]) -> Dict[str, An
         configured_headers if isinstance(configured_headers, dict) else {}
     )
     sanitized["headers"].pop("Workspace-Id", None)
+    sanitized["headers"].pop("X-YellowStorm-Mcp-Assertion", None)
     return sanitized
 
 

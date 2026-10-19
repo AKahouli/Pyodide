@@ -72,7 +72,7 @@ describe('DocumentExtractionConceptResolver', () => {
         },
       },
     });
-    expect(nativeSearch.searchBatch).toHaveBeenCalledWith(expect.any(Array), 30_000, 1);
+    expect(nativeSearch.searchBatch).toHaveBeenCalledWith(expect.any(Array), 30_000, 1, expect.any(String));
   });
 
   it('rejects extracted values whose casing is not verbatim evidence', async () => {

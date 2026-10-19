@@ -2,7 +2,24 @@ import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { Logger } from '@nestjs/common';
-import { SemanticModelNativeSearchClient } from './semantic-model-native-search-client.service';
+import { SemanticModelNativeSearchClient as NativeSearchClient, type SemanticModelNativeSearchRequest } from './semantic-model-native-search-client.service';
+
+const workspaceReadHeaders = jest.fn(async (_connectorId, _userId, _endpoint, ids: string[], headers) => ({
+  ...headers, 'Workspace-Id': [...new Set(ids)].join(','), 'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
+}));
+
+// Existing response/retry tests execute with a trusted invoking-user fixture.
+class SemanticModelNativeSearchClient extends NativeSearchClient {
+  constructor(settings: ConfigType<typeof semanticModelConfig>) {
+    super(settings, { workspaceReadHeaders } as never);
+  }
+  search(request: SemanticModelNativeSearchRequest, userId = 'invoking-user') {
+    return super.search(request, userId);
+  }
+  searchBatch(requests: SemanticModelNativeSearchRequest[], timeout = 0, attempts = 2, userId = 'invoking-user') {
+    return super.searchBatch(requests, timeout, attempts, userId);
+  }
+}
 
 function config(
   overrides: Partial<ConfigType<typeof semanticModelConfig>> = {},
@@ -21,6 +38,7 @@ function config(
     nativeSearchUrl: 'http://localhost:8045/search_native',
     nativeSearchBatchUrl: 'http://localhost:8045/search_native/batch',
     nativeSearchAuthToken: 'test-token',
+    nativeSearchConnectorId: 'connector-1',
     nativeSearchLogQuery: false,
     documentExtractionAgentId: '',
     documentExtractionTimeoutMs: 180000,
@@ -41,7 +59,7 @@ describe('SemanticModelNativeSearchClient', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
-  it('posts the exact search payload with bearer authentication only', async () => {
+  it('posts the exact search payload with bearer and delegated workspace authorization', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ result: [{ content: 'Evidence' }] }));
     const client = new SemanticModelNativeSearchClient(config());
     const request = { query: 'Employee: name', workspace_id: 'workspace-1', file_name: 'employee.pdf' };
@@ -53,6 +71,8 @@ describe('SemanticModelNativeSearchClient', () => {
     expect(init.headers).toEqual({
       Authorization: 'Bearer test-token',
       'Content-Type': 'application/json',
+      'Workspace-Id': 'workspace-1',
+      'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
     });
     expect(init.headers).not.toHaveProperty('X-User-Id');
   });
@@ -93,6 +113,8 @@ describe('SemanticModelNativeSearchClient', () => {
     expect(init.headers).toEqual({
       Authorization: 'Bearer test-token',
       'Content-Type': 'application/json',
+      'Workspace-Id': 'w',
+      'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
     });
   });
 
@@ -154,6 +176,11 @@ describe('SemanticModelNativeSearchClient', () => {
 
     await expect(client.search({ query: 'q', workspace_id: 'w', file_name: 'f.pdf' }))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('fails before network access when invoking identity is missing', async () => {
+    const client = new NativeSearchClient(config(), { workspaceReadHeaders } as never);
+    await expect(client.search({ query: 'q', workspace_id: 'w', file_name: 'f.pdf' })).rejects.toThrow(/verified actor/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -76,6 +76,30 @@ async def test_renews_current_assertion_with_scoped_runtime_principal(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_two_header_renewal_preserves_service_bearer(monkeypatch, backend, renewal):
+    original, renewed = assertion(), assertion(sub='same-verified-user')
+    def handler(request):
+        assert json.loads(request.content)['assertion'] == original
+        return httpx.Response(200, json={'token': renewed, 'expiresAt': int(time.time()) + 180,
+                                       'serverUrl': 'http://mcp:8027/mcp'})
+    mock_backend(monkeypatch, handler)
+    headers, _ = await renew_mcp_jwt('http://mcp:8027/mcp', renewal,
+        {'Authorization': 'Bearer static-service-key', 'X-YellowStorm-Mcp-Assertion': original})
+    assert headers == {'Authorization': 'Bearer static-service-key', 'X-YellowStorm-Mcp-Assertion': renewed}
+
+
+@pytest.mark.asyncio
+async def test_two_header_bootstrap_ignores_editable_assertion(monkeypatch, renewal, sdk):
+    trusted = {'Authorization': 'Bearer service-key', 'X-YellowStorm-Mcp-Assertion': assertion()}
+    result = await call_mcp_tool('streamable_http', 'http://mcp:8027/mcp',
+        {'headers': {'x-yellowstorm-mcp-assertion': 'editable'}}, 'find_records', {},
+        auth_headers=trusted, auth_env=renewal)
+    assert result == 'ok'
+    assert sdk.requests[0].headers['Authorization'] == 'Bearer service-key'
+    assert sdk.requests[0].headers['X-YellowStorm-Mcp-Assertion'] == trusted['X-YellowStorm-Mcp-Assertion']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("api_url", ["http://backend/", "http://backend/api", "http://backend/api/v1/"])
 async def test_uses_versioned_renewal_route(monkeypatch, backend, renewal, proof_headers, api_url):
     backend.API_URL = api_url

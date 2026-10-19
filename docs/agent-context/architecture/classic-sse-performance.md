@@ -255,3 +255,114 @@ Required reviews passed the instrumentation, bootstrap cancellation/TLS/fixture
 corrections, conservative failed-send cleanup, history classification and matrix.
 Browser-tool required review also passed after the deadline correction. No optimization is justified or implemented
 from this preview alone. Raw reports have not been uploaded as CI artifacts.
+
+## Pinned packaging-overlay comparison (2026-10-19)
+
+The packaging prerequisite is committed separately as `184ad4be87878313e5392e5043b40c5b09b98efc`.
+Measured application build uses that SHA (PR-06 instrumentation plus packaging fix).
+The explicitly approved **packaging-only patched baseline** is detached commit
+`0c97ae7f2bc00e88e13990316abe8d65d12c89ab`, directly based on original application
+source `66501b7972dd359568d97d676a6d8ab2a933c65f`. Its six changed paths are the
+canonical packer/test, SDK builder, packaging CI job and two baseline-derived SDK
+integrities. No application logic or baseline event registry changed. Patch SHA-256:
+`473dcd4f2a6ddcb14abb012386846ca3bb0732d30b895df28c01208f7f1fabd1`.
+The pristine old baseline's staging failure remains a failure.
+
+Both independent worktrees passed ordinary SDK staging, `npm ci` and backend build
+without tracked-file changes. Launcher provenance verifies the clean application
+HEAD, compiled gateway hash, ADK servicer hash and tarball/manifest/committed-lock
+integrity before startup. Canonical baseline SHA-512 starts `a7qNagST`; measured
+starts `0S0tI/ma`; full values and hashes are in the launcher provenance files.
+Benchmark drivers run with the selected application worktree as cwd, so report SHAs
+and `sourceDirty:false` describe the actual application source, not the main worktree.
+
+Each side starts from a newly recreated **owned test database**, migrations and 30
+new authenticated identities. After a 30-user warm-up, the six fresh-conversation
+HTTP scenarios run three times. Source trees remained clean after all traffic.
+All **36 healthy scenarios** passed transport observations, and each side has
+exactly **390 canonical completed AI messages with positive output-token usage**
+(360 measured answers plus 30 warm-up answers). This verifies canonical final-turn
+counts; it does not reconcile every transient event. Normal automatic naming calls
+for new conversations also reach the provider and are part of this request mix,
+not additional canonical answer messages.
+
+### Provisional TTFT gate: FAIL (17/18 paired reports pass)
+
+Repetition 2 at **30 users × 5 tabs** fails the unchanged median ≤10% deterioration
+target: baseline **4939.02 ms**, measured **5812.90 ms**, ratio **1.176934**.
+Its p95 is **5766.70 → 5904.37 ms** (ratio **1.023873**, within budget).
+All other paired medians and all paired p95s are within the provisional budget.
+Do not average away the failed pair or describe the whole gate as passing.
+First-model emission→HTTP receipt p95 for the failing pair is **247 ms**; it is
+not the full all-event/browser delivery gate. The three baseline repetitions ran
+before the three measured repetitions, without randomized ordering or control of
+shared-host/provider variability. Stage percentile summaries do not establish
+causal attribution of the TTFT spike, and no optimization has been made from it.
+
+Measured cumulative process observations (including warm-up): approximately
+**4.78 polls/sec/connection** on each replica; poll wall-time bucket upper bounds
+p50 **5 ms**, p95 **100 ms**, p99 **500 ms**. Advisory-lock query p95/p99 upper bounds
+are **25 ms**, queue-to-commit p95 **200 ms**, and flush p95 **50–100 ms**. These
+fixed-bucket estimates include the documented client/pool/round-trip costs and are
+not exact server-query or pure lock-wait percentiles. Post-run PG snapshots show
+22/23 connections against `max_connections=100`, and 6000 retained SSE rows on each
+side. Relation sizes are 9,543,680 and 11,001,856 bytes respectively; snapshots and
+fixed queue limits are not proof of sustained resource stability or peak PG CPU.
+
+Artifacts are private local `.tmp` outputs, not uploaded CI artifacts:
+
+- Baseline run: `.tmp/pr06-local-3dbd700a-ea81-4667-b03b-04a9551fe40e/`.
+- Measured run: `.tmp/pr06-local-76b4a2d9-562c-40e6-b30f-8a2dcfc91196/`.
+- Each contains `matrix-rep-01/02/03` and sanitized `phase-provenance.json`.
+- Paired budgets and cumulative metrics: `.tmp/pr06-pinned-comparison-3reps.json`.
+- Exact overlay patch: `.tmp/pr06-clean-baseline-packaging.patch`.
+
+## Isolated recovery evidence (2026-10-19, idle stack)
+
+The measured backend build (`184ad4be8`) was built into a dedicated Linux image
+(`pr06-recovery:184ad4be8-8a2dcfc91196`, SDK sha256 `0f759b86…`, Dockerfile sha256
+`551f76b4…`) from allowlisted build inputs only (no `.env`, keys or symlinks; the
+canonical SDK staging was verified before build). Two containers run loopback-only
+on 3301/3302 with 2 CPUs, 4 GiB memory and a 3072 MiB heap each, mounting the run's
+public CA, MCP signer key and static proto assets read-only; `host.docker.internal`
+routes to the owned PG 55526, ADK 8006/50056 and Redis 56386. A pre-transition
+container probe verified TCP to PG/Redis, an actual classic TLS gRPC channel and
+readable signer key from inside the image. The pinned native backends were stopped
+and the pinned ADK restarted detached (`ENVIRONMENT=prod`, same private
+environment); ownership records were updated, not recreated. Fault scope is
+**secondary 3302 only** — the ADK callback URL is fixed to primary 3301, so this
+is not a primary-HA claim. Both replicas answered an authenticated `GET /users/me`
+(200, fixture identity match) before the faults.
+
+- **Graceful `docker stop` (3302):** stopped in 4.17 s (well under the 30 s
+  timeout, so SIGTERM handling, not the kill path). Caveat recorded honestly: the
+  container exited with **code 1, not 0/143**; shutdown completed quickly and the
+  container restarted and served authenticated requests, but the non-zero exit
+  path needs follow-up inspection before calling the drain clean. Primary 3301
+  stayed 200 and ADK health stayed 200 during the stop.
+- **Forced `docker kill` (3302):** exit 137 (SIGKILL, OOM false). Primary 3301
+  stayed 200; the container restarted and served authenticated requests again.
+- **Owned PG 3-second outage:** both replicas failed closed with **503** during
+  the outage and both returned to authenticated 200 within **5 seconds** of the
+  database becoming ready again. No SSE connections were attached during the
+  outage, so poll-error/resync counters did not move; gateway behavior with live
+  attached streams remains covered by the browser/reconnect gap below.
+
+Evidence: `.tmp/pr06-local-76b4a2d9-562c-40e6-b30f-8a2dcfc91196/recovery-containers/`
+(`manifest.json`, `fault-evidence.json`, `pg-outage-evidence.json`), plus the
+container's own logs. Two honest side observations from those logs: transient
+boot-time `catalog.system_settings` query failures appear around startup/shutdown
+windows (queries succeed afterward), and pre-existing legacy `logger` calls emit
+SQL bind parameters in log attributes — a logging-contract violation in unchanged
+production code, recorded here, not fixed in PR-06. All recovery evidence ran on
+an **idle** stack: no active model generations or attached streams, so this does
+not measure in-flight drain, replay or client reconnect. The 10-user browser
+scenario is implemented and reviewed but **blocked on host memory headroom** (the
+user chose to free memory; run resumes on request). The 10-second outage variant,
+attached-stream outage/reconnect behavior, full canonical event-loss
+reconciliation and the 30×5 browser scenario remain outstanding.
+
+**Release qualification remains incomplete:** one failed provisional budget pair,
+partial adapter rather than full external-provider intervals, full browser matrix,
+continuous per-scenario PG resource series, complete event-loss reconciliation and
+attached-stream reconnect evidence remain outstanding.
