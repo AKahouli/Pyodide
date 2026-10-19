@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TELEGRAM_BINDING_STORE, TELEGRAM_INTEGRATION_STORE, TELEGRAM_LINK_CODE_STORE, TELEGRAM_VALIDATION_STORE } from './persistence/telegram.store';
 import { PgTelegramBindingStore, PgTelegramIntegrationStore, PgTelegramLinkCodeStore, PgTelegramValidationStore } from './persistence/pg-telegram.store';
 import { ConfigModule } from '@nestjs/config';
+import { AdkNativeActorGuard } from '@modules/auth/guards/adk-native-actor.guard';
 import telegramConfig from '@config/telegram.config';
 import { CryptoService } from '@common/services/crypto.service';
 import { AgentModule } from '@modules/agent/agent.module';
@@ -42,6 +43,7 @@ import { TelegramWebhookService } from './services/telegram-webhook.service';
     TelegramValidationService,
     TelegramWebhookService,
     TelegramPollingService,
+    AdkNativeActorGuard,
   ],
   exports: [TelegramIntegrationService],
 })
