@@ -85,6 +85,15 @@ describe('classic fetch SSE', () => {
     expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'stream_chunk', data: { component: { type: 'chart', data: expect.objectContaining({ data: [{ x: 1 }], series: [{ dataKey: 'x' }] }) } } }));
     expect(listener).toHaveBeenCalledWith({ type: 'stream_resync_required', data: { reason: 'cursor_gap' } }); off();
   });
+  it('drops the unreplayable cursor after a resync so reconnects start cursor-less', async () => {
+    service.connect(); await settle();
+    connections[0].push(frame('stream_chunk', {}, 'boot:1:9')); await settle();
+    connections[0].push(frame('stream_resync_required', { reason: 'cursor_gap' })); await settle();
+    connections[0].close(); await settle(); await vi.advanceTimersByTimeAsync(1000);
+    // The server proved it cannot replay from boot:1:9; re-sending it would
+    // re-trigger the resync warn on every reconnect.
+    expect(connections[1].url).not.toContain('cursor');
+  });
   it('bounds fragmented multiline frames and reconnects without emitting partial payloads', async () => {
     service.reconnectWithNewToken(); await settle();
     const listener = vi.fn(); const off = service.subscribe(listener);

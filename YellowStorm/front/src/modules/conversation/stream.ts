@@ -303,6 +303,13 @@ class ConversationStreamService {
       case 'message_updated':
       case 'mention_created':
       case 'stream_resync_required':
+        if (type === 'stream_resync_required') {
+          // The server proved it cannot replay from this cursor (stale boot,
+          // swept window, overload). Keeping it would re-trigger the resync on
+          // every reconnect; the store reconciles canonical state instead, so
+          // the next connection must start cursor-less.
+          this.lastSeenCursor = null;
+        }
         this.resetHeartbeatTimer();
         this.emit({ type, data } as StreamSSEEvent);
         break;
