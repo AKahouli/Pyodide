@@ -26,6 +26,7 @@ from auth import AuthMiddleware
 
 # Import local helpers (fully independent project)
 from document_tools import register_document_tools
+from graph_helpers import logger
 
 load_dotenv()
 
@@ -52,9 +53,8 @@ if __name__ == "__main__":
         origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
         allow_credentials = "*" not in origins
 
-        print(
+        logger.info(
             f"Enabling CORS for origins: {origins} (credentials: {allow_credentials})",
-            file=sys.stderr,
         )
         middleware.append(
             Middleware(
@@ -66,9 +66,8 @@ if __name__ == "__main__":
             )
         )
 
-    print(
+    logger.info(
         f"Starting SharePoint MCP server with transport: {transport} on port: {port}",
-        file=sys.stderr,
     )
     if transport == "streamable-http":
         # Every call carries its own actor assertion and delegated Graph token,

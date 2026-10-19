@@ -10,36 +10,41 @@ it only lists mail.
 """
 import asyncio
 import json
+import logging
 import sys
 
 import server
 
 
+logger = logging.getLogger(__name__)
+
+
 async def page_through(**filters) -> int:
     result = json.loads(await server.search_emails(**filters))
     if result.get("status") != "success":
-        print("ERROR:", result)
+        logger.error("ERROR: %s", result)
         return 0
     pagination = result["pagination"]
     total = len(result["items"])
     cursor = pagination.get("nextCursor")
     pages = 1
-    print(f"page 1: returned={pagination['returned']} hasMore={pagination['hasMore']}")
+    logger.info(f"page 1: returned={pagination['returned']} hasMore={pagination['hasMore']}")
     while cursor and pages < 50:
         nxt = json.loads(await server.search_emails(cursor=cursor))
         pages += 1
         total += len(nxt.get("items", []))
         pagination = nxt["pagination"]
-        print(f"page {pages}: returned={pagination['returned']} hasMore={pagination['hasMore']}")
+        logger.info(f"page {pages}: returned={pagination['returned']} hasMore={pagination['hasMore']}")
         cursor = pagination.get("nextCursor")
-    print(f"TOTAL {total} messages over {pages} page(s)")
+    logger.info(f"TOTAL {total} messages over {pages} page(s)")
     return total
 
 
 async def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     args = sys.argv[1:]
     if not args:
-        print(__doc__)
+        logger.info(__doc__)
         return
     if args[0] == "--domain":
         await page_through(sender_domain=args[1])

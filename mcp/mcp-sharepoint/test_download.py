@@ -8,6 +8,7 @@ from graph_helpers import (
     _request_conversation_id,
     _request_user_id,
     dedupe_relative_path,
+    logger,
     run_storage_key,
     safe_relative_path,
     system_workspace_prefix,
@@ -96,6 +97,6 @@ if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-            print(f"  ok  {name}")
+            logger.info(f"  ok  {name}")
             passed += 1
-    print(f"\n{passed} passed")
+    logger.info(f"\n{passed} passed")

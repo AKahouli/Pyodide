@@ -10,6 +10,7 @@ not read or write any local token files.
 """
 
 import json
+import logging
 import os
 import sys
 from typing import Literal, Optional
@@ -30,6 +31,8 @@ from graph_helpers import GRAPH_BASE, graph_headers
 load_dotenv()
 
 mcp = FastMCP("Microsoft Teams Connector")
+
+logger = logging.getLogger("mcp-team")
 
 
 @mcp.custom_route("/health/live", methods=["GET"])
@@ -221,6 +224,7 @@ async def send_teams_message(
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
     os.environ.setdefault("HOST", "0.0.0.0")
     transport = os.getenv("TEAMS_MCP_TRANSPORT", "sse")
     port = int(os.getenv("TEAMS_MCP_PORT", os.getenv("PORT", "8003")))
@@ -231,9 +235,8 @@ if __name__ == "__main__":
         origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
         allow_credentials = "*" not in origins
 
-        print(
+        logger.info(
             f"Enabling CORS for origins: {origins} (credentials: {allow_credentials})",
-            file=sys.stderr,
         )
         middleware.append(
             Middleware(
@@ -245,8 +248,7 @@ if __name__ == "__main__":
             )
         )
 
-    print(
+    logger.info(
         f"Starting Teams MCP server with transport: {transport} on port: {port}",
-        file=sys.stderr,
     )
     mcp.run(transport=transport, middleware=middleware, host="0.0.0.0", port=port)

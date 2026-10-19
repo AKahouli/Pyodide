@@ -7,6 +7,7 @@ test_mail_enumeration.py with a patched transport.
 import io
 
 import mail_export
+from graph_helpers import logger
 
 
 def test_html_to_text_strips_tags_and_unescapes():
@@ -105,7 +106,7 @@ def test_docx_render_reports_unavailable_without_libreoffice():
 
 def test_docx_first_page_reads_the_leading_text():
     if not _has_libreoffice():
-        print("    (skip: LibreOffice not installed)")
+        logger.info("    (skip: LibreOffice not installed)")
         return
     out = mail_export.first_page_of(
         _docx_bytes("Contrat de prestation", "Article 1 — objet"), DOCX_MIME, "contrat.docx"
@@ -115,7 +116,7 @@ def test_docx_first_page_reads_the_leading_text():
 
 def test_docx_first_page_includes_table_text():
     if not _has_libreoffice():
-        print("    (skip: LibreOffice not installed)")
+        logger.info("    (skip: LibreOffice not installed)")
         return
     import docx
 
@@ -132,7 +133,7 @@ def test_docx_first_page_includes_table_text():
 
 def test_docx_first_page_excludes_the_second_page():
     if not _has_libreoffice():
-        print("    (skip: LibreOffice not installed)")
+        logger.info("    (skip: LibreOffice not installed)")
         return
     data = _docx_bytes("PREMIERE PAGE MARQUEUR", "DEUXIEME PAGE MARQUEUR", page_break=True)
     out = mail_export.first_page_of(data, DOCX_MIME, "deux-pages.docx")
@@ -152,5 +153,5 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             passed += 1
-            print(f"  ok  {name}")
-    print(f"\n{passed} passed")
+            logger.info(f"  ok  {name}")
+    logger.info(f"\n{passed} passed")

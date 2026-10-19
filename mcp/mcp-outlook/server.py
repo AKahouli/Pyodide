@@ -1988,9 +1988,8 @@ if __name__ == "__main__":
         origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
         allow_credentials = "*" not in origins
 
-        print(
+        logger.info(
             f"Enabling CORS for origins: {origins} (credentials: {allow_credentials})",
-            file=sys.stderr,
         )
         middleware.append(
             Middleware(
@@ -2002,8 +2001,7 @@ if __name__ == "__main__":
             )
         )
 
-    print(
+    logger.info(
         f"Starting Outlook MCP server with transport: {transport} on port: {port}",
-        file=sys.stderr,
     )
     mcp.run(transport=transport, middleware=middleware, host="0.0.0.0", port=port)
