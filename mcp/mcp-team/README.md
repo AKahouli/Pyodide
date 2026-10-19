@@ -21,18 +21,19 @@ pip install -r requirements.txt
 
 ## Configuration
 
-MCP ingress is authenticated before dispatch using `MCP_AUTH_MODE=JWT` with the
-dedicated audience `mcp-team` (or explicit private `BEARER` mode). The verified
-JWT subject is the actor and untrusted identity headers cannot override it.
-Microsoft Graph uses the separate server-side `M365_ACCESS_TOKEN`; the MCP
-credential is never forwarded to Graph. This follows ADR-0017 profile C and
-requires a protected internal listener with least-privilege delegated/app
-permissions.
+MCP ingress is two-credential and authenticated before dispatch (ADR-0017): the
+`Authorization` bearer is the backend-signed actor assertion (`MCP_AUTH_MODE=JWT`
+with the dedicated audience `mcp-team`, or explicit private `BEARER` mode), and
+the configured provider-token header carries the acting user's delegated
+Microsoft Graph token. Graph calls use only that per-request token; there is no
+environment token, so every Teams operation runs with the user's own permissions
+and the MCP holds no tenant-wide credential. The `streamable-http` transport runs
+stateless, so no session retains either credential.
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `M365_ACCESS_TOKEN` | Server-side Microsoft Graph provider token |
-| `TEAMS_MCP_TRANSPORT` | Transport type: `sse` (default), `http`, `streamable-http` |
+| `M365_TOKEN_HEADER` | Header carrying the acting user's delegated Graph token (default `x-m365-access-token`) |
+| `TEAMS_MCP_TRANSPORT` | Transport type: `streamable-http` (default), `sse`, `http` |
 | `TEAMS_MCP_PORT` / `PORT` | Server port (default: 8003) |
 | `ALLOWED_ORIGINS` | CORS origins (default: `*`) |
 
