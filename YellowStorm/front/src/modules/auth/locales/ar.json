@@ -197,5 +197,10 @@
   "oauthCallback.error.ERR_1202": "طلب الوصول الخاص بك قيد المراجعة. سيتم تفعيل الوصول إلى المنصة بعد الموافقة على طلبك.",
   "oauthCallback.error.ERR_1200": "لم يتم العثور على حساب المستخدم. يرجى تسجيل الدخول مرة أخرى.",
   "oauthCallback.error.ERR_1201": "حساب بهذا البريد الإلكتروني موجود بالفعل.",
-  "oauthCallback.error.backToLogin": "العودة إلى تسجيل الدخول"
+  "oauthCallback.error.backToLogin": "العودة إلى تسجيل الدخول",
+  "register.password.valid": "كلمة المرور تستوفي جميع الشروط",
+  "register.confirmPassword.match": "كلمتا المرور متطابقتان",
+  "register.invite.banner": "تمت دعوتك بصفتك {{email}}. أنشئ حسابك للمتابعة.",
+  "register.invite.emailLocked": "هذا العنوان مرتبط بدعوتك ولا يمكن تغييره.",
+  "landing.invite.errorTitle": "دعوة غير صالحة"
 }

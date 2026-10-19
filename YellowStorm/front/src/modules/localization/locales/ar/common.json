@@ -170,5 +170,7 @@
   "share.header.subtitle": "محادثة مشتركة · {{formattedCount}} مشاهدة",
   "share.header.openApp": "فتح التطبيق",
   "share.footer.sharedOn": "تمت المشاركة في {{date}}",
-  "mention.sharedHeading": "تمت مشاركتها معي"
+  "mention.sharedHeading": "تمت مشاركتها معي",
+  "actionShowPassword": "إظهار كلمة المرور",
+  "actionHidePassword": "إخفاء كلمة المرور"
 }
