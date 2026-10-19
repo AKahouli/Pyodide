@@ -59,14 +59,14 @@ function ManualTableBody({ concept, canEdit }: Readonly<{ concept: SemanticNodeT
   return <>
     <div className='flex flex-wrap items-center gap-2 border-b px-5 py-3'>
       {canEdit && <>
-        <Button size='sm' onClick={addRow}><Plus className='mr-1.5 h-4 w-4' />{t('manualTable.addRow')}</Button>
-        <Button size='sm' variant='outline' onClick={() => file.current?.click()}><Upload className='mr-1.5 h-4 w-4' />{t('manualTable.import.button')}</Button>
+        <Button size='sm' onClick={addRow}><Plus className='me-1.5 h-4 w-4' />{t('manualTable.addRow')}</Button>
+        <Button size='sm' variant='outline' onClick={() => file.current?.click()}><Upload className='me-1.5 h-4 w-4' />{t('manualTable.import.button')}</Button>
         <input ref={file} type='file' accept='.csv,.tsv,.txt,text/csv,text/plain' className='sr-only' tabIndex={-1} aria-label={t('manualTable.import.file')} onChange={(event) => void readFile(event)} />
-        <Button size='sm' variant='outline' className='text-destructive' disabled={!chosen.length} onClick={removeChosen}><Trash2 className='mr-1.5 h-4 w-4' />{t('manualTable.deleteSelected', { count: chosen.length })}</Button>
+        <Button size='sm' variant='outline' className='text-destructive' disabled={!chosen.length} onClick={removeChosen}><Trash2 className='me-1.5 h-4 w-4' />{t('manualTable.deleteSelected', { count: chosen.length })}</Button>
       </>}
-      <div className='relative ml-auto w-full sm:w-56'>
+      <div className='relative ms-auto w-full sm:w-56'>
         <Search className='pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground' />
-        <Input className='h-9 pl-8' value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('manualTable.filter')} aria-label={t('manualTable.filter')} />
+        <Input className='h-9 ps-8' value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('manualTable.filter')} aria-label={t('manualTable.filter')} />
       </div>
     </div>
     <ManualTableGrid columns={columns} rows={rows} selected={selected} canEdit={canEdit} focusRequest={focusRequest}
@@ -86,7 +86,7 @@ export function ManualTableEditor({ conceptId, canEdit, onClose }: Readonly<{ co
   const concept = useSemanticModelEditorStore((state) => state.graph?.nodes.find((node) => node.id === conceptId));
   return <Sheet modal={false} open={Boolean(conceptId && concept)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {conceptId && concept && <SheetContent side='right' closeLabel={t('action.close')} className='flex w-full flex-col gap-0 p-0 sm:max-w-5xl' onInteractOutside={(event) => event.preventDefault()}>
-      <SheetHeader className='border-b p-5 pr-12'>
+      <SheetHeader className='border-b p-5 pe-12'>
         <SheetTitle className='flex items-center gap-2'><Table2 className='h-4 w-4' />{t('manualTable.title', { concept: concept.label })}</SheetTitle>
         <SheetDescription>{t('manualTable.description', { concept: concept.label })}</SheetDescription>
       </SheetHeader>

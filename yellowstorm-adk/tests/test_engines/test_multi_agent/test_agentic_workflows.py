@@ -254,14 +254,22 @@ class TestSingleAgentWorkflow:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('role', [None, 'root', 'root_fanout', 'temporary_worker'])
-    async def test_handle_single_agent_workflow_runs_agent(self, role):
+    @pytest.mark.parametrize('corrected', [False, True])
+    @pytest.mark.parametrize('visible_text', ['Original visible text before contextual page hints', ''])
+    async def test_handle_single_agent_workflow_runs_agent(self, role, corrected, visible_text):
         from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
         from src.root_runtime.ongoing_requests import with_ongoing_requests
         team = _mock_team()
         worker = _worker_agent()
         request = _team_request("mono", agents=[worker])
+        from src.corrective_replay import build_corrective_replay_user_message
+        from src.schema.chatbot_schema import CorrectionReplayContext
+        if corrected:
+            request.correction_replay_context = CorrectionReplayContext(
+                original_answer='prior', findings=[], attempt_number=1, instructions='Correct the answer')
         request.task_summary = "Profitability"
-        request.root_context = {'ongoing_requests': [{'request_excerpt': 'Compare databases'}]}
+        request.root_context = {'ongoing_requests': [{'request_excerpt': 'Compare databases'}],
+            'visible_user_message': visible_text}
         if role:
             request.execution_scope = ExecutionScopeV1(role=ExecutionRole('root' if role == 'root_fanout' else role), execution_id='a' * 24)
         if role == 'root_fanout':
@@ -280,7 +288,8 @@ class TestSingleAgentWorkflow:
             await handle_single_agent_workflow(team, request, AsyncMock())
 
         mock_run.assert_awaited_once_with(
-            user_prompt=with_ongoing_requests(request.message, request.root_context) if role in ('root', 'root_fanout') else request.message,
+            user_prompt=with_ongoing_requests(build_corrective_replay_user_message(request.message, request.correction_replay_context),
+                request.root_context if role in ('root', 'root_fanout') else None),
             session_id=request.session_id,
             q=ANY,
             image_input=request.image_input,
@@ -293,6 +302,8 @@ class TestSingleAgentWorkflow:
             abort_signal=None,
             native_input_responses=None,
             conversation_reply_tool=None,
+            visible_user_message=None if corrected else (
+                visible_text if role in ('root', 'root_fanout') and visible_text else request.message),
         )
         if role == 'root_fanout':
             args = mock_run.call_args.kwargs

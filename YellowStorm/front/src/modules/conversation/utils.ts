@@ -136,6 +136,7 @@ export function formatChoiceSubmissionContent(content: string): string {
 }
 
 export function getUserMessageDisplayText(msg: Message): string {
+  if (msg.interaction?.type === 'openui' && msg.interaction.label) return msg.interaction.label;
   if (msg.interactions?.length) {
     const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
     return displayTexts.length ? displayTexts.join(', ') : msg.content || '';
@@ -311,8 +312,8 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'error':
       return {
         type: 'error',
-        title: (data.title as string) || (data.code as string) || '',
-        content: (data.content as string) || (data.message as string) || '',
+        title: data.reason === 'interrupted' ? translateConversation('home.activity.status.interrupted') : (data.title as string) || (data.code as string) || '',
+        content: data.reason === 'interrupted' ? translateConversation('stream.interrupted') : (data.content as string) || (data.message as string) || '',
       };
     case 'sources':
       return {
@@ -426,6 +427,24 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     }
     // Fallback: standalone citation part
     parts.push({ type: 'citation', ...citation });
+  }
+
+  // Markers can restart in separate agent text components. Keep propagation of
+  // a unique legacy citation, but never let another component's [1] win locally.
+  for (const part of parts) {
+    if (part.type !== 'text' || !part.citations) continue;
+    const byReference = new Map<string, typeof part.citations>();
+    for (const citation of part.citations) {
+      const reference = citation.reference?.replace(/[\[\]\s]/g, '');
+      if (reference) byReference.set(reference, [...(byReference.get(reference) ?? []), citation]);
+    }
+    part.citations = part.citations.filter((citation) => {
+      const reference = citation.reference?.replace(/[\[\]\s]/g, '');
+      const matches = reference ? byReference.get(reference) ?? [] : [];
+      if (matches.length < 2) return true;
+      const owners = new Set(matches.map((item) => item.parentId).filter(Boolean));
+      return owners.size < 2 || citation.parentId === part.componentId;
+    });
   }
 
   return parts;
@@ -626,12 +645,14 @@ export function isVisibleConversationComponent(comp: MessageComponent): boolean 
 
 /** True for components exported as rendered visuals (images) rather than markdown. */
 export function isVisualConversationComponent(comp: MessageComponent): boolean {
+  if (comp.data?.assetDeletedAt) return false;
   const type = getComponentType(comp);
   return type === 'chart' || type === 'webPreview';
 }
 
 /** Converts a single visible component to markdown (chart/webPreview have none). */
 export function componentToMarkdown(comp: MessageComponent): string {
+  if (comp.data?.assetDeletedAt) return '';
   const data = comp.data || {};
   switch (comp.type) {
     case 'text':
@@ -691,7 +712,7 @@ export function componentsToMarkdown(components: MessageComponent[], projectText
     return '';
   }
   return components
-    .filter((comp) => isVisibleConversationComponent(comp))
+    .filter((comp) => !comp.data?.assetDeletedAt && isVisibleConversationComponent(comp))
     .map((comp) => (comp.type === 'text' ? projectText?.(comp) : undefined) ?? componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');

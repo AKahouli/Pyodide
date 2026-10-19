@@ -97,7 +97,7 @@ export function CreateWorkspaceStep1({ defaultValues, onNext }: CreateWorkspaceS
           </Button>
           <Button type='submit'>
             {t('modal.createWorkspace.step1.next')}
-            <ChevronRight className='ml-2 h-4 w-4' />
+            <ChevronRight className='ms-2 h-4 w-4' />
           </Button>
         </div>
       </form>

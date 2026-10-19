@@ -1,4 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { resolveQueryable } from '@common/postgres/transaction';
+import type { OpenUiAppStateKey, OpenUiAppStateRecord } from '../message-store';
 import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
@@ -17,6 +20,164 @@ import type { ConversationUsageMetrics } from '../../utils/usage-metrics';
 @Injectable()
 export class PostgresMessageStore implements MessageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+
+  async searchConversationMessages(conversationId: string, query: string, limit: number): Promise<{ records: Array<{ id: string; questionMessageId: string | null; conversationType: string; createdAt: Date; snippet: string }>; hasMore: boolean }> {
+    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+    // Never search serialized programs, tool payloads or private drafts. Deleted
+    // text components also suppress the duplicate message.content fallback.
+    const readable = sql<string>`concat_ws(' ',
+      CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(${schema.messages.components}, '[]'::jsonb)) c
+        WHERE c->>'type' = 'text' AND (c->'data'->>'assetDeletedAt' IS NOT NULL OR c->'data'->>'content' ~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='))
+        AND COALESCE(${schema.messages.content}, '') !~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='
+        THEN ${schema.messages.content} END,
+      (SELECT string_agg(c->'data'->>'content', ' ') FROM jsonb_array_elements(COALESCE(${schema.messages.components}, '[]'::jsonb)) c
+        WHERE c->>'type' = 'text' AND c->'data'->>'assetDeletedAt' IS NULL
+        AND c->'data'->>'content' !~ '(^|[\\r\\n])[[:space:]]*root[[:space:]]*='))`;
+    const rows = await this.db.select({ id: schema.messages.id, questionMessageId: schema.messages.questionMessageId,
+      conversationType: schema.messages.conversationType, createdAt: schema.messages.createdAt,
+      snippet: sql<string>`substring(${readable} FROM greatest(1, strpos(lower(${readable}), lower(${query})) - 80) FOR 240)` })
+      .from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId), sql`${readable} ILIKE ${pattern} ESCAPE '\\'`))
+      .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(limit + 1);
+    return { records: rows.slice(0, limit), hasMore: rows.length > limit };
+  }
+
+  async listAround(conversationId: string, targetId: string, limit: number): Promise<{ records: MessageRecord[]; hasOlder: boolean; hasNewer: boolean } | null> {
+    const [target] = await this.db.select().from(schema.messages).where(and(eq(schema.messages.id, targetId), eq(schema.messages.conversationId, conversationId))).limit(1);
+    if (!target) return null;
+    const before = Math.floor((limit - 1) / 2), after = limit - 1 - before;
+    const [older, newer] = await Promise.all([
+      this.db.select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+        sql`(${schema.messages.createdAt}, ${schema.messages.id}) < (${target.createdAt}, ${target.id})`))
+        .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(before + 1),
+      this.db.select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+        sql`(${schema.messages.createdAt}, ${schema.messages.id}) > (${target.createdAt}, ${target.id})`))
+        .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id)).limit(after + 1),
+    ]);
+    const window = [...older.slice(0, before).reverse(), target, ...newer.slice(0, after)];
+    const questionIds = [...new Set(window.flatMap(row => row.questionMessageId ? [row.questionMessageId] : []))];
+    const questions = questionIds.length ? await this.db.select().from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), inArray(schema.messages.id, questionIds), eq(schema.messages.conversationType, 'user'))) : [];
+    const unique = [...new Map([...questions, ...window].map(row => [row.id, row])).values()];
+    unique.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+    return { records: unique.map(mapPostgresMessage), hasOlder: older.length > before, hasNewer: newer.length > after };
+  }
+
+  async hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean> {
+    const rows = await resolveQueryable(this.db).select({ id: schema.messages.id }).from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) item
+        WHERE item->>'type' = 'artifact' AND item->'data'->>'storagePath' = ${path} AND item->'data'->>'assetDeletedAt' IS NULL
+        AND (${schema.messages.id} <> ${messageId} OR item->>'id' <> ${componentId}))`)).limit(1);
+    return rows.length > 0;
+  }
+
+  async listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]> {
+    const rows = await resolveQueryable(this.db).select().from(schema.messages).where(and(eq(schema.messages.conversationId, conversationId),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) item
+        WHERE item->'data'->>'assetDeletedAt' IS NOT NULL AND item->'data'->>'assetBlobCleanup' = 'pending')`))
+      .orderBy(desc(schema.messages.updatedAt), desc(schema.messages.id)).limit(50);
+    return rows.map(mapPostgresMessage);
+  }
+
+  async getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }> {
+    const rows = await resolveQueryable(this.db).execute(sql`SELECT count(*)::int AS count, max(item->'data'->>'assetDeletedAt') AS latest,
+      coalesce(bool_or(item->'data'->>'assetBlobCleanup' = 'pending'), false) AS pending
+      FROM ${schema.messages}, jsonb_array_elements(${schema.messages.components}) AS item
+      WHERE ${schema.messages.conversationId} = ${conversationId} AND item->'data'->>'assetDeletedAt' IS NOT NULL`);
+    const row = rows.rows[0] as { count: number; latest: string | null; pending: boolean } | undefined;
+    return { epoch: row?.count ? `${row.count}:${row.latest}` : null, cleanupPending: row?.pending ?? false };
+  }
+
+  async setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void> {
+    await resolveQueryable(this.db).update(schema.messages).set({ components: sql`(SELECT jsonb_agg(CASE
+      WHEN item->>'id' = ${componentId} AND item->'data'->>'assetDeletedAt' IS NOT NULL
+      THEN jsonb_set(item, '{data,assetBlobCleanup}', ${JSON.stringify(blobCleanup)}::jsonb) ELSE item END ORDER BY ordinal)
+      FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))` })
+      .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.id, messageId)));
+  }
+
+  async markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean> {
+    const deletedAt = new Date().toISOString();
+    const deletedData = { assetDeletedAt: deletedAt, availability: 'deleted', assetBlobCleanup: component.type === 'artifact' ? 'pending' : 'done', ...(component.type === 'text'
+      ? { content: '', assetDeletedProgramHash: createHash('sha256').update(String(component.data.content)).digest('hex') } : {}) };
+    const rows = await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'id' = ${component.id}
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify(deletedData)}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+      content: component.type === 'text' && typeof component.data.content === 'string'
+        ? sql`replace(coalesce(${schema.messages.content}, ''), ${component.data.content}, '')` : schema.messages.content,
+      updatedAt: new Date(),
+    }).where(and(eq(schema.messages.id, messageId), eq(schema.messages.conversationId, conversationId),
+      eq(schema.messages.isComplete, true), eq(schema.messages.isStreaming, false),
+      sql`${schema.messages.components} @> ${JSON.stringify([component])}::jsonb`)).returning({ id: schema.messages.id });
+    return rows.length > 0;
+  }
+
+  async recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean> {
+    const rows = await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'id' = ${component.id}
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify(metadata)}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+    }).where(and(eq(schema.messages.id, messageId), eq(schema.messages.conversationId, conversationId),
+      eq(schema.messages.isComplete, true), eq(schema.messages.isStreaming, false),
+      sql`${schema.messages.components} @> ${JSON.stringify([component])}::jsonb`)).returning({ id: schema.messages.id });
+    return rows.length > 0;
+  }
+
+  async markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void> {
+    await resolveQueryable(this.db).update(schema.messages).set({
+      components: sql`(SELECT jsonb_agg(CASE WHEN item->>'type' = 'artifact' AND item->'data'->>'artifactId' = ${documentId} AND item->'data'->>'assetDeletedAt' IS NULL
+        THEN jsonb_set(item, '{data}', (item->'data') || ${JSON.stringify({ assetDeletedAt: new Date().toISOString(), availability: 'deleted' })}::jsonb)
+        ELSE item END ORDER BY ordinal) FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal))`,
+      updatedAt: new Date(),
+    }).where(and(eq(schema.messages.conversationId, conversationId),
+      sql`${schema.messages.components} @> ${JSON.stringify([{ type: 'artifact', data: { artifactId: documentId } }])}::jsonb`));
+  }
+
+  async canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean> {
+    const [row] = await this.db.select({ id: schema.conversations.id }).from(schema.conversations)
+      .where(and(eq(schema.conversations.id, conversationId), eq(schema.conversations.initializationStatus, 'ready'),
+        or(eq(schema.conversations.createdBy, actorId), sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm
+          WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${actorId})`))).limit(1);
+    return Boolean(row);
+  }
+
+  private openUiStateWhere(key: OpenUiAppStateKey) {
+    const table = schema.openUiAppStates;
+    return and(eq(table.actorId, key.actorId), eq(table.conversationId, key.conversationId),
+      eq(table.sourceMessageId, key.sourceMessageId), eq(table.componentId, key.componentId), eq(table.programDigest, key.programDigest));
+  }
+
+  async getOpenUiAppState(key: OpenUiAppStateKey): Promise<OpenUiAppStateRecord | null> {
+    const [row] = await this.db.select().from(schema.openUiAppStates).where(this.openUiStateWhere(key)).limit(1);
+    return row ?? null;
+  }
+
+  async putOpenUiAppState(key: OpenUiAppStateKey, expectedRevision: number, state: Record<string, unknown>): Promise<OpenUiAppStateRecord | null> {
+    return this.db.transaction(async tx => {
+      // Lock parent before message, matching cascade deletion order, and recheck write membership.
+      const [conversation] = await tx.select({ id: schema.conversations.id }).from(schema.conversations)
+        .where(and(eq(schema.conversations.id, key.conversationId), eq(schema.conversations.initializationStatus, 'ready'),
+          or(eq(schema.conversations.createdBy, key.actorId), sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm
+            WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${key.actorId})`))).limit(1).for('share');
+      if (!conversation) return null;
+      // Fence component replacement/deletion while validating and publishing the draft.
+      const [message] = await tx.select().from(schema.messages).where(and(eq(schema.messages.id, key.sourceMessageId),
+        eq(schema.messages.conversationId, key.conversationId))).limit(1).for('update');
+      const components = message?.components as MessageComponent[] | undefined;
+      const content = components?.find(component => component.id === key.componentId && component.type === 'text')?.data?.content;
+      if (!message || message.conversationType !== 'ai' || message.isStreaming || !message.isComplete || components?.find(component => component.id === key.componentId)?.data.assetDeletedAt
+        || typeof content !== 'string' || createHash('sha256').update(content, 'utf8').digest('hex') !== key.programDigest) return null;
+      const table = schema.openUiAppStates;
+      if (expectedRevision === 0) {
+        const [row] = await tx.insert(table).values({ ...key, state, stateRevision: 1 })
+          .onConflictDoNothing().returning();
+        return row ?? null;
+      }
+      const [row] = await tx.update(table).set({ state, stateRevision: sql`${table.stateRevision} + 1`, updatedAt: new Date() })
+        .where(and(this.openUiStateWhere(key), eq(table.stateRevision, expectedRevision))).returning();
+      return row ?? null;
+    });
+  }
 
   async createUser(input: Parameters<MessageStore['createUser']>[0]): Promise<MessageRecord> {
     return this.db.transaction(async (tx) => {
@@ -59,12 +220,20 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]> {
+    const readyArtifact = sql`item->>'type' = 'artifact' AND item->'data'->>'assetDeletedAt' IS NULL
+      AND coalesce(item->'data'->>'availability', 'ready') = 'ready'
+      AND NOT EXISTS (SELECT 1 FROM ${schema.workspaceDocuments}
+        WHERE ${schema.workspaceDocuments.workspaceId} = ${schema.conversations.systemWorkspaceId}
+        AND ${schema.workspaceDocuments.metadata}->>'assetDeletedAt' IS NOT NULL
+        AND (${schema.workspaceDocuments.id} = item->'data'->>'artifactId'
+          OR (${schema.workspaceDocuments.path} = item->'data'->>'storagePath' AND item->'data'->>'storagePath' <> ''))) `;
     const rows = await this.db
       .select({
         id: schema.messages.id,
         conversationId: schema.messages.conversationId,
         conversationTitle: schema.conversations.title,
-        components: schema.messages.components,
+        components: sql<MessageComponent[]>`(SELECT coalesce(jsonb_agg(item ORDER BY ordinal), '[]'::jsonb)
+          FROM jsonb_array_elements(${schema.messages.components}) WITH ORDINALITY AS entries(item, ordinal) WHERE ${readyArtifact})`,
         updatedAt: schema.messages.updatedAt,
       })
       .from(schema.messages)
@@ -80,6 +249,7 @@ export class PostgresMessageStore implements MessageStore {
           sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${userId})`,
         ),
         sql`${schema.messages.components} @> '[{"type":"artifact"}]'::jsonb`,
+        sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${schema.messages.components}) AS item WHERE ${readyArtifact})`,
       ))
       .orderBy(desc(schema.messages.updatedAt), desc(schema.messages.id))
       .limit(limit);
@@ -294,6 +464,12 @@ export class PostgresMessageStore implements MessageStore {
     return row ? mapPostgresMessage(row) : null;
   }
 
+  async findByIdInConversation(conversationId: string, id: string): Promise<MessageRecord | null> {
+    const [row] = await this.db.select().from(schema.messages)
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationId, conversationId))).limit(1);
+    return row ? mapPostgresMessage(row) : null;
+  }
+
   async listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }> {
     const where = input.conversationType ? and(eq(schema.messages.conversationId, input.conversationId), eq(schema.messages.conversationType, input.conversationType)) : eq(schema.messages.conversationId, input.conversationId);
     const [rows, count] = await Promise.all([
@@ -374,8 +550,11 @@ export class PostgresMessageStore implements MessageStore {
     return { user: mapPostgresMessage(turn.user), aiId: turn.aiId?.trim() };
   }
 
-  async updateFeedback(id: string, feedback: MessageRecord['feedback'], feedbackAt: Date) {
-    return this.update(id, { feedback, feedbackAt });
+  async updateFeedback(id: string, feedback: MessageRecord['feedback'], feedbackAt: Date, conversationId?: string) {
+    const [row] = await this.db.update(schema.messages).set({ feedback, feedbackAt, updatedAt: feedbackAt })
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'ai'),
+        conversationId === undefined ? undefined : eq(schema.messages.conversationId, conversationId))).returning();
+    return row ? mapPostgresMessage(row) : null;
   }
 
   async updateReliability(id: string, evaluation: NonNullable<MessageRecord['reliabilityEvaluation']>) {
@@ -405,7 +584,7 @@ export class PostgresMessageStore implements MessageStore {
     return rows.length === 1;
   }
 
-  async renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean> {
+  async renewStream(id: string, leaseId: string, expiresAt: Date, components?: MessageComponent[]): Promise<boolean> {
     const now = new Date();
     const rows = await this.db
       .update(schema.messages)
@@ -413,6 +592,7 @@ export class PostgresMessageStore implements MessageStore {
         streamExecutionLeaseExpiresAt: expiresAt,
         lastProgressAt: now,
         updatedAt: now,
+        ...(components ? { components } : {}),
       })
       .where(and(eq(schema.messages.id, id), eq(schema.messages.streamExecutionLeaseId, leaseId), eq(schema.messages.isComplete, false)))
       .returning({ id: schema.messages.id });
@@ -605,6 +785,7 @@ export class PostgresMessageStore implements MessageStore {
         isStreaming: false,
         isComplete: false,
         executionStatus: 'interrupted',
+        components: sql`COALESCE(${schema.messages.components}, '[]'::jsonb) || ${JSON.stringify([{ id: `interrupted-${id}`, type: 'error', data: { code: ErrorCode.CHAT_STREAM_FAILED, reason: 'interrupted' } }])}::jsonb`,
         interruptionReason: reason,
         executionTerminalAt: now,
         streamExecutionLeaseId: null,
@@ -706,7 +887,7 @@ export class PostgresMessageStore implements MessageStore {
     return result.rowCount ?? 0;
   }
 
-  async updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null> {
+  async updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }, scope?: { conversationId: string; senderId: string }): Promise<MessageRecord | null> {
     const [row] = await this.db
       .update(schema.messages)
       .set({
@@ -717,7 +898,9 @@ export class PostgresMessageStore implements MessageStore {
         ...(input.memberIds !== undefined ? { memberIds: input.memberIds } : {}),
         updatedAt: input.editedAt,
       })
-      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'user')))
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'user'),
+        scope ? eq(schema.messages.conversationId, scope.conversationId) : undefined,
+        scope ? eq(schema.messages.senderId, scope.senderId) : undefined))
       .returning();
     return row ? mapPostgresMessage(row) : null;
   }
@@ -726,12 +909,13 @@ export class PostgresMessageStore implements MessageStore {
     return (await this.db.delete(schema.messages).where(eq(schema.messages.conversationId, conversationId)).returning({ id: schema.messages.id })).length;
   }
 
-  async findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]> {
+  async findBranchesByQuestion(questionMessageId: string, conversationId?: string): Promise<MessageRecord[]> {
     return (
       await this.db
         .select()
         .from(schema.messages)
-        .where(and(eq(schema.messages.questionMessageId, questionMessageId), eq(schema.messages.conversationType, 'ai')))
+        .where(and(eq(schema.messages.questionMessageId, questionMessageId), eq(schema.messages.conversationType, 'ai'),
+          conversationId === undefined ? undefined : eq(schema.messages.conversationId, conversationId)))
         .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
     ).map(mapPostgresMessage);
   }

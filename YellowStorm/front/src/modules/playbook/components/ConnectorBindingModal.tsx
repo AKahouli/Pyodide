@@ -188,7 +188,7 @@ export function ConnectorBindingModal({
             <Loader2 className='h-5 w-5 animate-spin text-muted-foreground' />
           </div>
         ) : connector ? (
-          <div className='flex-1 space-y-4 overflow-y-auto pr-1'>
+          <div className='flex-1 space-y-4 overflow-y-auto pe-1'>
             {isOAuthConnector && (
               <div className='rounded-md border p-3 space-y-2'>
                 <div className='flex items-center gap-2'>

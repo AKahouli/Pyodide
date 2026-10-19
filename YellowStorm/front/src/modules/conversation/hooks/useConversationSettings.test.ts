@@ -23,6 +23,14 @@ describe('useConversationSettings', () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it('updates mounted consumers when only the HTML policy changes', () => {
+    setCachedConversationSettings({ composerSuggestions, generativeUi: { htmlMode: 'interactive' } });
+    const { result } = renderHook(() => useConversationSettings());
+    expect(result.current?.generativeUi?.htmlMode).toBe('interactive');
+    act(() => setCachedConversationSettings({ composerSuggestions, generativeUi: { htmlMode: 'strict' } }));
+    expect(result.current?.generativeUi?.htmlMode).toBe('strict');
+  });
+
   it('updates mounted consumers when redaction is re-enabled', () => {
     setCachedConversationSettings({ composerSuggestions, redactSensitiveText: false });
     const { result } = renderHook(() => useConversationSettings());

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
+import ssl
+import subprocess
+import tempfile
+import threading
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
@@ -116,11 +123,133 @@ async def test_recovery_is_optional_for_repositories_without_it(monkeypatch: pyt
     assert await OutboxDispatcher(repo).recover_once() == {"exhausted": 0, "requeued": 0}
 
 
-def test_broker_ssl_only_verifies_rediss():
+def test_broker_ssl_verifies_rediss_peers(monkeypatch: pytest.MonkeyPatch):
     import ssl
 
     from app.workers.celery_app import broker_ssl
 
+    monkeypatch.delenv("SEMANTIC_BROKER_CA_CERTS", raising=False)
+    # Non-TLS transports keep their own semantics; rediss:// always verifies.
     assert broker_ssl("amqp://user:pass@host:5672/vhost") is False
     assert broker_ssl("redis://:pass@host:6379/3") is False
-    assert broker_ssl("rediss://:pass@host:6380/3") == {"ssl_cert_reqs": ssl.CERT_NONE}
+    assert broker_ssl("rediss://:pass@host:6380/3") == {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+    handle, name = tempfile.mkstemp(prefix="broker-ca-", suffix=".pem")
+    os.close(handle)
+    bundle = Path(name)
+    try:
+        bundle.write_text("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n", encoding="utf-8")
+        monkeypatch.setenv("SEMANTIC_BROKER_CA_CERTS", str(bundle))
+        assert broker_ssl("rediss://:pass@host:6380/3") == {
+            "ssl_cert_reqs": ssl.CERT_REQUIRED, "ssl_ca_certs": str(bundle)}
+    finally:
+        bundle.unlink(missing_ok=True)
+    # A missing bundle fails startup instead of connecting without trust.
+    monkeypatch.setenv("SEMANTIC_BROKER_CA_CERTS", str(Path("Z:/definitely/missing/ca.pem")))
+    with pytest.raises(RuntimeError):
+        broker_ssl("rediss://:pass@host:6380/3")
+
+
+def _tls_options(options: dict) -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = options["ssl_cert_reqs"]
+    if options.get("ssl_ca_certs"):
+        context.load_verify_locations(cafile=options["ssl_ca_certs"])
+    else:
+        context.load_default_certs()
+    return context
+
+
+@pytest.fixture(scope="module")
+def broker_tls_fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """A test CA, a server certificate it signed, and an untrusted self-signed
+    certificate, generated once for the TLS handshake cases."""
+    import shutil
+
+    openssl = shutil.which("openssl")
+    if not openssl and Path("C:/Program Files/Git/usr/bin/openssl.exe").is_file():
+        openssl = "C:/Program Files/Git/usr/bin/openssl.exe"
+    if not openssl:
+        pytest.skip("openssl not available for the TLS fixture")
+    directory = tmp_path_factory.mktemp("broker-tls")
+    config = directory / "openssl.cnf"
+    config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ca\n"
+                      "[dn]\n[ca]\nbasicConstraints=critical,CA:TRUE\n"
+                      "keyUsage=critical,keyCertSign,cRLSign\n", encoding="utf-8")
+    def run(*args: str) -> None:
+        subprocess.run([str(openssl), *args], check=True, capture_output=True, timeout=15,
+                       env={**os.environ, "OPENSSL_CONF": str(config)})
+    run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+        "-subj", "/CN=test-ca", "-keyout", str(directory / "ca.key"),
+        "-out", str(directory / "ca.pem"))
+    run("req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=localhost",
+        "-keyout", str(directory / "server.key"), "-out", str(directory / "server.csr"))
+    (directory / "ext.cnf").write_text("subjectAltName=DNS:localhost,IP:127.0.0.1\n", encoding="utf-8")
+    run("x509", "-req", "-in", str(directory / "server.csr"),
+        "-CA", str(directory / "ca.pem"), "-CAkey", str(directory / "ca.key"),
+        "-CAcreateserial", "-extfile", str(directory / "ext.cnf"),
+        "-days", "1", "-out", str(directory / "server.pem"))
+    run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+        "-subj", "/CN=untrusted", "-keyout", str(directory / "rogue.key"),
+        "-out", str(directory / "rogue.pem"))
+    return {"directory": directory, "chain": directory / "ca.pem"}
+
+
+def _serve_tls(directory: Path, cert: str, key: str) -> tuple[ssl.SSLSocket, str, int]:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(directory / cert), str(directory / key))
+    server = context.wrap_socket(server, server_side=True)
+    port = server.getsockname()[1]
+    return server, "127.0.0.1", port
+
+
+def _handshake(options: dict, host: str, port: int) -> bool:
+    with socket.create_connection((host, port), timeout=5) as raw:
+        with _tls_options(options).wrap_socket(raw, server_hostname="localhost"):
+            return True
+
+
+def test_rediss_config_accepts_a_trusted_ca(broker_tls_fixtures: dict, monkeypatch: pytest.MonkeyPatch):
+    from app.workers.celery_app import broker_ssl
+
+    monkeypatch.setenv("SEMANTIC_BROKER_CA_CERTS", str(broker_tls_fixtures["chain"]))
+    options = broker_ssl("rediss://:pass@host:6380/3")
+    server, host, port = _serve_tls(broker_tls_fixtures["directory"], "server.pem", "server.key")
+
+    def accept():
+        try:
+            server.accept()
+        except Exception:
+            pass
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    try:
+        assert _handshake(options, host, port) is True
+    finally:
+        thread.join(timeout=5)
+        server.close()
+
+
+def test_rediss_config_rejects_an_untrusted_certificate(broker_tls_fixtures: dict, monkeypatch: pytest.MonkeyPatch):
+    from app.workers.celery_app import broker_ssl
+
+    monkeypatch.delenv("SEMANTIC_BROKER_CA_CERTS", raising=False)
+    options = broker_ssl("rediss://:pass@host:6380/3")
+    server, host, port = _serve_tls(broker_tls_fixtures["directory"], "rogue.pem", "rogue.key")
+
+    def accept():
+        try:
+            server.accept()
+        except Exception:
+            pass
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(ssl.SSLError):
+            _handshake(options, host, port)
+    finally:
+        thread.join(timeout=5)
+        server.close()

@@ -1,8 +1,11 @@
 import { isObjectId } from '@common/postgres/object-id';
 import { normalizeObjectId } from '@common/postgres/object-id';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { ENCRYPTED_CONNECTOR_HEADERS, PORTABLE_CONNECTOR_HEADERS, openConnectorHeaders, sealConnectorHeaders } from '../connector-auth.service';
+import { assertMcpSecurityManager, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from '../utils/mcp-security-policy';
 import { CryptoService } from '../../../common/services/crypto.service';
-import { BadRequestException } from '../../exceptions';
+import { BadRequestException, ConflictException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { SKILL_STORE,   type SkillStore } from '../../skill/persistence/skill.store';
 import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
@@ -26,6 +29,7 @@ import {
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
+import { assertNoUrlCredentials, sanitizeEndpointUrl, sanitizeMcpPublicMetadata } from '../utils/remote-mcp-transport.util';
 import { PgSkillCategoryStore } from '../../skill/persistence/pg-skill.store';
 import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
 import { PgConnectorCredentialStore } from '../persistence/pg-connector.store';
@@ -39,6 +43,7 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 @Injectable()
 export class CatalogTransferService {
+  private readonly decryptedSecurityArchives = new WeakSet<CatalogArchiveV1>();
   constructor(
     private readonly connectorStore: PgConnectorStore,
     private readonly connectorCategoryStore: PgConnectorCategoryStore,
@@ -50,6 +55,7 @@ export class CatalogTransferService {
     private readonly appConnectionStore: PgUserAppConnectionStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly cryptoService: CryptoService,
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   async exportConnectors(
@@ -96,6 +102,7 @@ export class CatalogTransferService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Security settings must be stored in an encrypted catalog archive.');
     }
     this.validateArchive(archive);
+    if (encrypted && archive.securityIncluded) this.decryptedSecurityArchives.add(archive);
     return archive;
   }
 
@@ -103,7 +110,11 @@ export class CatalogTransferService {
     userId: string,
     archive: CatalogArchiveV1,
     conflictPolicy: CatalogConflictPolicy,
+    permissions: readonly string[] = [],
   ): Promise<CatalogImportResult> {
+    if (archive.connectors.some(connector => connector.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+      || (connector.runtimeAuthConfig?.strategy === PORTABLE_CONNECTOR_HEADERS && !this.decryptedSecurityArchives.has(archive))))
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Portable connector credentials require an authenticated encrypted archive');
     const ownerId = normalizeObjectId(userId);
     const result: CatalogImportResult = {
       skills: { created: 0, updated: 0, skipped: 0 },
@@ -141,6 +152,7 @@ export class CatalogTransferService {
         skillIds,
         conflictPolicy,
         result,
+        permissions,
       );
       if (archive.securityIncluded && archive.security) {
         await this.importSecurity(archive, ownerId, conflictPolicy, result);
@@ -406,9 +418,22 @@ export class CatalogTransferService {
     skillIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
     result: CatalogImportResult,
+    permissions: readonly string[] = [],
   ): Promise<void> {
     const createdBy = String(ownerId);
     for (const connector of connectors) {
+      // WP02.6: catalog archives cannot reintroduce endpoint URLs that embed
+      // credentials into connector storage.
+      if (connector.mcpServerUrl) {
+        try {
+          assertNoUrlCredentials(connector.mcpServerUrl);
+        } catch {
+          throw new BadRequestException(
+            ErrorCode.BAD_REQUEST,
+            `Connector '${connector.slug}' has an endpoint URL with embedded credentials.`,
+          );
+        }
+      }
       const existing = await this.connectorStore.findBySlugAndOwner(connector.slug, createdBy);
       const missingSkills = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
       if (missingSkills.length) {
@@ -445,25 +470,53 @@ export class CatalogTransferService {
         isActive: connector.isActive ?? true,
       };
       if (existing) {
-        await this.connectorStore.update(existing.id, {
+        // Structure-only archives carry no credential config: preserve the
+        // target's stored secrets instead of clobbering them (SEC-02).
+        if (existing.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+          && Object.keys(connector.runtimeAuthConfig ?? {}).length
+          && connector.runtimeAuthConfig?.strategy !== PORTABLE_CONNECTOR_HEADERS)
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Encrypted authentication requires a portable encrypted credential archive');
+        const archivedRuntimeAuthConfig = this.importRuntimeHeaders(connector, existing.id, existing.mcpSecurityPolicy);
+        const preserveStoredAuth = !Object.keys(archivedRuntimeAuthConfig).length
+          && (existing.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+            || existing.mcpServerUrl !== sanitizeEndpointUrl(existing.mcpServerUrl));
+        const archivedMcpServerConfig = preserveStoredAuth ? {} : connector.mcpServerConfig ?? {};
+        if (preserveStoredAuth) {
+          common.mcpServerUrl = existing.mcpServerUrl;
+          common.authType = existing.authType;
+          common.authSourceType = existing.authSourceType;
+          common.connectedAppKey = existing.connectedAppKey;
+        }
+        const patch = {
           ...common,
-          runtimeAuthConfig: this.restoreRedactedValues(
-            connector.runtimeAuthConfig,
-            existing.runtimeAuthConfig ?? {},
-          ) as Record<string, unknown>,
-          mcpServerConfig: this.restoreRedactedValues(
-            connector.mcpServerConfig,
-            existing.mcpServerConfig ?? {},
-          ) as Record<string, unknown>,
-          dynamicHeaders: (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
+          ...(Object.keys(archivedRuntimeAuthConfig).length > 0
+            ? { runtimeAuthConfig: this.restoreRedactedValues(
+                archivedRuntimeAuthConfig,
+                existing.runtimeAuthConfig ?? {},
+              ) as Record<string, unknown> }
+            : {}),
+          ...(Object.keys(archivedMcpServerConfig).length > 0
+            ? { mcpServerConfig: this.restoreRedactedValues(
+                archivedMcpServerConfig,
+                existing.mcpServerConfig ?? {},
+              ) as Record<string, unknown> }
+            : {}),
+          dynamicHeaders: preserveStoredAuth ? existing.dynamicHeaders : (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
           actions: (connector.actions ?? []) as ConnectorAction[],
           isHidden: connector.isHidden ?? false,
-        });
+        };
+        // CAS prevents stale writes; it is not permission to change the endpoint
+        // or credentials of a connector carrying a trusted policy.
+        if (isPrivilegedMcpPolicy(normalizeMcpSecurityPolicy(existing.mcpSecurityPolicy))
+          && mcpBindingChanged(existing, patch)) assertMcpSecurityManager(permissions);
+        const updated = await this.connectorStore.update(existing.id, patch, existing.securityRevision ?? 1);
+        if (!updated) throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector changed during catalog import');
         result.connectors.updated += 1;
       } else {
-        await this.connectorStore.insert({
+        const portable = connector.runtimeAuthConfig?.strategy === PORTABLE_CONNECTOR_HEADERS;
+        const inserted = await this.connectorStore.insert({
           ...common,
-          runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
+          runtimeAuthConfig: portable ? {} : connector.runtimeAuthConfig ?? {},
           mcpServerConfig: connector.mcpServerConfig ?? {},
           dynamicHeaders: (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
           actions: (connector.actions ?? []) as ConnectorAction[],
@@ -471,6 +524,11 @@ export class CatalogTransferService {
           isHidden: connector.isHidden ?? false,
           createdBy,
         });
+        if (portable) {
+          const runtimeAuthConfig = this.importRuntimeHeaders(connector, inserted.id, inserted.mcpSecurityPolicy);
+          const updated = await this.connectorStore.update(inserted.id, { runtimeAuthConfig }, inserted.securityRevision);
+          if (!updated) throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector changed during catalog credential import');
+        }
         result.connectors.created += 1;
       }
     }
@@ -659,8 +717,11 @@ export class CatalogTransferService {
     skillSlugById: Map<string, string>,
     includeSecurity: boolean,
   ): CatalogConnectorRecord {
-    const protect = (value: Record<string, unknown>) => includeSecurity ? value : this.redactSecrets(value);
-    return {
+    // SEC-02: unencrypted exports carry NO credential-capable config at all —
+    // the previous key-name denylist missed headerPrefix and arbitrary nested
+    // fields. Full credential transfer requires the encrypted, permission-
+    // gated includeSecurity archive.
+    const projected: CatalogConnectorRecord = {
       slug: connector.slug,
       name: connector.name,
       description: connector.description ?? '',
@@ -672,10 +733,16 @@ export class CatalogTransferService {
       authConfigSchema: connector.authConfigSchema ?? {},
       authSourceType: connector.authSourceType ?? 'credential',
       connectedAppKey: connector.connectedAppKey ?? '',
-      runtimeAuthConfig: protect(connector.runtimeAuthConfig ?? {}),
+      runtimeAuthConfig: includeSecurity && connector.runtimeAuthConfig?.strategy === ENCRYPTED_CONNECTOR_HEADERS
+        ? { strategy: PORTABLE_CONNECTOR_HEADERS, destination: connector.mcpServerUrl,
+            policy: normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy),
+            headers: this.exportRuntimeHeaders(connector) }
+        : includeSecurity ? connector.runtimeAuthConfig ?? {} : {},
       mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
-      mcpServerUrl: connector.mcpServerUrl ?? '',
-      mcpServerConfig: protect(connector.mcpServerConfig ?? {}),
+      mcpServerUrl: includeSecurity
+        ? connector.mcpServerUrl ?? ''
+        : sanitizeEndpointUrl(connector.mcpServerUrl ?? ''),
+      mcpServerConfig: includeSecurity ? connector.mcpServerConfig ?? {} : {},
       workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
       dynamicHeaders: (connector.dynamicHeaders ?? []).map((header: Record<string, any>) => ({
         headerName: header.headerName,
@@ -705,19 +772,44 @@ export class CatalogTransferService {
       isSystem: connector.isSystem ?? false,
       isHidden: connector.isHidden ?? false,
     };
+    if (includeSecurity) return projected;
+    if (connector.mcpServerUrl && !sanitizeEndpointUrl(connector.mcpServerUrl)) {
+      // A malformed legacy endpoint has no safe free-text credential boundary.
+      // Export a disabled structural stub; privileged encrypted archives retain
+      // the original for explicitly approved operator reconciliation.
+      return {
+        slug: `migration-${connector.id}`, name: 'Connector credential migration required', description: '',
+        icon: '', color: '', iconColor: 'light', categoryName: null, authType: 'none', authConfigSchema: {},
+        authSourceType: 'none', connectedAppKey: '', runtimeAuthConfig: {}, mcpTransportType: 'streamable_http',
+        mcpServerUrl: '', mcpServerConfig: {},
+        workerPolicy: { enabled: false, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
+        dynamicHeaders: [], actions: [], referencedSkillSlugs: [], isActive: false, isSystem: false, isHidden: false,
+      };
+    }
+    return sanitizeMcpPublicMetadata(projected, connector.mcpServerUrl);
   }
 
-  private redactSecrets(value: Record<string, unknown>): Record<string, unknown> {
-    const visit = (current: unknown, parentKey = ''): unknown => {
-      if (Array.isArray(current)) return current.map((item) => visit(item, parentKey));
-      if (!current || typeof current !== 'object') return current;
-      return Object.fromEntries(Object.entries(current as Record<string, unknown>).map(([key, item]) => {
-        const sensitive = /token|secret|password|authorization|api[_-]?key/i.test(key)
-          || /headers?|env/i.test(parentKey);
-        return [key, sensitive ? '__REDACTED__' : visit(item, key)];
-      }));
-    };
-    return visit(value) as Record<string, unknown>;
+  private exportRuntimeHeaders(connector: Record<string, unknown>): Record<string, string> {
+    const runtime = connector.runtimeAuthConfig as Record<string, unknown>;
+    if (connector.authSourceType !== 'server_config' || connector.connectedAppKey || runtime.destination !== connector.mcpServerUrl)
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Encrypted connector binding is invalid');
+    return openConnectorHeaders(this.cryptoService, this.configService, connector.id as string, runtime).headers;
+  }
+
+  private importRuntimeHeaders(connector: CatalogConnectorRecord, targetId: string, targetPolicy: unknown): Record<string, unknown> {
+    const runtime = connector.runtimeAuthConfig ?? {};
+    if (runtime.strategy !== PORTABLE_CONNECTOR_HEADERS) return runtime;
+    const policy = normalizeMcpSecurityPolicy(targetPolicy);
+    if (connector.authSourceType !== 'server_config' || connector.connectedAppKey || runtime.destination !== connector.mcpServerUrl
+      || JSON.stringify(normalizeMcpSecurityPolicy(runtime.policy)) !== JSON.stringify(policy))
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Portable credentials require a matching target MCP policy and destination');
+    const headers = runtime.headers as Record<string, string>;
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)
+      || (policy.profile === 'internal_jwt' && Object.keys(headers).some(name => name.toLowerCase() === 'authorization'))
+      || Object.keys(connector.mcpServerConfig?.headers as object || {}).length
+      || connector.dynamicHeaders.some(header => Object.keys(headers).some(name => name.toLowerCase() === header.headerName.toLowerCase())))
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Portable authentication conflicts with target header authority');
+    return sealConnectorHeaders(this.cryptoService, this.configService, targetId, connector.mcpServerUrl, headers);
   }
 
   private restoreRedactedValues(imported: unknown, existing: unknown): unknown {

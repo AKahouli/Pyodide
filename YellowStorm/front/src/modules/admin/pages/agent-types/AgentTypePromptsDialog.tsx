@@ -181,7 +181,7 @@ export function AgentTypePromptsDialog({
                         <button
                           key={model.id}
                           onClick={() => setSelectedModelId(model.name)}
-                          className={`w-full text-left px-3 py-2 rounded-sm text-sm flex items-center gap-2 transition-colors ${
+                          className={`w-full text-start px-3 py-2 rounded-sm text-sm flex items-center gap-2 transition-colors ${
                             isSelected
                               ? "bg-accent text-accent-foreground"
                               : "hover:bg-muted"
@@ -230,9 +230,9 @@ export function AgentTypePromptsDialog({
                   <div className="flex items-center gap-2 mt-3">
                     <Button onClick={handleSave} disabled={saving} size="sm">
                       {saving ? (
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Save className="mr-2 h-3.5 w-3.5" />
+                        <Save className="me-2 h-3.5 w-3.5" />
                       )}
                       {t("agentTypes.prompts.actions.save")}
                     </Button>
@@ -243,7 +243,7 @@ export function AgentTypePromptsDialog({
                         variant="destructive"
                         size="sm"
                       >
-                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        <Trash2 className="me-2 h-3.5 w-3.5" />
                         {t("agentTypes.prompts.actions.delete")}
                       </Button>
                     )}
@@ -253,7 +253,7 @@ export function AgentTypePromptsDialog({
                       variant="outline"
                       size="sm"
                     >
-                      <Copy className="mr-2 h-3.5 w-3.5" />
+                      <Copy className="me-2 h-3.5 w-3.5" />
                       {t("agentTypes.prompts.actions.copyDefault")}
                     </Button>
                   </div>

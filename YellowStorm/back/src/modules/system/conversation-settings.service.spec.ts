@@ -42,6 +42,30 @@ describe('ConversationSettingsService', () => {
     expect(result.redactSensitiveText).toBe(true);
   });
 
+  it.each([undefined, {}, { htmlMode: 'unknown' }, { htmlMode: true }, null])(
+    'defaults unknown persisted HTML policy %p to strict', async (generativeUi) => {
+      get.mockResolvedValue(settingRow({ generativeUi }));
+      const service = new ConversationSettingsService(store as any, agents as any);
+      await expect(service.getSettings()).resolves.toMatchObject({ generativeUi: { htmlMode: 'strict' } });
+    },
+  );
+
+  it('persists HTML mode and preserves it for older clients omitting the setting', async () => {
+    get.mockResolvedValue(null);
+    const service = new ConversationSettingsService(store as any, agents as any);
+    await service.updateSettings({
+      composerSuggestions: DEFAULT_CONVERSATION_SETTINGS.composerSuggestions,
+      generativeUi: { htmlMode: 'interactive' },
+    });
+    await expect(service.updateSettings({ composerSuggestions: DEFAULT_CONVERSATION_SETTINGS.composerSuggestions }))
+      .resolves.toMatchObject({ generativeUi: { htmlMode: 'interactive' } });
+    expect(upsert).toHaveBeenLastCalledWith('conversation_settings', expect.objectContaining({ generativeUi: { htmlMode: 'interactive' } }));
+
+    const reloaded = new ConversationSettingsService(store as any, agents as any);
+    get.mockResolvedValue(settingRow(upsert.mock.calls.at(-1)?.[1]));
+    await expect(reloaded.getSettings()).resolves.toMatchObject({ generativeUi: { htmlMode: 'interactive' } });
+  });
+
   it('preloads a persisted disabled setting before serving requests', async () => {
     get.mockResolvedValue(settingRow({ redactSensitiveText: false }));
     const service = new ConversationSettingsService(store as any, agents as any);
@@ -69,7 +93,7 @@ describe('ConversationSettingsService', () => {
     expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.composerSuggestions.agentId);
     expect(upsert).toHaveBeenCalledWith(
       'conversation_settings',
-      { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true, conversationName: DEFAULT_CONVERSATION_SETTINGS.conversationName, compaction: DEFAULT_CONVERSATION_SETTINGS.compaction, attachmentIntelligence: DEFAULT_CONVERSATION_SETTINGS.attachmentIntelligence },
+      { ...value, generativeUi: DEFAULT_CONVERSATION_SETTINGS.generativeUi, redactSensitiveText: true, latencyInstrumentationEnabled: true, conversationName: DEFAULT_CONVERSATION_SETTINGS.conversationName, compaction: DEFAULT_CONVERSATION_SETTINGS.compaction, attachmentIntelligence: DEFAULT_CONVERSATION_SETTINGS.attachmentIntelligence },
     );
   });
 

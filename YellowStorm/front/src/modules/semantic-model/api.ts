@@ -6,6 +6,8 @@ SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationF
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult, ModelHealth } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
+import type { MyJobsPage, MyJobsQuery } from './types';
+import type { DocumentFieldSuggestions } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -257,8 +259,8 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { params: { environment } }));
   },
   /** Build (or build again, after a stop) the search index of the model's data, in the background. */
-  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
-    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment }));
+  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft', expectation: import('./types').SearchIndexRetryExpectation = {}): Promise<SearchIndexStatus> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment, ...expectation }));
   },
   /** Stop the build of the search index. A running build ends at its next batch; what it embedded is kept. */
   async stopSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus & { stopped: boolean }> {
@@ -306,6 +308,9 @@ export const semanticModelApi = {
   /** Labels and headings that recur across up to 10 documents of a source, to suggest as rule labels. */
   async getDocumentLabels(id: string, body: { workspaceId: string; documentIds: string[] }): Promise<DocumentLabelsResponse> {
     return unwrap(await apiClient.post<ApiResponse<DocumentLabelsResponse>>(API_ENDPOINTS.semanticModels.sourceMappingDocumentLabels(id), body, { timeout: 60_000 }));
+  },
+  async suggestDocumentFields(id: string, body: { conceptId: string; workspaceId: string; documentIds: string[]; description: string }): Promise<DocumentFieldSuggestions> {
+    return unwrap(await apiClient.post<ApiResponse<DocumentFieldSuggestions>>(API_ENDPOINTS.semanticModels.documentFieldSuggestions(id), body, { timeout: 130_000 }));
   },
   async previewSourceMapping(id: string, draft: SourceMappingPreviewDraft): Promise<SourceMappingPreviewResponse> {
     // A document read with AI can take a couple of minutes.
@@ -391,6 +396,15 @@ export const semanticModelApi = {
   /** This person's latest data updates of the model, newest first. */
   async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {
     return unwrap(await apiClient.get<ApiResponse<{ items: PopulationJob[] }>>(API_ENDPOINTS.semanticModels.populationJobs(id), { params: { limit } })).items;
+  },
+  async myJobs(params: MyJobsQuery = {}): Promise<MyJobsPage> {
+    return unwrap(await apiClient.get<ApiResponse<MyJobsPage>>(API_ENDPOINTS.semanticModels.myJobs, { params }));
+  },
+  async stopMyJob(jobId: string, onlyQueued = false): Promise<PopulationJob> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.myJobStop(jobId), { onlyQueued }));
+  },
+  async removeMyQueuedJobs(modelId?: string): Promise<{ cancelled: number; skipped: number }> {
+    return unwrap(await apiClient.post<ApiResponse<{ cancelled: number; skipped: number }>>(API_ENDPOINTS.semanticModels.myQueuedJobsRemove, { modelId }));
   },
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));

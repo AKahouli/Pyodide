@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import './conversation-context-panel.css';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { useConversationUiStore } from '../uiStore';
 import { ConversationOutlineRail } from './outline/ConversationOutlineRail';
 import { RootWorkPanel } from './RootWorkPanel';
 import { RootInputPanel } from './RootInputPanel';
+
+const FilesPanel = lazy(() => import('./ConversationFilesPanel').then(module => ({ default: module.ConversationFilesPanel })));
 
 export function ConversationContextPanel({ conversationId, creatorId }: Readonly<{ conversationId: string; creatorId: string }>) {
   const { t } = useModuleTranslation('conversation');
@@ -53,15 +55,21 @@ export function ConversationContextPanel({ conversationId, creatorId }: Readonly
   const maxWidth = Math.max(260, Math.min(480, availableWidth - 560));
   const visibleWidth = Math.min(width, maxWidth);
   const content = (
-    <Tabs value={panel || 'outline'} onValueChange={(value) => setPanel(value === 'work' ? 'work' : 'outline')} className='h-full min-h-0 gap-0'>
-      <div className='flex h-14 shrink-0 items-center gap-2 border-b px-3 pr-12'>
+    <Tabs value={panel || 'outline'} onValueChange={(value) => setPanel(value === 'files' ? 'files' : value === 'work' ? 'work' : 'outline')} className='h-full min-h-0 gap-0'>
+      <div className='flex h-14 shrink-0 items-center gap-2 border-b px-3 pe-12'>
         <TabsList aria-label={t('contextPanel.title')}>
           <TabsTrigger value='outline'>{t('outline.title')}</TabsTrigger>
           <TabsTrigger value='work'>{t('contextPanel.work')}</TabsTrigger>
+          <TabsTrigger value='files'>{t('assets.tab')}</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value='outline' forceMount className='min-h-0 overflow-hidden pt-3 data-[state=inactive]:hidden'>
         <ConversationOutlineRail embedded onSelect={overlay ? () => setPanel(null) : undefined} />
+      </TabsContent>
+      <TabsContent value='files' className='custom-scrollbar min-h-0 overflow-y-auto'>
+        {panel === 'files' && <Suspense fallback={<p role='status' className='p-3 text-sm'>{t('assets.loading')}</p>}>
+          <FilesPanel conversationId={conversationId} />
+        </Suspense>}
       </TabsContent>
       <TabsContent value='work' forceMount className='custom-scrollbar min-h-0 overflow-y-auto data-[state=inactive]:hidden'>
         <RootInputPanel conversationId={conversationId} creatorId={creatorId} variant='details' />

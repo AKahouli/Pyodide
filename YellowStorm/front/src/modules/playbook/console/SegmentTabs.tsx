@@ -44,7 +44,7 @@ export function SegmentTabs({
             }`}
           >
             {t(SEGMENT_LABELS[segment])}
-            {count > 0 && <span className="ml-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">{count}</span>}
+            {count > 0 && <span className="ms-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">{count}</span>}
             <span
               aria-hidden
               className={`absolute inset-x-2 bottom-0 h-0.5 rounded-full transition-opacity ${

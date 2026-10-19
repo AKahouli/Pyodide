@@ -1,7 +1,53 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseInlineMarkdown, parseMarkdownBlocks } from './docx-export';
+import { exportBlocksToDocx, parseInlineMarkdown, parseMarkdownBlocks } from './docx-export';
+import { unzipSync, strFromU8 } from 'fflate';
 import { buildExportBlocks, buildExportFilename, fetchAllMessagesForExport } from './document-export';
-import type { Message } from '../types';
+import type { Message, MessageComponent } from '../types';
+
+vi.mock('./docx-capture', () => ({ captureChartPng: vi.fn(), captureWebPreviewPng: vi.fn() }));
+
+it('writes editable projected content rather than the raw OpenUI program', async () => {
+  const blob = await exportBlocksToDocx([{
+    label: 'Assistant',
+    components: [{ type: 'text', data: { content: 'root = Card([secret])' } } as MessageComponent],
+    parts: [{ kind: 'markdown', markdown: '## Saved report\n\nExact caption [1]\n\n| City | Visits |\n| --- | --- |\n| Tokyo | 2 |' }],
+  }], 'Export');
+  const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+  const xml = strFromU8(unzipSync(new Uint8Array(bytes))['word/document.xml']);
+  expect(xml).toContain('Saved report');
+  expect(xml).toContain('Exact caption [1]');
+  expect(xml).toContain('<w:tbl>');
+  expect(xml).toContain('Tokyo');
+  expect(xml).not.toContain('root =');
+});
+
+it('embeds the resolved image with its selected caption', async () => {
+  const originalImage = globalThis.Image;
+  class DecodedImage {
+    naturalWidth = 1;
+    naturalHeight = 1;
+    onload?: () => void;
+    set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+  }
+  vi.stubGlobal('Image', DecodedImage);
+  try {
+    const source = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
+    const blob = await exportBlocksToDocx([{ label: 'Assistant', parts: [{ kind: 'image', source, caption: 'Selected edited chart [2]' }] }], 'Images');
+    const buffer = await new Promise<ArrayBuffer>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.readAsArrayBuffer(blob); });
+    const files = unzipSync(new Uint8Array(buffer));
+    const xml = strFromU8(files['word/document.xml']);
+    expect(xml).toContain('Selected edited chart [2]');
+    expect(xml).toContain('<w:drawing>');
+    expect(Object.keys(files).some((path) => path.startsWith('word/media/') && path.endsWith('.png'))).toBe(true);
+  } finally {
+    vi.stubGlobal('Image', originalImage);
+  }
+});
 
 describe('parseMarkdownBlocks', () => {
   it('parses headings, bullets, numbered lists, quotes, and paragraphs', () => {

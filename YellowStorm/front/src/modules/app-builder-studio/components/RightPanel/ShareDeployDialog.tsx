@@ -146,7 +146,7 @@ export function ShareDeployDialog({
               }
             }}
             placeholder={t('share.searchPlaceholder')}
-            className='pl-8'
+            className='ps-8'
             autoFocus
           />
           {showResults && (
@@ -162,7 +162,7 @@ export function ShareDeployDialog({
                     <button
                       type='button'
                       onClick={() => addEmail(trimmedQuery)}
-                      className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
+                      className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent'
                     >
                       <span className='text-muted-foreground'>{t('share.addEmail')}</span>
                       <span className='truncate font-medium'>{normalizeEmail(trimmedQuery)}</span>
@@ -176,7 +176,7 @@ export function ShareDeployDialog({
                         key={u.id}
                         type='button'
                         onClick={() => addUser(u)}
-                        className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
+                        className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent'
                       >
                         <span className='flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'>
                           {initials(u)}

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceButton } from './WorkspaceButton';
 
@@ -20,10 +21,10 @@ vi.mock('../hooks/useWorkspaceStoreTranslator', () => ({
   useWorkspaceStoreTranslator: vi.fn(),
 }));
 
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => navigateMock,
-  useLocation: () => ({ pathname: '/workspace' }),
-}));
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => navigateMock, useLocation: () => ({ pathname: '/workspace' }) };
+});
 
 vi.mock('../store', () => ({
   useWorkspaceStore: (selector: (state: { openCreateModal: () => void; openCreateTemplateModal: () => void }) => unknown) =>
@@ -56,7 +57,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 
 describe('WorkspaceButton', () => {
   it('navigates to workspace and calls create actions from menu items', async () => {
-    render(<WorkspaceButton />);
+    render(<MemoryRouter><WorkspaceButton /></MemoryRouter>);
 
     await userEvent.click(screen.getByRole('button', { name: 'button.label' }));
     await userEvent.click(screen.getByRole('button', { name: 'button.menu.createWorkspace' }));

@@ -1,7 +1,8 @@
 import { Injectable,  OnModuleDestroy,  OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { LoggerService } from '../../logger';
+import { LoggerService, logDomainEvent } from '../../logger';
+
 import { ConversationService } from './conversation.service';
 import { MessageService } from './message.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -81,6 +82,7 @@ export class ConversationRecoveryService implements OnModuleInit, OnModuleDestro
       const expired = await this.messageService
         .findExpiredStreamExecutions(cutoff, RECOVERY_BATCH_LIMIT)
         .catch((error: unknown) => {
+          logDomainEvent('error', 'conversation.admission.store_error', { operation: 'recovery_scan', outcome: 'dependency_unavailable' });
           if (this.isSchemaMissing(error)) {
             if (!this.schemaMissingLogged) {
               this.schemaMissingLogged = true;
@@ -95,12 +97,9 @@ export class ConversationRecoveryService implements OnModuleInit, OnModuleDestro
           });
           return null;
         });
-      if (!expired || expired.length === 0) {
-        return { scanned: 0, interrupted: 0 };
-      }
 
       let interrupted = 0;
-      for (const attempt of expired) {
+      for (const attempt of expired ?? []) {
         try {
           const settled = await this.messageService.markExecutionInterrupted(
             attempt.id,
@@ -124,20 +123,26 @@ export class ConversationRecoveryService implements OnModuleInit, OnModuleDestro
 
       if (interrupted > 0) {
         this.logger.warn('Recovery pass settled interrupted executions', {
-          scanned: expired.length,
+          scanned: expired?.length ?? 0,
           interrupted,
         });
       }
 
       // Reclaim shared capacity slots whose owner vanished without finalizing
       // (crash between message terminal write and admission-row finalize).
-      await this.executionStore.finalizeExpired(now).catch((error: unknown) => {
+      const reclaimed = await this.executionStore.finalizeExpired(now).catch((error: unknown) => {
+        logDomainEvent('error', 'conversation.admission.store_error', { operation: 'finalize_expired', outcome: 'dependency_unavailable' });
         this.logger.error('Failed to finalize expired admission rows', {
           error: error instanceof Error ? error.message : String(error),
         });
+        return 0;
       });
+      if (reclaimed > 0) {
+        logDomainEvent('warn', 'conversation.admission.reclaimed', { operation: 'finalize_expired', outcome: 'reclaimed', count: reclaimed });
+        this.logger.warn('Recovery pass reclaimed stale admissions', { reclaimed });
+      }
 
-      return { scanned: expired.length, interrupted };
+      return { scanned: expired?.length ?? 0, interrupted };
     } finally {
       this.recoveryInFlight = false;
     }

@@ -9,6 +9,7 @@ import {
   THEMATIC_RETRIEVE_TOOL,
 } from './voice-concierge.config';
 import { ConnectorService } from '../../connector/connector.service';
+import { assertNoUrlCredentials, sanitizeEndpointUrl, sanitizeMcpPublicMetadata } from '../../connector/utils/remote-mcp-transport.util';
 
 export interface VoiceSessionEnvelope {
   wsUrl: string;
@@ -72,6 +73,16 @@ export class GeminiTokenService implements OnModuleInit {
   ): Promise<VoiceSessionEnvelope> {
     if (!this.apiKey) throw new Error('Gemini voice is not configured (WORKY_VOICE_API_KEY missing)');
 
+    const connectors = (
+      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findRuntimeBySlug(s)))
+    ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
+    if (!connectors.length) throw new Error(
+      `Voice concierge tools unavailable: none of [${WORKY_CONCIERGE_CONNECTOR_SLUGS.join(', ')}] is active with actions`,
+    );
+    // Browser relay cannot safely consume an operational query credential. Deny
+    // before minting a provider session rather than silently changing endpoints.
+    for (const connector of connectors) assertNoUrlCredentials(connector.mcpServerUrl);
+
     const now = Date.now();
     const expireMs = now + this.tokenTtlSec * 1000;
     const client = new GoogleGenAI({ apiKey: this.apiKey, httpOptions: { apiVersion: 'v1alpha' } });
@@ -96,29 +107,20 @@ export class GeminiTokenService implements OnModuleInit {
     // The concierge's tools are the MCP connectors' actions — the connectors are
     // the source of truth, no hardcoded tool list. Each connector's tools route
     // to that connector's MCP (toolEndpoints), which the browser relay honors.
-    const connectors = (
-      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findBySlug(s)))
-    ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
-
-    if (!connectors.length) {
-      throw new Error(
-        `voice concierge tools unavailable: none of [${WORKY_CONCIERGE_CONNECTOR_SLUGS.join(', ')}] ` +
-          'is an active connector with actions',
-      );
-    }
-
     const functionDeclarations: FunctionDeclaration[] = [];
     const toolEndpoints: Record<string, string> = {};
     const streamIdTools: string[] = [];
     for (const c of connectors) {
-      const url = browserReachableMcpUrl(c.mcpServerUrl);
+      // Browser-boundary projection (SEC-02): strip any userinfo the stored
+      // endpoint URL may still carry before it reaches the browser.
+      const url = sanitizeEndpointUrl(browserReachableMcpUrl(c.mcpServerUrl));
       for (const action of c.actions) {
         const props = (action.parameterSchema)?.properties as
           | Record<string, unknown>
           | undefined;
         if (props && 'streamId' in props) streamIdTools.push(action.key);
       }
-      for (const decl of connectorActionsToFunctionDeclarations(c.actions)) {
+      for (const decl of connectorActionsToFunctionDeclarations(sanitizeMcpPublicMetadata(c.actions, c.mcpServerUrl))) {
         functionDeclarations.push(decl);
         if (decl.name) toolEndpoints[decl.name] = url;
       }
@@ -128,7 +130,8 @@ export class GeminiTokenService implements OnModuleInit {
     // tool: the smart-memory MCP needs a shared secret key the browser can't hold,
     // so the browser only signals per-turn transcripts to our backend endpoint,
     // which does the memory.write. On only when both the connector and key exist.
-    const smart = await this.connectors.findBySlug('smart-memory');
+    // SERVER-ONLY runtime lookup: reads the connector's own endpoint/headers (WP-02).
+    const smart = await this.connectors.findRuntimeBySlug('smart-memory');
     const thematicMemory = !!(smart?.actions?.some((a) => a.key === 'memory.write') && this.thematicMemoryApiKey);
     // Give the model a retrieval tool too (backend-proxied — see THEMATIC_RETRIEVE_TOOL).
     if (thematicMemory && smart?.actions?.some((a) => a.key === 'memory.retrieve')) {
@@ -137,9 +140,7 @@ export class GeminiTokenService implements OnModuleInit {
 
     this.logger.log(
       `[voice] concierge session created — tools from [${connectors.map((c) => c.slug).join(', ')}]: ` +
-        Object.entries(toolEndpoints)
-          .map(([t, u]) => `${t}→${u}`)
-          .join(', '),
+        `${Object.keys(toolEndpoints).join(', ')}`,
     );
 
     return {

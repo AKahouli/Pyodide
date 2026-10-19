@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getNavigationSettings } from '../api';
-import { DEFAULT_NAVIGATION_SETTINGS } from '../navigation';
+import { DEFAULT_NAVIGATION_SETTINGS, withDefaultArabicLabels } from '../navigation';
 import type { NavigationSettings } from '../types';
 
 export function useNavigationSettings(): NavigationSettings {
@@ -8,9 +8,13 @@ export function useNavigationSettings(): NavigationSettings {
 
   useEffect(() => {
     let active = true;
-    getNavigationSettings().then((value) => { if (active) setSettings(value); }).catch(() => undefined);
+    getNavigationSettings()
+      .then((value) => {
+        if (active && value) setSettings(withDefaultArabicLabels(value));
+      })
+      .catch(() => undefined);
     const handleUpdate = (event: Event) => {
-      if (active) setSettings((event as CustomEvent<NavigationSettings>).detail);
+      if (active) setSettings(withDefaultArabicLabels((event as CustomEvent<NavigationSettings>).detail));
     };
     window.addEventListener('navigation-settings-updated', handleUpdate);
     return () => {

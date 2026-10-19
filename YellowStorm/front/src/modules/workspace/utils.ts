@@ -151,7 +151,7 @@ function isAllowedFile(file: File): boolean {
  * Validate files for upload
  * Returns valid files and any validation errors
  */
-export function validateFiles(files: File[]): FileValidationResult {
+export function validateFiles(files: File[], maxFileSize = MAX_FILE_SIZE): FileValidationResult {
   const validFiles: File[] = [];
   const errors: string[] = [];
 
@@ -168,8 +168,8 @@ export function validateFiles(files: File[]): FileValidationResult {
     }
 
     // Check file size
-    if (file.size > MAX_FILE_SIZE) {
-      errors.push(`${file.name}: File too large (max 500MB)`);
+    if (file.size > maxFileSize) {
+      errors.push(`${file.name}: File too large (max ${formatFileSize(maxFileSize)})`);
       continue;
     }
 

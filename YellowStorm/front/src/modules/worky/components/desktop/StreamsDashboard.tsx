@@ -111,7 +111,7 @@ export function StreamsDashboard(): JSX.Element {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t('dashboard.searchPlaceholder')}
-              className="h-9 pl-8"
+              className="h-9 ps-8"
             />
           </div>
           <Button
@@ -120,7 +120,7 @@ export function StreamsDashboard(): JSX.Element {
             data-testid="worky-new-stream"
             className="shrink-0"
           >
-            <Plus className="mr-1 size-4" />
+            <Plus className="me-1 size-4" />
             {t('dashboard.newStream')}
           </Button>
         </div>

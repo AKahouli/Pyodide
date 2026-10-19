@@ -31,13 +31,14 @@ export function formatValue(field: Pick<GraphField, 'type' | 'value'>, locale: s
 }
 
 /** Everything about one record of the data graph: its values, what it is linked to, and fixes. */
-export function GraphRecordPanel({ index, record, valuesLoading = false, valuesError, sourceFileName, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
+export function GraphRecordPanel({ index, record, valuesLoading = false, valuesError, sourceFileName, sourceDocuments, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
   index: GraphIndex;
   /** The record, with its values once they are read. */
   record: GraphRecord;
   valuesLoading?: boolean;
   valuesError?: string | null;
   sourceFileName?: string | null;
+  sourceDocuments?: unknown[] | null;
   color: string;
   modelId: string;
   canEdit: boolean;
@@ -108,6 +109,13 @@ export function GraphRecordPanel({ index, record, valuesLoading = false, valuesE
         </div>}
       </section>
 
+      {!valuesLoading && !valuesError && <section aria-label={t('sourceDocuments.title')}>
+        <h4 className='mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/40'>{t('sourceDocuments.title')}</h4>
+        {sourceDocuments ? <dl><FieldRow field={{ key: 'source_documents', label: 'source_documents', type: 'text', value: sourceDocuments, missing: false }}
+          text={JSON.stringify(sourceDocuments, null, 2)} fix={null} /></dl>
+          : <p className='text-xs text-amber-400/80'>{t('sourceDocuments.needsReprojection')}</p>}
+      </section>}
+
       <LinkedRecords index={index} record={record} onSelect={onSelect} />
 
       {canEdit && <div className='space-y-2'>
@@ -154,13 +162,13 @@ function LinkedRecords({ index, record, onSelect }: Readonly<{ index: GraphIndex
       const isOpen = open[key] ?? group.records.length <= 3;
       const Arrow = group.outgoing ? ArrowRight : ArrowLeft;
       return <li key={key}>
-        <button type='button' aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })} className='flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-xs text-white/70 hover:bg-white/5'>
+        <button type='button' aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })} className='flex w-full items-center gap-1.5 rounded px-1 py-1 text-start text-xs text-white/70 hover:bg-white/5'>
           {isOpen ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
           <span className='truncate'>{group.label}</span><Arrow className='h-3 w-3 shrink-0 text-white/40' />
           <span className='truncate font-medium text-white/90'>{group.records.length} {group.conceptLabel}</span>
         </button>
-        {isOpen && <ul className='ml-5 border-l border-white/10 pl-2'>{group.records.slice(0, LINKED_SHOWN).map((other) => <li key={other.id}>
-          <button type='button' onClick={() => onSelect(other.id)} className='w-full truncate rounded px-1.5 py-0.5 text-left text-xs text-sky-300 hover:bg-white/5 hover:underline' title={other.label}>{other.label}</button>
+        {isOpen && <ul className='ms-5 border-l border-white/10 ps-2'>{group.records.slice(0, LINKED_SHOWN).map((other) => <li key={other.id}>
+          <button type='button' onClick={() => onSelect(other.id)} className='w-full truncate rounded px-1.5 py-0.5 text-start text-xs text-sky-300 hover:bg-white/5 hover:underline' title={other.label}>{other.label}</button>
         </li>)}
           {group.records.length > LINKED_SHOWN && <li className='px-1.5 py-0.5 text-[11px] text-white/40'>{t('graphViewer.andMore', { count: group.records.length - LINKED_SHOWN })}</li>}
         </ul>}

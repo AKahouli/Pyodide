@@ -1,5 +1,13 @@
 import { parseNativePendingInputs } from './native-pending-inputs';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { McpJwtService, AdkExecutionAuthority } from '@modules/connector/services/mcp-jwt.service';
+import { UserService } from '@modules/user/services/user.service';
+import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
+import { UnauthorizedException } from '../../exceptions';
+import { CONVERSATION_STORE, ConversationStore } from '../persistence/conversation-store';
+import { MessageStore } from '../persistence/message-store';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
+import { RootBackgroundJobStore, RootBackgroundJob } from '../persistence/postgres/root-background-job.store';
 import { randomUUID } from 'crypto';
 import { BadRequestException, ErrorCode } from '../../exceptions';
 import { isCanonicalObjectId } from '@common/postgres/object-id';
@@ -48,7 +56,179 @@ function requireObjectId(value: string | null | undefined, field: string): strin
  */
 @Injectable()
 export class RootWorkService {
-  constructor(@Inject(ROOT_WORK_STORE) private readonly store: RootWorkStore) {}
+  constructor(@Inject(ROOT_WORK_STORE) private readonly store: RootWorkStore,
+    @Optional() private readonly authoritySigner?: McpJwtService,
+    @Optional() @Inject(CONVERSATION_STORE) private readonly authorityConversations?: ConversationStore,
+    @Optional() @Inject(PostgresMessageStore) private readonly authorityMessages?: MessageStore,
+    @Optional() private readonly authorityUsers?: UserService,
+    @Optional() private readonly authorityJobs?: RootBackgroundJobStore) {}
+
+  async issueForegroundAuthority(executionId: string, actorId: string, conversationId: string,
+    messageId: string, leaseId: string): Promise<string> {
+    const claims: AdkExecutionAuthority = { purpose: 'root-work', executionId, sub: actorId,
+      conversationId, messageId, generation: leaseId };
+    await this.assertRootAuthorityBinding(claims);
+    return this.authoritySigner!.issueAdkExecutionAuthority(claims);
+  }
+
+  async issueNativeConversationAuthority(actorId: string, conversationId: string, messageId: string, leaseId: string): Promise<string> {
+    const claims: AdkExecutionAuthority = { purpose: 'native-conversation', executionId: messageId, sub: actorId,
+      conversationId, messageId, generation: leaseId };
+    await this.assertNativeConversationBinding(claims);
+    return this.authoritySigner!.issueAdkExecutionAuthority(claims);
+  }
+
+  async issueForegroundChildAuthority(parentToken: string | undefined, childId: string): Promise<string> {
+    const parent = await this.assertRootAuthority(parentToken);
+    // Only a live foreground ROOT proof can derive an already-admitted child.
+    // A child cannot derive siblings, and a scheduler grant is not a stream grant.
+    if (!parent.messageId || parent.parentExecutionId || parent.owner || parent.fence !== undefined || childId === parent.executionId) {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Foreground parent authority required');
+    }
+    const claims: AdkExecutionAuthority = { purpose: 'root-work', sub: parent.sub, executionId: childId,
+      parentExecutionId: parent.executionId, conversationId: parent.conversationId,
+      messageId: parent.messageId, generation: parent.generation };
+    await this.assertRootAuthorityBinding(claims);
+    return this.authoritySigner!.issueAdkExecutionAuthority(claims);
+  }
+
+  /** Public integration seam for native backend routes: actor is signature-bound,
+   * and the exact stream lease/account/current conversation access are live reads. */
+  async assertNativeConversationAuthority(token: string | undefined): Promise<AdkExecutionAuthority> {
+    if (!this.authoritySigner) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Native authority unavailable');
+    const claims = this.authoritySigner.verifyAdkExecutionAuthority(token, 'native-conversation');
+    await this.assertNativeConversationBinding(claims);
+    return claims;
+  }
+
+  async renewNativeConversationAuthority(token: string | undefined): Promise<{ token: string }> {
+    return { token: this.authoritySigner!.issueAdkExecutionAuthority(await this.assertNativeConversationAuthority(token)) };
+  }
+
+  private async assertNativeConversationBinding(claims: AdkExecutionAuthority): Promise<void> {
+    const deny = () => new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Native conversation authority is stale or unavailable');
+    if (!this.authoritySigner || !this.authorityConversations || !this.authorityMessages || !this.authorityUsers
+      || !claims.messageId || claims.parentExecutionId || claims.executionId !== claims.messageId || !claims.conversationId || claims.owner || claims.fence !== undefined) throw deny();
+    const conversation = await this.authorityConversations.findById(claims.conversationId);
+    const message = await this.authorityMessages.findById(claims.messageId);
+    if (!conversation || conversation.isArchived || !(conversation.createdBy === claims.sub
+      || conversation.members.some(member => member.userId === claims.sub)) || !message
+      || message.conversationId !== claims.conversationId || message.conversationType !== 'ai'
+      || message.isComplete || !message.isStreaming || message.streamExecutionLeaseId !== claims.generation
+      || !message.streamExecutionLeaseExpiresAt || message.streamExecutionLeaseExpiresAt.getTime() <= Date.now()) throw deny();
+    const user = await this.authorityUsers.findById(claims.sub);
+    if (!user) throw deny();
+    assertAccountApproved(user);
+  }
+
+  async issueBackgroundAuthority(job: RootBackgroundJob): Promise<string> {
+    const claims: AdkExecutionAuthority = { purpose: 'root-work', executionId: job.executionId, sub: job.actorId,
+      conversationId: job.conversationId, owner: job.owner!, fence: job.fence, generation: `${job.owner}:${job.fence}` };
+    await this.assertRootAuthorityBinding(claims);
+    return this.authoritySigner!.issueAdkExecutionAuthority(claims);
+  }
+
+  async assertRootAuthority(token: string | undefined): Promise<AdkExecutionAuthority> {
+    if (!this.authoritySigner) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Root authority unavailable');
+    const claims = this.authoritySigner.verifyAdkExecutionAuthority(token, 'root-work');
+    await this.assertRootAuthorityBinding(claims);
+    return claims;
+  }
+
+  async renewRootAuthority(token: string | undefined): Promise<{ token: string }> {
+    return { token: this.authoritySigner!.issueAdkExecutionAuthority(await this.assertRootAuthority(token)) };
+  }
+
+  async assertAssetAuthority(token: string | undefined): Promise<AdkExecutionAuthority> {
+    if (!this.authoritySigner) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Native authority unavailable');
+    let root: AdkExecutionAuthority;
+    try { root = this.authoritySigner.verifyAdkExecutionAuthority(token, 'root-work'); }
+    catch { return this.assertNativeConversationAuthority(token); }
+    await this.assertRootAuthorityBinding(root);
+    return root;
+  }
+
+  async assertAuthorityWorkspace(claims: AdkExecutionAuthority, workspaceId: unknown): Promise<void> {
+    if (workspaceId === undefined) return;
+    const conversation = claims.conversationId && await this.authorityConversations?.findById(claims.conversationId);
+    if (!conversation || typeof workspaceId !== 'string') {
+      throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Foreign authority workspace');
+    }
+    const outputWorkspace = [conversation.id, conversation.systemWorkspaceId].includes(workspaceId);
+    let allowed = outputWorkspace || conversation.workspaces.includes(workspaceId);
+    if (claims.purpose === 'root-work') {
+      const execution = await this.store.getExecution(claims.executionId);
+      const state = execution?.resultPayload?.nativeState;
+      if (!execution || !state || state.actorId !== claims.sub || state.scope.executionId !== claims.executionId) {
+        throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Foreign authority workspace');
+      }
+      if (execution.role === 'library_worker') {
+        const parent = execution.parentExecutionId ? await this.store.getExecution(execution.parentExecutionId) : null;
+        const root = parent?.resultPayload?.nativeState;
+        const selected = (root?.rootContext.catalog as Array<Record<string, unknown>> | undefined)
+          ?.find(entry => entry.agent_id === state.rootContext.selected_agent_id);
+        const sources = state.rootContext.source_workspace_ids;
+        const admitted = Array.isArray(sources) && sources.includes(workspaceId);
+        // Native workers retain their own admitted sources; constrained workers
+        // additionally remain inside the frozen root capability ceiling.
+        allowed = selected?.configuration_mode === 'native' ? allowed || admitted
+          : selected?.configuration_mode === 'root_constrained'
+            ? outputWorkspace || (allowed || admitted) && !!root?.capabilityCeiling?.workspaceIds.includes(workspaceId)
+            : false;
+      } else if (execution.role === 'temporary_worker') {
+        const parent = execution.parentExecutionId ? await this.store.getExecution(execution.parentExecutionId) : null;
+        const root = parent?.resultPayload?.nativeState;
+        const sources = state.rootContext.source_workspace_ids;
+        allowed = outputWorkspace || Array.isArray(sources) && sources.includes(workspaceId)
+          && !!root?.capabilityCeiling?.workspaceIds.includes(workspaceId);
+      } else if (execution.role === 'root') {
+        allowed ||= !!state.capabilityCeiling?.workspaceIds.includes(workspaceId);
+      }
+    }
+    if (!allowed) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Foreign authority workspace');
+  }
+
+  private async assertRootAuthorityBinding(claims: AdkExecutionAuthority): Promise<void> {
+    const deny = () => new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Root execution authority is stale or unavailable');
+    if (!this.authoritySigner || !this.authorityConversations || !this.authorityMessages || !this.authorityUsers
+      || !claims.conversationId || !claims.generation) throw deny();
+    const execution = await this.store.getExecution(claims.executionId);
+    const state = execution?.resultPayload?.nativeState;
+    const conversation = await this.authorityConversations.findById(claims.conversationId);
+    if (!execution || !state || !(execution.status === 'running' || claims.parentExecutionId && execution.status === 'waiting') || execution.terminalAt
+      || execution.conversationId !== claims.conversationId || state.actorId !== claims.sub
+      || state.scope.executionId !== claims.executionId || !conversation || conversation.createdBy !== claims.sub
+      || conversation.isGroup || conversation.isArchived || conversation.rootWorkEpoch !== execution.conversationEpoch
+      || conversation.rootAgentId !== execution.rootAgentId) throw deny();
+    const user = await this.authorityUsers.findById(claims.sub);
+    if (!user) throw deny();
+    assertAccountApproved(user);
+    if (claims.messageId && !claims.owner && claims.fence === undefined) {
+      if (claims.parentExecutionId) {
+        const parent = await this.store.getExecution(claims.parentExecutionId);
+        const root = parent?.resultPayload?.nativeState;
+        if (!parent || !root || parent.role !== 'root' || parent.depth !== 0 || parent.parentExecutionId
+          || parent.status !== 'running' || parent.terminalAt || root.actorId !== claims.sub
+          || parent.conversationId !== claims.conversationId || parent.conversationEpoch !== execution.conversationEpoch
+          || parent.rootAgentId !== execution.rootAgentId || root.scope.executionId !== parent.id
+          || execution.parentExecutionId !== parent.id || state.scope.parentExecutionId !== parent.id
+          || execution.depth !== 1 || !['library_worker', 'temporary_worker'].includes(execution.role)
+          || !this.authorityJobs || await this.authorityJobs.getJob(execution.id)) throw deny();
+      } else if (execution.role !== 'root' || execution.depth !== 0 || execution.parentExecutionId) throw deny();
+      const message = await this.authorityMessages.findById(claims.messageId);
+      if (!message || message.conversationId !== claims.conversationId
+        || message.conversationType !== 'ai' || message.isComplete || !message.isStreaming
+        || message.streamExecutionLeaseId !== claims.generation || !message.streamExecutionLeaseExpiresAt
+        || message.streamExecutionLeaseExpiresAt.getTime() <= Date.now()) throw deny();
+    } else if (!claims.messageId && !claims.parentExecutionId && claims.owner && Number.isSafeInteger(claims.fence)) {
+      const job = await this.authorityJobs?.getJob(claims.executionId);
+      if (!job || job.status !== 'running' || job.owner !== claims.owner || job.fence !== claims.fence
+        || claims.generation !== `${job.owner}:${job.fence}` || job.actorId !== claims.sub
+        || job.conversationId !== claims.conversationId || job.conversationEpoch !== execution.conversationEpoch
+        || job.parentExecutionId !== execution.parentExecutionId || !job.leaseUntil || job.leaseUntil.getTime() <= Date.now()
+        || job.deadline.getTime() <= Date.now()) throw deny();
+    } else throw deny();
+  }
 
   async registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord> {
     if (!OBJECT_ID_RE.test(input.executionId)) {

@@ -24,6 +24,7 @@ export function mapPostgresMessage(row: typeof schema.messages.$inferSelect): Me
     editedAt: row.editedAt ?? undefined,
     isStreaming: row.isStreaming,
     isComplete: row.isComplete,
+    terminalStatus: row.executionStatus as MessageRecord['terminalStatus'] ?? undefined,
     streamExecutionLeaseId: row.streamExecutionLeaseId ?? undefined,
     streamExecutionLeaseExpiresAt: row.streamExecutionLeaseExpiresAt ?? undefined,
     inputTokens: row.inputTokens ?? undefined,

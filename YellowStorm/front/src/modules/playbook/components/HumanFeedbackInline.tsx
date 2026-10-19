@@ -68,10 +68,10 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
           )}
         </div>
         {data.reason && !wasApproved && (
-          <p className="text-xs text-muted-foreground mt-1 ml-1">{data.reason}</p>
+          <p className="text-xs text-muted-foreground mt-1 ms-1">{data.reason}</p>
         )}
         {data.feedback && (isReview || isClarification) && (
-          <p className="text-xs text-muted-foreground mt-1 ml-1">{data.feedback}</p>
+          <p className="text-xs text-muted-foreground mt-1 ms-1">{data.feedback}</p>
         )}
         {(scope || data.remember != null) && (
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">

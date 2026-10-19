@@ -11,7 +11,7 @@ import { CitationMarkdown, CitationText, CitedProse, hasMarker, OpenUiCitationCo
  * the OpenUI tokens apply unchanged) and is used only when one of its strings carries a
  * `[n]` marker: answers without citations keep the stock component.
  */
-type Args = { props: Record<string, any>; renderNode: (node: unknown) => ReactNode };
+type Args = { props: Record<string, any>; renderNode: (node: unknown) => ReactNode; statementId?: string };
 export type StockComponent = (args: Args) => ReactNode;
 
 const str = (value: unknown) => (value == null ? '' : String(value));

@@ -60,6 +60,19 @@ async def test_resume_retains_own_session_and_external_conversation(servicer):
 
 
 @pytest.mark.asyncio
+async def test_original_visible_text_survives_wire_and_servicer_conversion(servicer):
+    original = request('turn-first')
+    visible = 'Original visible user question'
+    original.query = visible + '\n<contextual_page_hint>{"route":"/"}</contextual_page_hint>'
+    original.root_context.visible_user_message = visible
+    restored = chatbot_pb2.RunSingleAgentRequest.FromString(original.SerializeToString())
+    converted = await servicer._convert_single_agent_request(restored)
+    assert converted.root_context['visible_user_message'] == visible
+    assert converted.message == original.query
+    assert converted.message != converted.root_context['visible_user_message']
+
+
+@pytest.mark.asyncio
 async def test_completion_cleans_only_its_native_temporary_child_summary(servicer, monkeypatch):
     async def complete(converted, queue):
         await queue.put(None)

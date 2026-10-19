@@ -4,8 +4,8 @@
  * Browser coordination is an optimization: the server's atomic rotation and
  * rotation-conflict response remain the correctness boundary. Web Locks
  * serialize same-origin refreshes so tabs do not stampede the endpoint;
- * BroadcastChannel spreads non-secret completion/logout signals so stale tabs
- * pick up a newer token instead of starting their own rotation. When the Web
+ * BroadcastChannel transfers rotated access tokens only between live same-origin
+ * tabs (never browser storage), so stale tabs do not rotate again. When the Web
  * Locks API is unavailable the delegate runs directly — a failed lock must
  * never deadlock recovery.
  */
@@ -15,6 +15,7 @@ const CHANNEL_NAME = 'yellostorm.auth';
 const ATTEMPT_STORAGE_KEY = 'yellostorm_refresh_attempt';
 
 export type AuthBroadcastType = 'refreshed' | 'logout';
+export interface AuthRefreshBroadcast { accessToken: string; completedAt: number }
 
 let channel: BroadcastChannel | null = null;
 
@@ -79,16 +80,16 @@ export async function withCrossTabRefreshLock<T>(fn: () => Promise<T>): Promise<
   return navigator.locks.request(LOCK_NAME, { ifAvailable: false }, fn);
 }
 
-export function broadcastAuthEvent(type: AuthBroadcastType): void {
+export function broadcastAuthEvent(type: AuthBroadcastType, refresh?: AuthRefreshBroadcast): void {
   try {
-    getChannel()?.postMessage({ type });
+    getChannel()?.postMessage({ type, ...(type === 'refreshed' && refresh ? refresh : {}) });
   } catch {
     // Channel unavailable/closed: server coordination still guarantees correctness.
   }
 }
 
 export function subscribeAuthBroadcast(
-  handler: (type: AuthBroadcastType) => void,
+  handler: (type: AuthBroadcastType, refresh?: AuthRefreshBroadcast) => void,
 ): () => void {
   const ch = getChannel();
   if (!ch) {
@@ -97,7 +98,11 @@ export function subscribeAuthBroadcast(
   const listener = (event: MessageEvent) => {
     const type = (event.data as { type?: AuthBroadcastType } | null)?.type;
     if (type === 'refreshed' || type === 'logout') {
-      handler(type);
+      const data = event.data as Partial<AuthRefreshBroadcast>;
+      const refresh = type === 'refreshed' && typeof data.accessToken === 'string' && data.accessToken.length <= 32768
+        && typeof data.completedAt === 'number' && Number.isFinite(data.completedAt)
+        ? { accessToken: data.accessToken, completedAt: data.completedAt } : undefined;
+      handler(type, refresh);
     }
   };
   ch.addEventListener('message', listener);

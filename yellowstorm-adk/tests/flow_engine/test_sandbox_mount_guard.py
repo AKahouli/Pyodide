@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from src.flow_engine.tools import langchain_factory
-from src.flow_engine import mcp
+from src import mcp
 from src.flow_engine.tools.sandbox_mount_guard import (
     SandboxCallBudget,
     SandboxMountGuard,
@@ -371,3 +371,23 @@ async def test_sandbox_call_budget_is_isolated_per_tool_factory(monkeypatch) -> 
     assert "2 per step" in await first.ainvoke({})
     assert await second.ainvoke({}) == "ok"
     assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_private_hydration_revalidates_before_ready_without_recreation():
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountGuard
+    calls=[]
+    hydrated=False
+    async def call(action,params):
+        calls.append(action)
+        if action=="file_list":
+            return "present" if hydrated else "No such file or directory"
+        return "created"
+    async def hydrate(missing):
+        nonlocal hydrated
+        assert missing==["selected.pdf"]
+        hydrated=True
+    guard=SandboxMountGuard([{"path":"/mnt/workspace/selected.pdf","kind":"file"}],{"file_list","sandbox_destroy"},hydrate=hydrate)
+    await guard.create_validated(call,{})
+    await guard.wait_until_ready()
+    assert calls==["sandbox_create","file_list","file_list"]

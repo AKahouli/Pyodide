@@ -62,7 +62,7 @@ function DiffIndicator({ left, right, lowerIsBetter = true }: { left: number | n
   const isGood = lowerIsBetter ? diff < 0 : diff > 0;
   const pct = left !== 0 ? Math.round((Math.abs(diff) / left) * 100) : 0;
   return (
-    <span className={`text-xs ml-1 ${isGood ? 'text-green-600' : 'text-red-500'}`}>
+    <span className={`text-xs ms-1 ${isGood ? 'text-green-600' : 'text-red-500'}`}>
       {diff > 0 ? '+' : ''}{pct}%
     </span>
   );
@@ -208,7 +208,7 @@ export function PlaybookExecutionComparePage() {
                   return (
                     <button
                       key={taskId}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-left transition-colors ${
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-start transition-colors ${
                         isSelected ? 'bg-accent' : 'hover:bg-muted/50'
                       }`}
                       onClick={() => setSelectedTaskId(taskId)}
@@ -337,7 +337,7 @@ function StepCard({ step, label, other }: { step: TaskResult | null; label: stri
         {step.modelName && (
           <div className="flex justify-between">
             <span className="text-muted-foreground">{t('compare.model')}</span>
-            <span className="truncate ml-2">{step.modelName}</span>
+            <span className="truncate ms-2">{step.modelName}</span>
           </div>
         )}
       </div>

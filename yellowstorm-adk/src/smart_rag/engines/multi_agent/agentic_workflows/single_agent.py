@@ -132,6 +132,15 @@ async def handle_single_agent_workflow(
             **({'session_service': session_service} if session_service is not None else {}),
             **({'background_task_tool': background_task_tool} if background_task_tool is not None else {}),
             conversation_reply_tool=build_conversation_reply_control(root_context, scope),
+            # Trusted original text for private continuity validation; never infer
+            # it by stripping model-visible runtime/correction wrappers.
+            visible_user_message=(
+                root_context['visible_user_message']
+                if scope is not None and scope.role is ExecutionRole.ROOT
+                and isinstance((root_context or {}).get('visible_user_message'), str)
+                and root_context['visible_user_message']
+                else user_request.message
+            ) if user_request.correction_replay_context is None else None,
         )
         logger.info(f"[MONO WORKFLOW] Completed single-agent workflow - session_id: {session_id}")
         return result

@@ -503,6 +503,7 @@ class AgentFactory:
         agent_id: Optional[str] = None,
         connector_bindings: Optional[List[Dict[str, Any]]] = None,
         platform_api_token: Optional[str] = None,
+        platform_api_url: Optional[str] = None,
         document_tree_injection_enabled: bool = True,
     ) -> Agent:
         """Create an agent with the requested tools, skills, guardrails and context injection.
@@ -595,6 +596,7 @@ class AgentFactory:
                             agent_id=agent_id,
                             user_id=user_id,
                             platform_api_token=platform_api_token,
+                            platform_api_url=platform_api_url,
                         ),
                     )
                 )

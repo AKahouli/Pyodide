@@ -38,7 +38,7 @@ export interface ResolvedMappingEntity {
   entity: ResolvedEntity;
 }
 
-export type SourcePreviewIssueCode = 'source_disabled' | 'source_not_ready' | 'source_failed' | 'preview_limited';
+export type SourcePreviewIssueCode = 'source_disabled' | 'source_not_ready' | 'source_failed' | 'preview_limited' | 'source_restricted';
 
 /** One unusable source in a preview: which file, which concept, and why it failed. */
 export interface SourcePreviewIssue {

@@ -1,8 +1,10 @@
 import {
   BlobSASPermissions,
   BlobServiceClient,
+  generateBlobSASQueryParameters,
   type BlockBlobClient,
   type ContainerClient,
+  type UserDelegationKey,
 } from '@azure/storage-blob';
 import { Readable } from 'stream';
 import {
@@ -18,11 +20,73 @@ import {
 export interface AzureBackendConfig {
   connectionString: string;
   container: string;
+  /** Opt-in: authenticate with the platform's managed identity instead of the account key. */
+  useManagedIdentity?: boolean;
+  /**
+   * Blob endpoint, e.g. "https://acct.blob.core.windows.net". Required under
+   * managed identity, where disabling shared-key access leaves no connection
+   * string to read the account from.
+   */
+  accountUrl?: string;
 }
 
 const UPLOAD_STREAM_BUFFER_BYTES = 4 * 1024 * 1024;
 const UPLOAD_STREAM_CONCURRENCY = 4;
 const COPY_SOURCE_SAS_MINUTES = 10;
+/** Azure caps a user delegation key at 7 days; stay inside it. */
+const DELEGATION_KEY_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+/** Extra validity requested beyond the SAS itself, so one key serves several URLs. */
+const DELEGATION_KEY_HEADROOM_MS = 60 * 60 * 1000;
+/** Clock-skew allowance on both ends of the delegation window. */
+const DELEGATION_KEY_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * Account endpoint and name, read from the connection string.
+ *
+ * Managed identity uses the same `AZURE_STORAGE_CONNECTION_STRING` as the key
+ * mode, minus `AccountKey` — so a deployment switches credentials without
+ * changing where the account is declared.
+ */
+export function parseAzureAccount(connectionString: string): { url: string; name: string } {
+  const settings = new Map<string, string>();
+  for (const part of connectionString.split(';')) {
+    const separator = part.indexOf('=');
+    // AccountKey values are base64 and contain '=', so split on the first one only.
+    if (separator > 0) settings.set(part.slice(0, separator).trim().toLowerCase(), part.slice(separator + 1).trim());
+  }
+
+  // An empty value is as good as an absent one: fall through to the fallback.
+  const setting = (key: string, fallback: string): string => {
+    const value = settings.get(key)?.trim();
+    if (!value) return fallback;
+    return value;
+  };
+
+  const endpoint = setting('blobendpoint', '');
+  const name = setting('accountname', endpoint ? hostAccountName(endpoint) : '');
+  if (!name) throw new Error('Azure storage connection string carries neither AccountName nor BlobEndpoint');
+  if (endpoint) return { url: endpoint.replace(/\/+$/, ''), name };
+
+  return {
+    url: `${setting('defaultendpointsprotocol', 'https')}://${name}.blob.${setting('endpointsuffix', 'core.windows.net')}`,
+    name,
+  };
+}
+
+function hostAccountName(endpoint: string): string {
+  try {
+    return new URL(endpoint).hostname.split('.')[0] ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** Account endpoint and name read from a blob endpoint URL. */
+export function parseAzureAccountUrl(accountUrl: string): { url: string; name: string } {
+  const name = hostAccountName(accountUrl);
+  if (!name) throw new Error('AZURE_STORAGE_ACCOUNT_URL is not a valid blob endpoint URL');
+  return { url: accountUrl.replace(/\/+$/, ''), name };
+}
 
 /**
  * Azure Blob / Data Lake Gen2 backend.
@@ -33,21 +97,34 @@ const COPY_SOURCE_SAS_MINUTES = 10;
  * @azure/storage-blob rather than @azure/storage-file-datalake, whose
  * directory semantics we do not need.
  *
- * Authentication is the account connection string, which must carry an account
- * key: SAS generation (used for every download/upload URL) requires it.
+ * Two credentials are supported, and every operation behaves identically under
+ * both. By default the account connection string carries an account key, which
+ * signs SAS URLs directly. With `useManagedIdentity`, no key exists, so SAS
+ * URLs are signed with a user delegation key obtained from the service — the
+ * account itself still being named by the same connection string.
  */
 export class AzureStorageBackend implements StorageBackend {
   readonly label = 'Azure Blob';
 
+  private service: BlobServiceClient | null = null;
   private container: ContainerClient | null = null;
+  private accountName = '';
+  private delegation: { key: UserDelegationKey; expiresOn: Date } | null = null;
 
   constructor(private readonly config: AzureBackendConfig) {}
 
   async connect(): Promise<void> {
-    this.container = BlobServiceClient
-      .fromConnectionString(this.config.connectionString)
-      .getContainerClient(this.config.container);
+    if (this.config.useManagedIdentity) {
+      const account = this.resolveAccount();
+      // Imported here so key-based and Ceph deployments never load the identity stack.
+      const { DefaultAzureCredential } = await import('@azure/identity');
+      this.accountName = account.name;
+      this.service = new BlobServiceClient(account.url, new DefaultAzureCredential());
+    } else {
+      this.service = BlobServiceClient.fromConnectionString(this.config.connectionString);
+    }
 
+    this.container = this.service.getContainerClient(this.config.container);
     await this.container.createIfNotExists();
   }
 
@@ -57,6 +134,8 @@ export class AzureStorageBackend implements StorageBackend {
 
   destroy(): void {
     this.container = null;
+    this.service = null;
+    this.delegation = null;
   }
 
   async head(key: string): Promise<StorageObjectMetadata | null> {
@@ -178,21 +257,23 @@ export class AzureStorageBackend implements StorageBackend {
 
   async copy(sourceKey: string, destinationKey: string): Promise<void> {
     // Server-side copy; the source URL must carry a SAS for Azure to read it.
-    const sourceUrl = await this.blob(sourceKey).generateSasUrl({
-      permissions: BlobSASPermissions.parse('r'),
-      expiresOn: minutesFromNow(COPY_SOURCE_SAS_MINUTES),
-    });
+    const sourceUrl = await this.sasUrl(
+      sourceKey,
+      BlobSASPermissions.parse('r'),
+      minutesFromNow(COPY_SOURCE_SAS_MINUTES),
+    );
 
     await this.blob(destinationKey).syncCopyFromURL(sourceUrl);
   }
 
   async signedUrl(key: string, options: SignedUrlOptions): Promise<string> {
-    return this.blob(key).generateSasUrl({
-      // "cw" mirrors the S3 presigned PutObject this replaces: create + write.
-      permissions: BlobSASPermissions.parse(options.write ? 'cw' : 'r'),
-      expiresOn: new Date(Date.now() + options.expirySeconds * 1000),
-      ...(options.contentDisposition ? { contentDisposition: options.contentDisposition } : {}),
-    });
+    return this.sasUrl(
+      key,
+      // Create permission permits a new block blob, while overwriting requires write.
+      BlobSASPermissions.parse(options.write ? (options.createOnly ? 'c' : 'cw') : 'r'),
+      new Date(Date.now() + options.expirySeconds * 1000),
+      options.contentDisposition,
+    );
   }
 
   publicUrl(key: string): string {
@@ -208,6 +289,78 @@ export class AzureStorageBackend implements StorageBackend {
 
   private blob(key: string): BlockBlobClient {
     return this.requireContainer().getBlockBlobClient(key);
+  }
+
+  /**
+   * One SAS URL, signed with whichever credential is configured. The account
+   * key signs locally; a managed identity has no key, so the service issues a
+   * user delegation key that signs on its behalf.
+   */
+  private async sasUrl(
+    key: string,
+    permissions: BlobSASPermissions,
+    expiresOn: Date,
+    contentDisposition?: string,
+  ): Promise<string> {
+    const blob = this.blob(key);
+    const disposition = contentDisposition ? { contentDisposition } : {};
+
+    if (!this.config.useManagedIdentity) {
+      return blob.generateSasUrl({ permissions, expiresOn, ...disposition });
+    }
+
+    const query = generateBlobSASQueryParameters(
+      {
+        containerName: this.config.container,
+        blobName: key,
+        permissions,
+        expiresOn,
+        ...disposition,
+      },
+      await this.userDelegationKey(expiresOn),
+      this.accountName,
+    ).toString();
+
+    return `${blob.url}?${query}`;
+  }
+
+  /**
+   * A delegation key is reused across SAS URLs until it can no longer outlive
+   * the one being signed — a SAS never outlives the key that signed it.
+   */
+  private async userDelegationKey(expiresOn: Date): Promise<UserDelegationKey> {
+    if (this.delegation && this.delegation.expiresOn.getTime() > expiresOn.getTime() + DELEGATION_KEY_SKEW_MS) {
+      return this.delegation.key;
+    }
+
+    const now = Date.now();
+    const until = new Date(
+      Math.min(expiresOn.getTime() + DELEGATION_KEY_HEADROOM_MS, now + DELEGATION_KEY_MAX_MS),
+    );
+    if (until.getTime() <= expiresOn.getTime()) {
+      throw new Error('Requested SAS expiry exceeds the 7-day limit of an Azure user delegation key');
+    }
+
+    const key = await this.requireService().getUserDelegationKey(new Date(now - DELEGATION_KEY_SKEW_MS), until);
+    this.delegation = { key, expiresOn: until };
+    return key;
+  }
+
+  private requireService(): BlobServiceClient {
+    if (!this.service) throw new Error('Azure Blob client not initialized');
+    return this.service;
+  }
+
+  /**
+   * Where the account lives, under managed identity. The account URL is the
+   * normal source: disabling shared-key access removes the connection string
+   * entirely. A keyless connection string is still accepted, so a deployment
+   * can switch credentials before retiring the variable.
+   */
+  private resolveAccount(): { url: string; name: string } {
+    if (this.config.accountUrl) return parseAzureAccountUrl(this.config.accountUrl);
+    if (this.config.connectionString) return parseAzureAccount(this.config.connectionString);
+    throw new Error('Azure managed identity requires AZURE_STORAGE_ACCOUNT_URL');
   }
 
   /**

@@ -1,5 +1,39 @@
 import { ValidationPipe } from '@nestjs/common';
-import { AssistantDescribeDataQueryDto, AssistantQueryRecordsDto } from './semantic-graph-search.dto';
+import { AssistantDescribeDataQueryDto, AssistantQueryRecordsDto, GraphSearchIndexDto } from './semantic-graph-search.dto';
+
+describe('GraphSearchIndexDto HTTP validation', () => {
+  const pipe = new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transformOptions: { enableImplicitConversion: true },
+    stopAtFirstError: true,
+  });
+  const transform = (body: Record<string, unknown>): Promise<GraphSearchIndexDto> =>
+    pipe.transform(body, { type: 'body', metatype: GraphSearchIndexDto });
+
+  it.each([
+    { expectedDataRevisionId: 'dr-current' },
+    { environment: 'draft', expectedDataRevisionId: 'dr-current' },
+    { environment: 'production', expectedDataRevisionId: 'dr-current', expectedIndexId: 'ix-failed' },
+  ])('accepts and preserves the guarded index command: %j', async (body) => {
+    await expect(transform(body)).resolves.toMatchObject({ environment: 'draft', ...body });
+  });
+
+  it('preserves compatibility with existing unguarded callers', async () => {
+    await expect(transform({})).resolves.toMatchObject({ environment: 'draft' });
+  });
+
+  it.each([
+    { expectedDataRevisionId: '' },
+    { expectedDataRevisionId: 'x'.repeat(201) },
+    { expectedIndexId: '' },
+    { expectedIndexId: 'x'.repeat(201) },
+    { expectedDataRevisionId: 'dr-current', unexpected: true },
+  ])('continues to reject malformed or unknown properties: %j', async (body) => {
+    await expect(transform(body)).rejects.toThrow();
+  });
+});
 
 describe('AssistantQueryRecordsDto', () => {
   // The same options as the application's global pipe (main.ts).

@@ -225,3 +225,21 @@ describe('WorkspaceService.delete ordering', () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe('WorkspaceService admin quota', () => {
+  function setup(updated: boolean) {
+    const svc = Object.create(WorkspaceService.prototype) as WorkspaceService;
+    const workspaceStore = { findById: jest.fn().mockResolvedValue({ id: WS, name: 'system-test', isSystem: true, allocatedStorage: 52428800, usedStorage: 52323990 }), updateStorageQuota: jest.fn().mockResolvedValue(updated) };
+    Object.assign(svc, { workspaceStore });
+    return { svc, workspaceStore };
+  }
+  it('changes only the named workspace and passes the expected byte quota to the atomic write', async () => {
+    const { svc, workspaceStore } = setup(true);
+    await svc.updateAdminStorage(WS, 200, 52428800);
+    expect(workspaceStore.updateStorageQuota).toHaveBeenCalledWith(WS, 209715200, 52428800);
+  });
+  it('rejects a concurrent change or a quota below live usage', async () => {
+    const { svc } = setup(false);
+    await expect(svc.updateAdminStorage(WS, 1, 52428800)).rejects.toThrow('Quota changed');
+  });
+});

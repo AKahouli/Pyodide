@@ -1,5 +1,3 @@
-SET LOCAL lock_timeout = '5s';
-
 -- Existing rows remain legacy/shared sessions and block isolated turns until settled.
 ALTER TABLE conversation.conversation_executions ADD COLUMN IF NOT EXISTS native_session_id text;
 ALTER TABLE conversation.conversations ADD COLUMN IF NOT EXISTS root_work_last_stop_foreground_message_ids jsonb NOT NULL DEFAULT '[]'::jsonb;

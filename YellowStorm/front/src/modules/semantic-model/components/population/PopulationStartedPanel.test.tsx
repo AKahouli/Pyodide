@@ -9,10 +9,18 @@ const mappings = [
 ] as ConceptSourceMapping[];
 
 describe('PopulationStartedPanel', () => {
-  it('confirms the run and says nothing was left out', () => {
-    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'queued', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+  it('reports queued sources without claiming reading started and offers removal', () => {
+    const onStop = vi.fn();
+    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'queued', skipped: [], reused: false }} sourceMappings={mappings}
+      progress={{ phase: 'reading', total: 3, done: 0 }} onStop={onStop} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
 
-    expect(screen.getByText('population.started')).toBeInTheDocument();
+    expect(screen.getByText('myJobs.queuedTitle')).toBeInTheDocument();
+    expect(screen.getByText('myJobs.queuedSources')).toBeInTheDocument();
+    expect(screen.queryByText('population.started')).not.toBeInTheDocument();
+    expect(screen.queryByText('population.startedHint')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('population.progress.title')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'myJobs.removeQueued' }));
+    expect(onStop).toHaveBeenCalledOnce();
     expect(screen.getByText('population.allSourcesIncluded')).toBeInTheDocument();
   });
 

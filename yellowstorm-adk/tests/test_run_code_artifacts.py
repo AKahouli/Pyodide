@@ -85,3 +85,46 @@ def test_rejects_tool_artifact_outside_trusted_run_prefix() -> None:
         "ceph_path": "another-user/system_run/private.pdf",
         "path": "/home/ubuntu/private.pdf",
     }, "tool-shell", "owner/system_run") == []
+
+
+def test_trusted_publication_receipt_is_required_and_idempotent():
+    result={"ceph_path":"owner/system_run/report.docx", "filename":"report.docx",
+        "_conversation_output_receipt":{"storagePrefix":"owner/system_run","invocationId":"turn"}}
+    def capture(value, name="code-interpreort-aga_send_file_to_user", prefix="owner/system_run"):
+        return build_tool_result_artifacts(value,"producer",prefix,require_receipt=True,producer_tool_name=name)
+    first=capture(result)
+    assert len(first)==1 and first==capture(result)
+    assert not capture({"ceph_path":"owner/system_run/report.docx"})
+    assert not capture(result,name="web_search")
+    assert not capture(result,prefix="other/system_run")
+    assert not capture({**result,"isError":True})
+    assert not capture({**result,"ceph_path":"owner/system_run/../private.docx"})
+    other={**result,"_conversation_output_receipt":{**result["_conversation_output_receipt"],"invocationId":"other-turn"}}
+    assert capture(other)[0]["artifact_id"] != first[0]["artifact_id"]
+
+
+def test_registered_shared_workspace_output_uses_only_exact_canonical_path():
+    result={"ceph_path":"workspace-owner/shared/report.docx","filename":"report.docx",
+        "_conversation_output_receipt":{"storagePrefix":"actor/system_c1","invocationId":"turn",
+            "artifactId":"canonical-doc-id","storagePath":"workspace-owner/shared/report.docx"}}
+    def capture(value):
+        return build_tool_result_artifacts(value,"producer","actor/system_c1",require_receipt=True,
+            producer_tool_name="code-interpreort-aga_send_file_to_user")
+    assert capture(result)[0]["artifact_id"]=="canonical-doc-id"
+    assert not capture({**result,"ceph_path":"workspace-owner/shared/other.docx"})
+    assert not capture({**result,"ceph_path":"actor/system_c1/other.docx"})
+    assert not capture({"result":json.dumps({**result,"status":"error"}),"_conversation_output_receipt":result["_conversation_output_receipt"]})
+
+
+def test_actual_interpreter_alias_requires_same_trusted_publication_receipt():
+    result = {"ceph_path": "owner/system_run/report.pptx", "filename": "report.pptx",
+        "_conversation_output_receipt": {"storagePrefix": "owner/system_run", "invocationId": "turn"}}
+    for slug in ["code-interpreter", "code-interpreort-aga", "code-interpretor-aga"]:
+        assert len(build_tool_result_artifacts(result, "producer", "owner/system_run", require_receipt=True,
+            producer_tool_name=f"{slug}_send_file_to_user")) == 1
+        assert not build_tool_result_artifacts({"ceph_path": result["ceph_path"]}, "producer", "owner/system_run",
+            require_receipt=True, producer_tool_name=f"{slug}_send_file_to_user")
+        assert not build_tool_result_artifacts(result, "producer", "other/system_run", require_receipt=True,
+            producer_tool_name=f"{slug}_send_file_to_user")
+    assert not build_tool_result_artifacts(result, "producer", "owner/system_run", require_receipt=True,
+        producer_tool_name="unrelated_send_file_to_user")

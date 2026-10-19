@@ -11,7 +11,7 @@ import { ConversationService } from './conversation.service';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import { getComponentType as sharedGetComponentType, extractComponentData as sharedExtractComponentData, mapTaskStatus as sharedMapTaskStatus } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
-import { LoggerService, LogOptions } from '../../logger';
+import { LoggerService, LogOptions, logDomainEvent } from '../../logger';
 import { ServiceUnavailableException, ConflictException, BadRequestException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -46,7 +46,7 @@ import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { compactAgentActivityUpdate } from '../utils/agent-activity-delta';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
-import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
+import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency, measureBackendPreparation } from '../utils/backend-latency-tracker';
 import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
 import type { ConversationRecord } from '../persistence/conversation-store';
 import { ConversationRootResolverService } from '../root-work/conversation-root-resolver.service';
@@ -55,7 +55,7 @@ import { RootBackgroundJobStore } from '../persistence/postgres/root-background-
 import { freezeRootCapabilityCeiling } from '../root-work/root-capability-ceiling';
 import { ExecutionScopeV1, RootNativeState, newStopRequestId } from '../root-work/root-work.types';
 import { isCanonicalObjectId, newObjectId } from '@common/postgres/object-id';
-import { completedTurnHistory } from '../utils/completed-turn-history';
+import { completedTurnSeed } from '../utils/completed-turn-history';
 import { ongoingRequestContext, type OngoingRequestContext } from '../utils/ongoing-request-context';
 
 export interface StreamRequest {
@@ -194,12 +194,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.replicaId = this.configService.get<string>('REPLICA_ID') || null;
   }
 
-  async seedConversationSession(userId: string, sessionId: string, idempotencyKey: string, history: ConversationHistoryEntry[]): Promise<void> {
+  async seedConversationSession(userId: string, sessionId: string, idempotencyKey: string, history: ConversationHistoryEntry[], sourceSessionId?: string): Promise<void> {
     await this.callConversationSessionRpc('SeedConversationSession', {
       user_id: userId,
       session_id: sessionId,
       idempotency_key: idempotencyKey,
       history,
+      ...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
     });
   }
 
@@ -246,6 +247,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           });
           await this.messageService.completeAIMessage({
             messageId,
+            streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
+            terminalStatus: 'interrupted',
+            inputTokens: this.streamUsage.get(streamKey)?.inputTokens,
+            outputTokens: this.streamUsage.get(streamKey)?.outputTokens,
+            usageAttribution: this.buildUsageAttribution(streamKey, this.streamExecutionLeases.get(streamKey)),
             components: Array.from(buffer.values()),
           });
         } catch (err) {
@@ -732,7 +738,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
     const leaseId = randomUUID();
     const leaseDurationMs = 90_000;
-    const claimed = await this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs);
+    const claimed = await measureBackendPreparation('bootstrap.lease_claim', () => this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs));
     if (!claimed) {
       throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This response is already streaming');
     }
@@ -747,6 +753,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.streamExecutionLeases.set(streamKey, leaseId);
     let leaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     let leaseLost = false;
+    let renewingLease = false;
     // Ownership marker set once the conversation slot is granted: a rejected
     // duplicate must never release the legitimate owner's registration.
     let registeredLocally = false;
@@ -756,11 +763,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     try {
       // Independent read-only lookups run together; the order-sensitive checks
       // that consume them stay where they were (leases, admission, broadcast).
-      const [conversation, memberIds, assistantMessage] = await Promise.all([
+      const [conversation, memberIds, assistantMessage] = await measureBackendPreparation('bootstrap.context', () => Promise.all([
         preloadedConversation ?? this.conversationService.getConversationDocument(conversationId),
         this.resolveMemberIds(conversationId),
         this.messageService.findById(messageId),
-      ]);
+      ]));
       const resumedState = request.rootContinuation && this.rootWorkService
         ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
           conversation.rootWorkEpoch ?? 0) : undefined;
@@ -772,12 +779,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // Loaded only where the policy check already needed it; it also names
       // the agent in stream_start.
       const rootAgent = rootRoute && conversation.runtimeMode !== 'governed'
-        ? await this.agentService.findUserAgentById(userId, conversation.rootAgentId!) : undefined;
+        ? await measureBackendPreparation('bootstrap.root_agent', () => this.agentService.findUserAgentBootstrap(userId, conversation.rootAgentId!)) : undefined;
       const isolatedRoot = rootRoute && (conversation.runtimeMode === 'governed' || Boolean(rootAgent?.rootExecutionPolicy));
       const nativeSessionId = resumedState?.sessionId ?? (isolatedRoot ? `turn_${messageId}` : conversationId);
       const historyMessages = isolatedRoot && !request.rootContinuation
-        ? await this.messageService.findAllByConversation(conversationId) : undefined;
-      const seedHistory = historyMessages ? completedTurnHistory(historyMessages, messageId) : undefined;
+        ? await measureBackendPreparation('bootstrap.history', () => this.messageService.findAllByConversation(conversationId)) : undefined;
+      const seed = historyMessages ? completedTurnSeed(historyMessages, messageId) : undefined;
+      const seedHistory = seed?.history;
       const ongoingRequests = historyMessages ? ongoingRequestContext(historyMessages, messageId, conversationId) : undefined;
       if (this.bootstrapCancelRequested.has(streamKey)) {
         if (resumedState) await this.rootWorkService!.completeExecution(resumedState.scope.executionId, 'cancelled', null);
@@ -843,9 +851,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       // Fleet admission (WP07): shared per-user/global capacity plus durable
       // same-conversation exclusivity across actors AND replicas. A missing
-      // admission table (migration pending) degrades to process-local limits.
+      // admission dependency fails closed; local limits cannot replace fleet control.
       if (this.fleetAdmissionEnabled) {
-        const admitted = await this.executionStore.admit({
+        const admitted = await measureBackendPreparation('bootstrap.fleet_admission', () => this.executionStore.admit({
           executionId: randomUUID().replaceAll('-', '').slice(0, 24),
           conversationId,
           userId,
@@ -855,6 +863,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           expiresAt: new Date(Date.now() + leaseDurationMs * 2),
           maxActiveRunsPerUser: maxStreams,
           maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
+        })).catch(() => {
+          logDomainEvent('error', 'conversation.admission.store_error', { operation: 'admit', outcome: 'dependency_unavailable' });
+          this.logger.error('Fleet admission unavailable', { conversationId, messageId, requestId }, logOpts);
+          throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Execution admission is unavailable');
         });
         if (!admitted.admitted) {
           if (admitted.reason === 'capacity') {
@@ -890,8 +902,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         }
       };
       leaseHeartbeat = setInterval(() => {
+        if (renewingLease || leaseLost) return;
+        renewingLease = true;
+        // Atomically checkpoint under the same lease guard as renewal. A dead
+        // owner leaves readable partial content for the recovery worker.
+        const buffer = this.componentBuffers.get(streamKey);
+        const snapshot = buffer?.size ? structuredClone(Array.from(buffer.values())) : undefined;
         void this.messageService
-          .renewStreamExecution(messageId, leaseId, leaseDurationMs)
+          .renewStreamExecution(messageId, leaseId, leaseDurationMs, snapshot)
           .then((renewed) => {
             if (!renewed) {
               leaseLost = true;
@@ -910,7 +928,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               },
               logOpts,
             );
-          });
+          }).finally(() => { renewingLease = false; });
         if (fleetAdmitted) {
           // Keep the shared capacity slot alive and observe cross-replica stop
           // requests (bounded polling fallback; the serving replica settles).
@@ -923,7 +941,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 void this.stopStream(userId, conversationId, messageId).catch(() => undefined);
               }
             })
-            .catch(() => undefined);
+            .catch((error: unknown) => {
+              leaseLost = true;
+              this.activeCalls.get(streamKey)?.cancel();
+              logDomainEvent('error', 'conversation.admission.store_error', { operation: 'heartbeat', outcome: 'dependency_unavailable' });
+              this.logger.error('Fleet execution heartbeat failed', {
+                conversationId, messageId, requestId,
+                error: error instanceof Error ? error.message : String(error),
+              }, logOpts);
+            });
         }
       }, 30_000);
       leaseHeartbeat.unref?.();
@@ -964,10 +990,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       assertLeaseOwned();
 
       // Send stream_start event to all members
-      await this.streamGateway.broadcastToConversation(memberIds, {
+      await measureBackendPreparation('bootstrap.broadcast', () => this.streamGateway.broadcastToConversation(memberIds, {
         type: 'stream_start',
         data: { conversationId, messageId, ...origin },
-      });
+      }));
       assertLeaseOwned();
 
       endBackendPreAdkStage('streamBootstrapMs');
@@ -983,6 +1009,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           webConnectorAccessEnabled: request.webConnectorAccessEnabled ?? true,
           deepSearchEnabled: request.deepSearchEnabled ?? false,
           modelId: request.modelId,
+          reasoningEffort: request.reasoningEffort,
           semanticModelId: request.semanticModelId,
           agentIds: request.agentIds ?? [],
           teamId: request.teamId,
@@ -1001,6 +1028,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         seedHistory,
         ongoingRequests,
         conversation,
+        seed?.sourceSessionId,
       );
       assertLeaseOwned();
       if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
@@ -1145,7 +1173,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return snapshots;
   }
 
-  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext, preloadedConversation?: ConversationRecord): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext, preloadedConversation?: ConversationRecord, sourceSessionId?: string): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = preloadedConversation ?? await this.conversationService.getConversationDocument(conversationId);
     const continuation = request.rootContinuation && this.rootWorkService
@@ -1225,6 +1253,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 conversationId,
                 correlationId: runtimeCorrelationId,
                 playbookHandoffAttached: Boolean(request.playbookHandoffId),
+                implicitRoot: Boolean(boundRootId && request.agentIds.length === 0),
               },
               request.reasoningEffort,
               compaction,
@@ -1309,7 +1338,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             rootContext: rootDelegation.rootContext,
             invocationId: null,
             sessionId,
-            ...(seedHistory ? { sessionSeed: { idempotencyKey: `turn_${originAssistantMessageId}`, history: seedHistory } } : {}),
+            ...(seedHistory ? { sessionSeed: { idempotencyKey: `turn_${originAssistantMessageId}`, history: seedHistory, ...(sourceSessionId ? { sourceSessionId } : {}) } } : {}),
             pendingInputs: [],
             ...(originMessage ? { origin: { assistantMessageId: originAssistantMessageId!,
               ...(originMessage.questionMessageId ? { questionMessageId: String(originMessage.questionMessageId) } : {}) } } : {}),
@@ -1431,7 +1460,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         beginBackendPreAdkStage('rootSessionSeedMs');
         try {
           await this.seedConversationSession(userId, sessionId, admittedNativeState.sessionSeed.idempotencyKey,
-            admittedNativeState.sessionSeed.history);
+            admittedNativeState.sessionSeed.history, admittedNativeState.sessionSeed.sourceSessionId);
           endBackendPreAdkStage('rootSessionSeedMs');
         } catch (error) {
           await this.rootWorkService!.completeExecution(admittedNativeState.scope.executionId, 'failed', null);
@@ -1742,7 +1771,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Cross-replica stop (WP07): record the control intent on the shared
         // execution row so the owning replica observes and settles it.
         if (this.fleetAdmissionEnabled) {
-          const requested = await this.executionStore.requestCancel(messageId).catch(() => false);
+          await this.messageService.findByIdInConversation(conversationId, messageId);
+          const requested = await this.executionStore.requestCancel({ conversationId, messageId }).catch(() => {
+            logDomainEvent('error', 'conversation.admission.store_error', { operation: 'request_cancel', outcome: 'dependency_unavailable' });
+            this.logger.error('Remote stop unavailable', { conversationId, messageId });
+            throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Execution cancellation is unavailable');
+          });
           if (requested) {
             this.logger.log('Stop requested for remotely owned execution', {
               userId,
@@ -1881,11 +1915,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     await terminal!.settlement;
   }
 
-  private executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
+  private async executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
     const logOpts: LogOptions = { requestId };
     let nativeWrites = Promise.resolve();
     let nativeWriteError: unknown;
 
+    const rootExecutionId = grpcRequest.execution_scope?.execution_id;
+    let rootAuthority: string | undefined;
+    if (rootExecutionId) {
+      const lease = this.streamExecutionLeases.get(streamKey);
+      if (!lease || !this.rootWorkService) throw new Error('Root dispatch authority unavailable');
+      rootAuthority = await this.rootWorkService.issueForegroundAuthority(rootExecutionId, userId, conversationId, messageId, lease);
+    }
+    let nativeAuthority: string | undefined;
+    if (!rootExecutionId) {
+      const lease = this.streamExecutionLeases.get(streamKey);
+      if (!lease || !this.rootWorkService) throw new Error('Native dispatch authority unavailable');
+      nativeAuthority = await this.rootWorkService.issueNativeConversationAuthority(userId, conversationId, messageId, lease);
+    }
     return new Promise<void>((resolve, reject) => {
       this.logger.debug(
         'gRPC call initiated',
@@ -1901,6 +1948,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       // Create metadata with user header for LiteLLM logging + shared API key
       const metadata = createGrpcMetadata(this.configService);
+      if (rootAuthority) metadata.set('x-yellowstorm-root-authority', rootAuthority);
+      if (nativeAuthority) metadata.set('x-yellowstorm-native-authority', nativeAuthority);
       const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
       metadata.set('user', userHeader);
 
@@ -2181,10 +2230,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       call.on('end', async () => {
         await nativeWrites;
-        if (nativeWriteError) {
+        if (nativeWriteError || chunkCount === 0) {
           this.beginStreamTerminal(streamKey, () => this.handleStreamError(
             userId, conversationId, messageId, streamKey, ErrorCode.CHAT_STREAM_FAILED, requestId,
-          ), nativeWriteError);
+          ), nativeWriteError ?? new Error('Stream ended without content'));
           return;
         }
         if (terminal.started) return;
@@ -2423,6 +2472,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         messageId,
         streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
+        terminalStatus: 'failed',
         inputTokens: usageData?.inputTokens,
         outputTokens: usageData?.outputTokens,
         latencyMetrics,
@@ -2841,18 +2891,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private async resolveMemberIds(conversationId: string): Promise<string[]> {
     try {
-      const conversation = await this.conversationService.findById(conversationId);
-      const userIds: string[] = [conversation.createdBy];
-
-      if (conversation.groupMeta?.isGroup) {
-        conversation.groupMeta.members.forEach((member) => {
-          if (!userIds.includes(member.userId)) {
-            userIds.push(member.userId);
-          }
-        });
-      }
-
-      return userIds;
+      return await this.conversationService.getBroadcastMemberIds(conversationId);
     } catch (err) {
       this.logger.warn('Failed to resolve member ids for broadcast', {
         conversationId,
@@ -2967,9 +3006,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.executeSingleAgentGrpcStream(params.messageId, grpcRequest, timeoutMs, logOpts);
   }
 
-  private executeSingleAgentGrpcStream(messageId: string, grpcRequest: Record<string, unknown>, timeoutMs: number, logOpts?: LogOptions): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
-    return new Promise((resolve, reject) => {
+  private async executeSingleAgentGrpcStream(messageId: string, grpcRequest: Record<string, unknown>, timeoutMs: number, logOpts?: LogOptions): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+    const userId = (grpcRequest.user_context as { user_id?: string } | undefined)?.user_id;
+    const conversationId = grpcRequest.conversation_id;
+    if (!userId || typeof conversationId !== 'string' || !this.rootWorkService) throw new Error('Native dispatch authority unavailable');
+    const leaseId = randomUUID();
+    if (!await this.messageService.claimStreamExecution(messageId, leaseId, 90_000)) {
+      throw new Error('Single-agent execution is already owned or no longer runnable');
+    }
+    let heartbeat: NodeJS.Timeout | undefined;
+    try {
+      const authority = await this.rootWorkService.issueNativeConversationAuthority(userId, conversationId, messageId, leaseId);
+      return await new Promise<{ durationMs: number; componentCount: number; chunkCount: number }>((resolve, reject) => {
       const metadata = createGrpcMetadata(this.configService);
+      metadata.set('x-yellowstorm-native-authority', authority);
       const username = (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
       metadata.set('user', username);
 
@@ -2977,7 +3027,26 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const buffer = new Map<string, MessageComponent>();
       const startTime = Date.now();
       let chunkCount = 0;
+      let terminal = false;
       let timeoutHandle: NodeJS.Timeout | null = null;
+
+      const fail = (error: Error) => {
+        if (terminal) return;
+        terminal = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        void this.messageService.completeAIMessage({ messageId, streamExecutionLeaseId: leaseId, components: Array.from(buffer.values()), terminalStatus: 'failed' })
+          .then(() => reject(error), reject);
+      };
+
+      let renewing = false;
+      heartbeat = setInterval(() => {
+        if (terminal || renewing) return;
+        renewing = true;
+        void this.messageService.renewStreamExecution(messageId, leaseId, 90_000)
+          .then(ok => { if (!ok) { fail(new Error('Native execution lease changed')); call.cancel(); } })
+          .catch(() => { fail(new Error('Native execution lease renewal failed')); call.cancel(); })
+          .finally(() => { renewing = false; });
+      }, 30_000);
 
       const resetIdleTimeout = () => {
         if (timeoutHandle) {
@@ -2990,22 +3059,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             timeoutMs,
             requestId: logOpts?.requestId,
           });
+          fail(new Error('RunSingleAgent idle timeout'));
           call.cancel();
-          void this.messageService.markStreamFailed(messageId).catch((err) => {
-            this.logger.error('Failed to mark single-agent stream as failed', {
-              messageId,
-              error: (err as Error).message,
-            });
-          });
-          reject(new Error('RunSingleAgent idle timeout'));
         }, timeoutMs);
       };
 
       resetIdleTimeout();
 
       call.on('data', (chunk: { action?: string; component?: Record<string, unknown>; metadata?: { agent_id?: string } }) => {
+        if (terminal || chunk.action === 'heartbeat') return;
         resetIdleTimeout();
-        if (chunk.action === 'heartbeat') return;
         chunkCount++;
 
         const action = chunk.action;
@@ -3032,16 +3095,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           chunkCount,
           requestId: logOpts?.requestId,
         });
-        void this.messageService.markStreamFailed(messageId).catch((err) => {
-          this.logger.error('Failed to mark single-agent stream as failed', {
-            messageId,
-            error: (err as Error).message,
-          });
-        });
-        reject(error);
+        fail(error);
       });
 
       call.on('end', () => {
+        if (terminal) return;
+        if (chunkCount === 0) { fail(new Error('Stream ended without content')); return; }
+        terminal = true;
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
@@ -3049,7 +3109,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const components = Array.from(buffer.values());
 
         void this.messageService
-          .completeAIMessage({ messageId, components, durationMs })
+          .completeAIMessage({ messageId, streamExecutionLeaseId: leaseId, components, durationMs })
           .then(() => {
             resolve({ durationMs, componentCount: components.length, chunkCount });
           })
@@ -3057,7 +3117,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             reject(error);
           });
       });
-    });
+      });
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      await this.messageService.releaseStreamExecution(messageId, leaseId);
+    }
   }
 
   private sanitizeComponent(component: MessageComponent): MessageComponent {

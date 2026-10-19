@@ -82,7 +82,8 @@ export class ThematicMemoryService {
     args: Record<string, unknown>,
   ): Promise<{ ok: boolean; text: string; error?: string; skipped?: string }> {
     if (!this.apiKey) return { ok: false, text: '', skipped: 'no-key', error: 'no key configured' };
-    const c = await this.connectors.findBySlug('smart-memory');
+    // SERVER-ONLY runtime lookup: reads the connector's own server headers (WP-02).
+    const c = await this.connectors.findRuntimeBySlug('smart-memory');
     if (!c?.actions?.some((a) => a.key === name)) {
       return { ok: false, text: '', skipped: 'no-connector', error: 'smart-memory connector unavailable' };
     }

@@ -121,8 +121,10 @@ export const governanceApi = {
     const res = await apiClient.patch(API_ENDPOINTS.governance.workspaceBinding(programId, bindingId), payload);
     return res.data.data;
   },
-  async deleteWorkspaceBinding(programId: string, bindingId: string): Promise<void> {
-    await apiClient.delete(API_ENDPOINTS.governance.workspaceBinding(programId, bindingId));
+  async deleteWorkspaceBinding(programId: string, bindingId: string, scopeId?: string): Promise<void> {
+    const url = API_ENDPOINTS.governance.workspaceBinding(programId, bindingId);
+    if (scopeId) await apiClient.delete(url, { params: { scopeId } });
+    else await apiClient.delete(url);
   },
   async reconcileWorkspaceBinding(programId: string, bindingId: string, dryRun: boolean): Promise<import('./types').GovernanceWorkspaceReconciliationResult> {
     const res = await apiClient.post(API_ENDPOINTS.governance.reconcileWorkspaceBinding(programId, bindingId), { dryRun });

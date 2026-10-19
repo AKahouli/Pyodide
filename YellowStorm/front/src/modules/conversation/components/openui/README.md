@@ -1,5 +1,41 @@
 # OpenUI render mode
 
+## Rich HTML artifacts
+
+`HtmlView(html, height?, title?, name?, value?)` adapts the upstream primitive.
+Place it inside MiniApp and bind `value` to an object `$variable` for private
+autosave. Strict mode (the default under Admin → Conversation → Generative UI)
+supports self-contained CSS/SVG and declared controls: data-state, data-text,
+data-show, data-filter/data-filter-value, data-progress and numeric SVG
+data-attr-width/height/x/y. Generated scripts, URLs, events and nested documents
+are removed. Only trusted bridge code executes. Interactive mode allows inline
+scripts through yellowmind.ready/state/setState/subscribe, with explicit warnings:
+scripts can self-navigate and transmit declared state, and can stall the tab.
+Neither iframe mode supplies hard CPU/memory containment.
+
+The srcdoc document loads only `/openui-html.js`, a trusted external bridge,
+under the unchanged parent CSP. Strict mode denies inline scripts and eval.
+Interactive mode stores generated scripts as inert data and evaluates them after
+initial state arrives; use one script because each has a separate function scope.
+Instance-only
+MessagePorts carry bounded declared state and height; actor/program changes close
+them. Credentials, document bodies and host tools are never bridge capabilities.
+Keep MiniDocument, AskAgent and MiniTaskResult outside the HTML frame. Existing
+drafts restore without inference. HtmlView capture/export is not supported yet
+and fails explicitly. See html-view-examples.ts for different reusable dashboards.
+
+### Qualification (2026-10-18)
+
+Two saved HTML dashboards in conversation `c66d50ba8780ea080b2c52d5` restored
+without Restart or agent inference after reload: sales North/75/"Saved North"
+and operations Night/0/empty name/overtime false. The stored answer and usage
+(28K tokens, $0.005) remained unchanged. Browser checks passed for two independent
+strict/interactive views, script removal/execution, parent/storage denial and
+mode remount retaining typed values. Administrator settings show strict by default.
+The normal-URL shell's startup navigation stalled at about:blank; srcdoc plus the
+trusted external loader removes that dependency. The precise browser cause of
+the cancelled navigation was not established. No application CSP relaxation.
+
 An agent can answer in [OpenUI Lang](https://www.openui.com/docs) instead of markdown. OpenUI Lang is plain text in the usual
 `text` component of the NestJS SSE stream (the Python ADK runtime is unchanged), rendered here.
 
@@ -49,6 +85,22 @@ character instruction limit does not apply to it); an agent such as `openui-expe
 
 ## Component library
 
+### OpenUI 1.0 migration
+
+The frontend pins `lang-core`/`react-lang` to **1.0.1** and `react-ui`/`react-headless` to **0.18.1**.
+Thesys remains **0.14.0**: its published peer ranges do not certify this combination. Existing package overrides retain one
+SDK runtime and the application's Zustand 5 store; mounted legacy component/provider tests qualify this integration locally.
+Keep these tests as upgrade gates, including reports, slide previews, forms, images and exports. React remains 18.
+
+The phase 1 dependency migration preserved existing component signatures, persisted programs and accepted interaction state.
+Its generated prompt was unchanged. `migration-compatibility.test.tsx` separately qualified the 1.0 function, local `@Set`,
+typed action and state-hydration APIs before phase 2 exposed the bounded declarative primitives below. Autosave remains separate work.
+
+Known upstream limitation: core 1.0.1's `library.extend()` calls `zod/v4/core.util.mergeDefs`, which is absent from Zod
+3.25.76's bundled v4 bridge. Vite warns about that export. Our libraries and prompt generator use `createLibrary` with
+complete definitions, so the affected extension path is not invoked. Do not adopt `library.extend()` without qualifying
+a compatible scoped Zod dependency and an extension regression; upgrading the application's Zod 3 forms is separate work.
+
 The renderer uses the **thesys chat library** (`chatLibrary` of `@openuidev/thesys`): the root is `Card`, answers can use
 `SectionBlock`, `Tabs`, the card blocks, `InlineHeader`, `List`, charts, and end with a `FollowUpBlock` (its texts raise a plain
 `continue_conversation` action, sent as a user message like a button). It runs on our `react-lang` and `react-ui`: package.json
@@ -61,6 +113,55 @@ that argument from the spec.
 package; the ones in `@openuidev/react-ui` target its own library with other signatures). The generator therefore builds the prompt with
 `generateSystemPrompt` from the stock spec and layers our own `additionalRules` (stat cards, charts, icon lists, tags, image cards, citations,
 reports) and `examples`, each example parsed against the library at generation time.
+
+### Reusable declarative mini-apps (phase 2)
+
+The agent composes `MiniApp`, `MiniInput`, `MiniSelect`, `MiniToggle`, `MiniButton`, `MiniOutput` and `MiniList` inside the
+existing `Card` root. These are general controls, not calculator, scenario or summarizer screens. Inputs bind directly to
+OpenUI `$variables`; native expressions and local `@Set`/`@Reset` actions update the panel without an inference turn.
+Numeric blank is `null`, distinct from zero. Required fields and numeric ranges are checked before `AskAgent` even when the
+generated button omits its validation flag. Fields disable during streaming/submission; existing submission status and retry
+handling are reused. Local reset does not require the form to be valid.
+
+Four registered pure functions support composition: `FormatNumber`, `TextMetrics`, `FilterText` and `JoinText`.
+Every implementation validates both arguments and results internally: the SDK's declared schemas alone do not reliably
+enforce refinements at execution time. Numbers must be finite, decimal precision is 0–12, lists contain at most 200 strings,
+and combined function text is limited to 20,000 UTF-16 code units. Join separators have at most 100 code units and joined
+output is bounded too. Invalid calls throw into the SDK's isolated error path and become `null`; `MiniOutput` shows the
+localized invalid/empty-result message while valid sibling output remains visible. Text input controls cap each value at
+5,000 code units. There is no model-supplied JavaScript, `eval`, HTML execution or direct tool/file capability.
+
+`AskAgent(instruction, inputs)` is an explicit action, normalized to the existing typed `continue_conversation` submission.
+Bounded JSON inputs and binding state retain numbers, booleans, arrays, null and empty strings. The existing backend verifies
+the source answer/component and conversation access, then places the canonical typed submission in an ordinary agent turn.
+A document summarizer therefore uses pasted text or names a document already authorized in that conversation/workspace;
+the conversation agent reads it with its existing tools and answers separately. Missing or inaccessible documents require
+an attachment or clarification. `TextMetrics` only counts text; it does not summarize documents. No document picker,
+new execution bridge or in-place asynchronous result service was added.
+
+Phase 2 initially restored only accepted submissions. Phase 3 adds private autosave for completed `MiniApp` programs:
+the host loads actor/source/program-scoped state before enabling controls and saves changes after a 500 ms debounce.
+Unsubmitted numbers, booleans, null, empty strings, arrays and objects retain their JSON types. The existing accepted
+submission state remains the fallback when no private draft exists. Quiet saves never invoke the agent.
+
+The authenticated GET/PUT endpoint under `messages/:messageId/openui/:componentId/state` derives actor and source digest
+server-side; both operations require creator/member access. Atomic expected revisions reject stale writes. The host verifies
+SHA-256 of the exact saved program and scopes late responses to the actor/source. Saving, saved, retry, read-only and conflict
+states are visible. Conflicts require loading saved state or explicitly reapplying a draft against the current revision.
+Dynamic mini-app snapshot exports remain deferred. Export requests can produce a separate static answer/report or authorized
+artifact through the existing agent. See ADR-0025 and the phase plan for the persistence contract and qualification evidence.
+
+The generator transpiles the exact shared TypeScript definitions with the installed TypeScript dependency for Node 20,
+enables bindings and disables tool calls. The phase 4 prompt is 54,867 characters (55,000 soft target; 60,000 hard cap).
+Phase 2 qualification covers four unrelated generated compositions and an explicit document-summary request: the frontend run passes 251 tests in 31 files, including the 12 function/mounted tests, and the final production build passes.
+Live browser QA in conversation `0a36aab51f702536578737aa` generated all four apps from one natural-language request:
+100 Celsius displayed 212.00 Fahrenheit, reset restored 32.00, the discounted scenario displayed 18.00, and `Os` filtered
+the list to Osaka without another assistant turn. An explicit summary request with Detailed/French/bullets=false produced
+a grounded French answer, including the source's zero-euro budget. Controls disabled while submitting. After changing the
+source to an unsubmitted draft and reloading, the accepted original source, Detailed/French/false choices and summary returned;
+the scenario/list bindings captured in that accepted submission also restored. A downloaded 1,176-byte static HTML summary
+retained the title, paragraphs and zero-euro fact. Final TypeScript and 14 backend contract tests pass. Independent implementation
+and documentation review found no blocking issues.
 
 thesys's stylesheet is imported next to the react-ui one in OpenUiRenderer.tsx. Both live in the lazy chunk, and
 `devtools-off.ts` must stay the first import of anything that loads react-lang (thesys does, so a new entry point has to import it first).
@@ -96,8 +197,17 @@ would mean overriding each report component, which is not done.
 - Each assistant text part is rendered as its own OpenUI program (a tool call between two texts starts a new `root = ...`).
   Non-text parts (choices, sources, artifacts) keep their regular renderers.
 - While streaming the Renderer is given `isStreaming`; the program is parsed incrementally.
-- `continue_conversation` actions (buttons, forms, follow-ups) are sent as a user message through
-  `useConversationStore.sendMessage`, with submitted form values appended as JSON. `open_url` opens http(s) links only.
+- `continue_conversation` actions retain bounded typed form values and parameters in saved `openUiSubmission` metadata through
+  `useConversationStore.sendMessage`. Chat bubbles show a readable action label; accepted values hydrate the renderer after reload. `open_url` opens http(s) links only.
+- Named primitive-cell chat tables support filtering, numeric/string column sorting and original row selection.
+  Apply table view saves `TableView` values under the existing interaction's `__ysExplore` form; drafts remain local.
+  Exports use the last applied view, including selected rows (or all filtered rows when none are selected), independent of mounted DOM.
+  Answer export fetches saved message pages so older accepted selections remain available after reload.
+- Named chat bar, horizontal bar and line charts provide series/category selectors and category drill-down buttons.
+  Apply chart view saves original series/category indices as typed `ChartView` values in that same interaction form.
+  All series/categories remain visible by default; applying a selection drives reload and export projection, including numeric zero.
+  Report/presentation chart schemas and unsubmitted draft persistence are unchanged.
+- Download actions resolve a unique ready artifact attached to the same answer and request a fresh authorized download URL on click, including after reload. Model-authored sandbox paths are never fetched directly.
 - A load or render failure falls back to the markdown renderer for that text part.
 - `toolProvider`, `AgentInterface` and `fetchLLM` are deliberately not used.
 
@@ -119,7 +229,8 @@ so `library.tsx` swaps the renderer of the text-bearing components, using the st
 unchanged): TextContent is reimplemented around `CitationMarkdown`; Header and Table keep the stock component and are fed chip
 elements (or a marked cell resolved by `renderNode`); CalloutV2, StepsItem, Text, BoldText, IconText (the text of every card block),
 InlineHeader, List and EntityList are in `inline-text.tsx`, used only when a string carries a `[n]` marker and the answer has citations.
-Names, schemas and prompt are unchanged (spec-equality test). Each known marker becomes our `SingleInlineCitation` chip (hover
+Stock component names and schemas remain unchanged; the library adds the separate mini-app definitions and their prompt spec.
+Each known marker becomes our `SingleInlineCitation` chip (hover
 card, document viewer, record drawer, web link). Components that render plain strings (Tag, TagBlock, ImageText, MetricIndicator*,
 FollowUpBlock texts, Steps/Tabs/Accordion headings, SectionBlockItem and tab/accordion triggers, chart labels, Col labels,
 buttons) show the marker literally or drop it; the prompt tells the agent to avoid them. A `CardSourceProvider` gives the stock inline
@@ -130,8 +241,132 @@ copied verbatim, no sources list, no `sources` on Card). Re-run `npm run openui:
 
 ## Copy and export
 
-An OpenUI answer is stored as a program, so copy / HTML / DOCX / PDF export read the rendered answer back from the DOM
-(`plain-text.ts`: blocks become lines, table rows `a | b`, citation chips `[n]`, charts omitted). When the message is not
-rendered the stored text is used unchanged. A folded `SectionBlock` unmounts its closed sections, so when one is closed the DOM is
-not the whole answer and the projection falls back to the program strings (without table cells).
-A report lives in its panel, not in the message, so its text always comes from the program strings (`programToPlainText`), appended after the rendered answer.
+Copy reads mounted content with a stored-program fallback. Document exports parse the saved program, including folded
+sections and reports, and hydrate only accepted table/chart submissions from message history. DOCX, HTML and PDF share
+`buildStructuredExportBlocks`: charts are rendered offscreen with the native stock chart under an isolated light theme,
+then captured as embedded PNGs including legends. The applied chart subset and filtered/sorted table are used; local
+unsubmitted edits never affect exports. The editable chart data table and metadata remain alongside the chart image.
+Capture failure fails the export explicitly. Captures do not depend on virtualized/mounted answer DOM or execute actions.
+MCP manifests retain their existing chart metadata and editable data tables without raster capture.
+
+Phase 3 qualification: 264 distinct frontend tests and 23 backend tests pass, including real PostgreSQL isolation/concurrency checks. Production TypeScript checks pass. Live four-app drafts retain typed unsubmitted values after reload; two tabs detect stale writes and recover through load/reapply without inference. Independent source and documentation review passes.
+
+## Reusable composition and theme
+
+`MiniRow`, `MiniColumn`, `MiniGrid`, `MiniPanel` and `MiniText` compose arbitrary
+mini-app layouts without introducing another form or state owner. These adapt
+the upstream demo's layout algorithms and hierarchy; revision/license attribution
+is in `MINI-APP-NOTICE.txt`. All styles are scoped and use YellowStorm theme tokens.
+Spacing uses bounded 4px steps. Grid columns are 1–6, optional minimum child width
+is 80–640 px, and each layout accepts at most 40 direct children. Runtime numeric
+clamps supplement schema limits. Responsive grids shrink their column count;
+omitting minimum width supports a fixed keypad.
+
+Existing positional calls retain their defaults. Optional trailing MiniApp width
+is compact/medium/full. MiniButton adds solid/outline/soft/ghost appearance,
+sm/md/lg size, a finite icon name, disabled/block flags and md/lg/full radius after
+its existing validate argument. MiniOutput adds body/display/compact size and
+start/center/end alignment. MiniText offers heading/body/caption/display roles
+and citation-aware text. Local actions remain local, document tasks stay explicit,
+and layouts preserve private autosave and saved-result identity. New programs do
+not migrate old private drafts across program digests. Static MiniText fallback
+projection retains text while excluding presentation enums; saved reactive exports
+are described below.
+
+The generated prompt exposes exactly these schemas. Full worked generation
+examples and broader visual qualification remain the next migration-map commit.
+
+## Document tasks (phase 4)
+
+`MiniDocument(name, label, $documentId, required)` lists completed conversation
+uploads through the authenticated conversation-files API. Composer upload
+and refresh reuse the normal limits; IDs, names and storage URLs are never invented
+by the generated program. Linked external workspaces are not added to this selector.
+
+`AskAgent(instruction, inputs, documentIds?)` explicitly runs the existing agent.
+The host flushes private state, sends a versioned source digest/revision descriptor,
+and preserves the request ID on uncertain retries. Backend source/member/file checks
+precede execution. Busy guards block double clicks; later explicit reruns get a new ID.
+
+`MiniTaskResult(label, inputs)` follows the actual stored user/assistant message link
+for the enclosing app and signed-in actor. It restores saved text without executing
+an action. Its inputs should match AskAgent. Host revision and dirty-state checks
+also mark any changed component snapshot stale, even when generated inputs omit a
+changed field. Cancelled/failed/interrupted partial output is not a completed result.
+The normal conversation answer retains its full content and export actions; matching
+completed results can join saved snapshots. No result body is stored in private drafts.
+
+### Generation composition guidance
+
+The shared prompt now demonstrates four task-shaped compositions: compact keypad,
+responsive estimator, searchable shortlist and document workflow. These are example
+programs, not host screens or a closed app catalog. Definitions still come from the
+mounted library; the generator parses every example before writing the backend
+module. Legacy examples remain acceptance fixtures for existing signatures.
+
+Document generation uses MiniDocument with an empty initial ID, explicit validated
+AskAgent and a MiniTaskResult with matching typed inputs. The host owns private
+autosave/status, access checks and saved-result correlation. Generation must not
+invent documents, automatically summarize, write results into drafts or recreate
+the source app when answering a task. Static and saved reactive exports remain
+separate from executable HTML artifacts.
+
+### Accepted-submission fallback isolation
+
+When no private draft exists, MiniApp may hydrate this actor's accepted values.
+Versioned task submissions must also match the current program digest. Another
+participant's values and previous-program task values cannot seed a private draft.
+Same-actor legacy submissions remain compatible; ordinary form/chart/table accepted
+views keep their existing semantics. PostgreSQL draft access remains actor-scoped.
+See the reuse map's integration qualification for concurrency, access and exports.
+
+
+### SVG drawings and dashboard functions
+
+The chat library adapts upstream Svg/G/Circle/Ellipse/Rect/Line/Path/Polyline/
+Polygon/SvgText and ten pure dashboard functions (GroupBy, Pivot, Top, Between,
+Bucket, Cumulative, MovingAvg, Change, Histogram, Stats). Shared SVG definitions
+and function schemas also generate the agent prompt. Upstream attribution is in
+MINI-APP-NOTICE.txt. No dependency or app-specific screen is added.
+
+SVG accepts registered SVG children only, with bounded finite geometry, resource-free
+paints, spaced/comma-separated path numbers and checked transforms. Supply the
+optional final Svg title in the user's language. Null optional argument placeholders
+remain valid. Nested drawings are bounded to 200 nodes/depth 20; unsupported children
+cannot render host Image/HTML components. Static export uses the same strict SVG
+renderer and existing PNG capture flow, also used by saved reactive snapshots.
+
+Dashboard functions validate at execution as well as schema generation, cap arrays
+at 200 items and nested JSON at 5000 nodes/20k characters. Bucket uses UTC ISO dates,
+up to 200 traversed periods. Cumulative/MovingAvg write only top-level fields (or
+empty field for numeric lists); other functions may read safe dotted own paths.
+Nonfinite arithmetic, unsafe keys and excessive data are rejected. Zero, signed
+and fractional statistics are retained. Invalid function calls follow OpenUI's null
+failure behavior and must have meaningful generated empty/error presentation.
+
+Wrap reactive controls in the existing MiniApp. These additions own no state,
+execute no agent tasks and do not change private autosave, document selection or
+saved-result identities. See dashboard-examples.ts and the rich artifact plan for
+qualification and the separately scoped executable HTML phase.
+
+### Saved reactive export snapshots
+
+Explicit HTML/PDF/DOCX exports fetch the current actor's authenticated private
+snapshot. Mounted draft guards flush pending writes, block conflicts/errors/loading
+and verify the fetched revision/state before capture. No draft cache or shared
+program mutation is added. Revision-zero fallback uses the same actor/digest filters
+as OpenUiAnswer. The pure SDK evaluator rejects queries/mutations; it never mounts
+a Renderer or runs an action. Evaluated output is bounded to 20000 nodes/depth60.
+
+Inputs and selections project to labelled text, outputs/lists to native content,
+tables and chart data to native tables, SVG/charts to PNG. Private saved table/chart
+views take precedence. Authorized document labels and matching completed task
+results restore without rerunning tasks; missing/stale/revoked results fail explicitly.
+Nested interactive task results are unsupported. Account changes cancel delivery.
+
+Direct downloads do not modify the transcript. Existing Create with agent actions
+explicitly send projected visible parts in a new conversation turn to the configured
+MCP interpreter. PNG/JPEG data URIs are decoded directly; persistent selectors use
+the existing authorized reuse path. This can create editable text/tables/charts where
+supported, with SVG visuals as images. Live editable PPTX qualification is currently
+blocked by configured MCP transport errors; do not claim it passed.

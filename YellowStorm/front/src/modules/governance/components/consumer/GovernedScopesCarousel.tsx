@@ -102,7 +102,7 @@ export function GovernedScopesCarousel(): JSX.Element | null {
       {isError ? (
         <div className='flex items-center justify-between rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>
           <span>{t('governedScopes.error')}</span>
-          <Button variant='outline' size='sm' onClick={() => void refetch()}><RefreshCw className='mr-2 size-4' />{t('governedScopes.retry')}</Button>
+          <Button variant='outline' size='sm' onClick={() => void refetch()}><RefreshCw className='me-2 size-4' />{t('governedScopes.retry')}</Button>
         </div>
       ) : (
         <div ref={emblaRef} className='overflow-hidden'>
@@ -110,7 +110,7 @@ export function GovernedScopesCarousel(): JSX.Element | null {
             {isLoading
               ? Array.from({ length: 3 }).map((_, index) => <div key={index} className='h-[218px] w-[310px] shrink-0 animate-pulse rounded-2xl border bg-muted/40' />)
               : scopes.map((scope, index) => (
-                <button type='button' key={scope.scopeId} className={cn('flex min-h-[218px] w-[310px] shrink-0 flex-col gap-4 rounded-2xl border bg-card/80 p-4 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-xl', visibleIndices.includes(index) ? 'opacity-100' : 'opacity-70')} onClick={() => void start(scope)} disabled={startingScopeId === scope.scopeId} aria-label={t('governedScopes.openAria', { name: scope.name })}>
+                <button type='button' key={scope.scopeId} className={cn('flex min-h-[218px] w-[310px] shrink-0 flex-col gap-4 rounded-2xl border bg-card/80 p-4 text-start shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-xl', visibleIndices.includes(index) ? 'opacity-100' : 'opacity-70')} onClick={() => void start(scope)} disabled={startingScopeId === scope.scopeId} aria-label={t('governedScopes.openAria', { name: scope.name })}>
                   <div className='flex min-w-0 items-center gap-3'>
                     <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br text-sm font-semibold uppercase shadow-inner', ACCENT_GRADIENTS[index % ACCENT_GRADIENTS.length])}>{getInitials(scope.name)}</div>
                     <h3 className='truncate text-sm font-semibold' title={scope.name}>{scope.name}</h3>

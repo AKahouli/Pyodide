@@ -132,7 +132,7 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
         )}
         onClick={handleSelect}
       >
-        <div className='flex-1 min-w-0 pr-8'>
+        <div className='flex-1 min-w-0 pe-8'>
           <div className='flex items-center gap-2'>
             {isPersonal && <User className='h-4 w-4 text-primary' />}
             <div className='font-medium text-sm truncate'>{workspace.name}</div>
@@ -162,25 +162,25 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
             {!isPersonal && (
               <>
                 <DropdownMenuItem onClick={handleRenameClick} className='cursor-pointer'>
-                  <Pencil className='mr-2 h-4 w-4' />
+                  <Pencil className='me-2 h-4 w-4' />
                   {menuLabels.rename}
                 </DropdownMenuItem>
               </>
             )}
             <DropdownMenuItem onClick={handleSettingsClick} className='cursor-pointer'>
-              <Settings className='mr-2 h-4 w-4' />
+              <Settings className='me-2 h-4 w-4' />
               {menuLabels.settings}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleDeleteDocsClick} className='cursor-pointer' disabled={workspace.documentCount === 0}>
-              <FileX className='mr-2 h-4 w-4' />
+              <FileX className='me-2 h-4 w-4' />
               {menuLabels.deleteDocs}
             </DropdownMenuItem>
             {!isPersonal && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleDeleteClick} className='cursor-pointer text-destructive focus:text-destructive'>
-                  <Trash2 className='mr-2 h-4 w-4' />
+                  <Trash2 className='me-2 h-4 w-4' />
                   {menuLabels.delete}
                 </DropdownMenuItem>
               </>

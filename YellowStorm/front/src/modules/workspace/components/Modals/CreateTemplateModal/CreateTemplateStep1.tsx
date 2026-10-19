@@ -99,7 +99,7 @@ export function CreateTemplateStep1({ defaultValues, onNext }: CreateTemplateSte
           </Button>
           <Button type='submit'>
             {t(key('next'))}
-            <ChevronRight className='ml-2 h-4 w-4' />
+            <ChevronRight className='ms-2 h-4 w-4' />
           </Button>
         </div>
       </form>

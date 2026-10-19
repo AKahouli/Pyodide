@@ -1,4 +1,4 @@
-import type { ConnectorActionResponse, ConnectorDynamicHeaderSource } from '../../types';
+import type { ConnectorActionResponse, ConnectorDynamicHeaderSource, McpSecurityPolicy } from '../../types';
 
 export interface DynamicHeaderRow {
   id: string;
@@ -8,6 +8,10 @@ export interface DynamicHeaderRow {
 }
 
 export interface ConnectorFormValues {
+  mcpSecurityPolicy?: ConnectorSecurityPolicy;
+  expectedSecurityRevision?: number;
+  requiredPermissionsInput?: string;
+  accessToken?: string;
   slug: string;
   name: string;
   description: string;
@@ -24,6 +28,10 @@ export interface ConnectorFormValues {
   runtimeHeaderPrefix: string;
   runtimeHeaderMappings: Array<{ id: string; key: string; value: string }>;
   runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
+  /** Edit mode: re-enter credentials to replace the stored ones (they are never displayed). */
+  replaceCredentials: boolean;
+  /** Edit mode: clear the stored credentials on save. */
+  clearCredentials: boolean;
   mcpTransportType: string;
   mcpServerUrl: string;
   githubPatToken: string;
@@ -36,6 +44,22 @@ export interface ConnectorFormValues {
   isActive: boolean;
   isHidden: boolean;
   isSystem: boolean;
+}
+
+export type ConnectorSecurityPolicy = McpSecurityPolicy;
+
+/** Empty draft fields preserve stored secrets; explicit JSON {} clears config. */
+export function serializeConnectorSecretFields(data: ConnectorFormValues) {
+  return {
+    runtimeAuthConfig: data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) as Record<string, unknown> : undefined,
+    clearRuntimeAuthConfig: data.clearCredentials || undefined,
+    mcpServerConfig: data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) as Record<string, unknown> : undefined,
+  };
+}
+
+export function securityPolicyChanged(current: ConnectorSecurityPolicy | undefined, saved: ConnectorSecurityPolicy | undefined) {
+  const normalize = (policy: ConnectorSecurityPolicy | undefined) => policy ? [policy.version, policy.profile, policy.audience ?? '', policy.actorDelegation, policy.allowPrivateNetwork, policy.allowInsecureHttp, [...policy.requiredPermissions].sort()] : null;
+  return JSON.stringify(normalize(current)) !== JSON.stringify(normalize(saved));
 }
 
 export const defaultConnectorFormValues: ConnectorFormValues = {
@@ -55,6 +79,8 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   runtimeHeaderPrefix: 'Bearer ',
   runtimeHeaderMappings: [],
   runtimeEnvMappings: [],
+  replaceCredentials: false,
+  clearCredentials: false,
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
   githubPatToken: '',

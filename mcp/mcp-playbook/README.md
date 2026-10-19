@@ -5,7 +5,7 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 ## Configuration
 
 - `YELLOWSTORM_BACKEND_URL`: NestJS origin, default `http://localhost:3000`.
-- `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: value sent as `X-Internal-Token` to NestJS.
+- `PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN`: unique backend credential sent as `X-YellowStorm-Service-Token` with fixed machine principal `mcp-playbook` (not connector slug `playbook-mcp`). No shared-secret fallback; minimum 32 characters in production. Backend routes require signed actor audience `mcp-playbook`.
 - `PLAYBOOK_MCP_AUTH_MODE`: `Bearer` (default) or `JWT`.
 - `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret in Bearer mode.
 - `PLAYBOOK_MCP_JWT_PUBLIC_KEY_FILE`, `PLAYBOOK_MCP_JWT_ISSUER`, `PLAYBOOK_MCP_JWT_AUDIENCE`: public PEM, issuer, and audience (`mcp-playbook`) in JWT mode.
@@ -16,7 +16,22 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 
 Bearer authentication is sufficient for MCP initialization and tool inspection. User-scoped tool calls additionally require `X-YellowStorm-User-Id`; callers may provide `X-YellowStorm-Tenant-Id`, `X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id`, and `X-Correlation-Id` as an optional complete actor envelope for authorization and audit correlation. Identity headers are never model tool arguments.
 
-In JWT mode, YellowStorm signs a five-minute RS256 token for the authenticated user. The MCP verifies it and takes the acting user only from `sub`; a caller-supplied user header cannot override it. YellowStorm's connector and ADK runtime renew tokens automatically. Read tools need only the user token; construction calls that use conversation context still require agent, conversation, and correlation headers. The backend checks current Playbook permissions and share grants on each operation.
+In JWT mode, YellowStorm signs a five-minute RS256 token for the authenticated user. The MCP verifies it and takes the acting user only from `sub`; a caller-supplied user header that disagrees is rejected. Required integer time claims must satisfy `0 < exp - iat <= 300` seconds. YellowStorm's connector and ADK runtime renew tokens automatically. Read tools need only the user token; construction calls that use conversation context still require agent, conversation, and correlation headers. The MCP forwards `X-YellowStorm-Mcp-Assertion` alongside its scoped internal service credential. The backend's shared `DelegatedActorGuard` derives the actor from that signed assertion and checks the invoking user's current permissions and resource access (ADR-0024). Bearer ingress is a development compatibility mode, not sufficient delegation for protected backend operations.
+
+### Request isolation
+
+The production entrypoint explicitly uses `stateless_http=True`. Each HTTP request
+authenticates independently; old or foreign `Mcp-Session-Id` values cannot select
+an actor or retain an initialization assertion. Actor, assertion and logging
+bindings restore their previous values on success, rejection, exceptions,
+cancellation and partial setup. Renewed assertions reach the current call.
+
+`tests/test_request_isolation.py` captures the production entrypoint and uses real
+FastMCP default SSE responses with the actual backend client against a mock backend.
+It covers initialization/discovery, concurrent users, legacy-session replay,
+renewal, rejections without downstream calls, nested context and task cancellation.
+This local coverage is not deployment certification. Restart existing MCP processes
+to activate it; do not roll back to stateful identity retention.
 
 ## Yellowmind
 
@@ -40,6 +55,11 @@ The YellowStorm Playbook canvas uses its JWT-authenticated `/api/v1/playbooks/:p
 
 ## Operations
 
+- Local platform startup includes this service: `scripts/restart-platform.ps1`
+  and `scripts/restart-core.ps1`. Restart only this MCP with
+  `./scripts/restart-platform.ps1 -Only playbook` (alias `mcp-playbook`). The local
+  scripts expect port 8025; keep `MCP_PORT` and backend `PLAYBOOK_MCP_SERVER_URL`
+  aligned. Hidden service logs are under `%TEMP%\YellowStorm-platform`.
 - Liveness: `GET /health/live`.
 - Readiness: `GET /health/ready`; readiness fails when required secrets or bounded settings are invalid.
 - Inject the internal service token and the configured ingress credential through the deployment secret manager. Never put real values in images, manifests, logs, browser configuration, or connector persistence.

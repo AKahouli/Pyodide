@@ -89,15 +89,15 @@ export function SourceSuggestionsList({ modelId, suggestions, canEdit, onUse, on
           </li>)}
         </ul>
         {canEdit && <div className='mt-2 flex flex-wrap gap-2'>
-          <Button size='sm' variant='ghost' onClick={() => onBrowse(suggestion)}><FolderOpen className='mr-1.5 h-4 w-4' />{t(suggestion.options.length ? 'assistantSources.browse' : 'assistantSources.chooseFiles')}</Button>
+          <Button size='sm' variant='ghost' onClick={() => onBrowse(suggestion)}><FolderOpen className='me-1.5 h-4 w-4' />{t(suggestion.options.length ? 'assistantSources.browse' : 'assistantSources.chooseFiles')}</Button>
           <Button size='sm' variant='ghost' disabled={status.isPending} onClick={() => status.mutate({ conceptKey: suggestion.conceptKey, next: 'skipped' })}>
-            <X className='mr-1.5 h-4 w-4' />{t('assistantSources.skip')}
+            <X className='me-1.5 h-4 w-4' />{t('assistantSources.skip')}
           </Button>
         </div>}
       </>}
       {suggestion.status === 'skipped' && canEdit && <Button size='sm' variant='ghost' className='mt-1' disabled={status.isPending}
         onClick={() => status.mutate({ conceptKey: suggestion.conceptKey, next: 'pending' })}>
-        <Undo2 className='mr-1.5 h-4 w-4' />{t('assistantSources.bringBack')}
+        <Undo2 className='me-1.5 h-4 w-4' />{t('assistantSources.bringBack')}
       </Button>}
     </li>)}
   </ul>;
@@ -135,7 +135,7 @@ export function SourceSuggestionsCard({ modelId, modelName, onNavigate }: Readon
     <footer className='mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3'>
       <p className='text-xs text-muted-foreground'>{pending ? t('assistantSources.pending', { count: pending }) : t('assistantSources.noneLeft')}</p>
       <Button size='sm' onClick={() => onNavigate(`/semantic-models/${encodeURIComponent(modelId)}`)}>
-        {t('assistantSources.continue')}<ArrowUpRight className='ml-1.5 h-4 w-4' />
+        {t('assistantSources.continue')}<ArrowUpRight className='ms-1.5 h-4 w-4' />
       </Button>
     </footer>
   </section>;

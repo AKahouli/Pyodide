@@ -50,21 +50,21 @@ const setup = (fixture: Fixture = {}) => {
   const models = { requireRole: jest.fn(async () => ({ id: 'model-1', currentDraftVersionId: 'v-1' })) };
   const documents = { findById: jest.fn(), listAllInWorkspace: jest.fn() };
   const runtime = {
+    getAiExtractionIdentity: jest.fn(),
     checkModelPlan: jest.fn(async (_body: unknown) => ({ issues: [] as unknown[], errorCount: 0, warningCount: 0 })),
     mirrorSpecification: jest.fn(), appendManualRows: jest.fn(), commitManualSnapshot: jest.fn(), requestPopulationRun: jest.fn(),
   };
-  const agent = { resolveAgent: jest.fn() };
   const refresh = new SemanticPopulationRefreshService(
-    database as never, models as never, documents as never, new ModelSpecificationService(), runtime as never, agent as never,
+    database as never, models as never, documents as never, new ModelSpecificationService(), runtime as never,
   );
-  return { database, models, documents, runtime, agent, service: new SemanticModelCheckService(refresh, runtime as never) };
+  return { database, models, documents, runtime, service: new SemanticModelCheckService(refresh, runtime as never) };
 };
 
 const codes = (check: { issues: Array<{ code: string }> }) => check.issues.map((issue) => issue.code);
 
 describe('SemanticModelCheckService', () => {
   it('finds nothing wrong with a consistent model, and reads no file and stores nothing', async () => {
-    const { service, runtime, documents, agent } = setup();
+    const { service, runtime, documents } = setup();
     const check = await service.check('u-1', 'model-1');
     expect(check).toMatchObject({ modelId: 'model-1', errorCount: 0, warningCount: 0, issues: [] });
     expect(check.versionKey).toMatch(/^[0-9a-f]{16}$/);
@@ -74,7 +74,7 @@ describe('SemanticModelCheckService', () => {
     expect(body.specification.concepts.map((concept) => concept.conceptId)).toEqual(['c-customer']);
     expect(documents.findById).not.toHaveBeenCalled();
     expect(documents.listAllInWorkspace).not.toHaveBeenCalled();
-    expect(agent.resolveAgent).not.toHaveBeenCalled();
+    expect(runtime.getAiExtractionIdentity).not.toHaveBeenCalled();
     for (const write of [runtime.mirrorSpecification, runtime.appendManualRows, runtime.commitManualSnapshot, runtime.requestPopulationRun]) {
       expect(write).not.toHaveBeenCalled();
     }

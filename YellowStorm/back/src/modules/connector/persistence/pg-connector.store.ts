@@ -1,5 +1,8 @@
 import { Inject } from '@nestjs/common';
 import { isDeepStrictEqual } from 'node:util';
+import { ConflictException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from '../utils/mcp-security-policy';
 import { and, asc, desc, eq, gt, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -64,6 +67,8 @@ function connectorToRow(r: ConnRow, skillIds: string[]): ConnectorRow {
     mcpTransportType: r.mcpTransportType,
     mcpServerUrl: r.mcpServerUrl,
     mcpServerConfig: r.mcpServerConfig ?? {},
+    mcpSecurityPolicy: r.mcpSecurityPolicy,
+    securityRevision: r.securityRevision,
     workerPolicy: r.workerPolicy,
     dynamicHeaders: (r.dynamicHeaders ?? []) as unknown as ConnectorRow["dynamicHeaders"],
     actions: (r.actions ?? []) as unknown as ConnectorRow["actions"],
@@ -230,17 +235,26 @@ export class PgConnectorStore implements ConnectorStore {
     });
   }
 
-  async update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null> {
+  async update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }, expectedSecurityRevision?: number): Promise<ConnectorRow | null> {
     return withTransaction(this.db, async (tx) => {
       const { skillIds, ...columns } = patch;
       const [before] = await tx.select().from(schema.integrationsConnectors)
         .where(eq(schema.integrationsConnectors.id, id)).for('update');
       if (!before) return null;
+      if (expectedSecurityRevision !== undefined && before.securityRevision !== expectedSecurityRevision) {
+        throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before saving');
+      }
+      const securityChanged = mcpBindingChanged(before, patch);
+      if (securityChanged && isPrivilegedMcpPolicy(normalizeMcpSecurityPolicy(before.mcpSecurityPolicy)) && expectedSecurityRevision === undefined) {
+        // Catalog imports and other direct store callers cannot redirect an
+        // existing trusted connector without the authorized service write path.
+        throw new ConflictException(ErrorCode.BAD_REQUEST, 'Trusted connector changes require an authorized revision');
+      }
       const workerPolicyChanged = (patch.workerPolicy !== undefined && !isDeepStrictEqual(before.workerPolicy, patch.workerPolicy))
         || (patch.actions !== undefined && !isDeepStrictEqual(before.actions, patch.actions));
       const [row] = await tx
         .update(schema.integrationsConnectors)
-        .set({ ...columns, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsConnectors.$inferInsert>)
+        .set({ ...columns, securityRevision: securityChanged ? before.securityRevision + 1 : before.securityRevision, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsConnectors.$inferInsert>)
         .where(eq(schema.integrationsConnectors.id, id))
         .returning();
       if (!row) return null;

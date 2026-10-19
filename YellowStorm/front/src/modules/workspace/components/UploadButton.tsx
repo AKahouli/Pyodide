@@ -21,7 +21,7 @@ interface UploadButtonProps {
 export function UploadButton({ folderId }: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useModuleTranslation('workspace');
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
 
   const selectedWorkspace = useSelectedWorkspace();
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
@@ -42,7 +42,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
         return;
       }
 
-      const { validFiles } = validateFiles(files);
+      const { validFiles } = validateFiles(files, maxFileSize);
       if (validFiles.length > 0) {
         addFilesToQueue(validFiles, selectedWorkspace.id, folderId);
         void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
@@ -53,7 +53,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
         fileInputRef.current.value = '';
       }
     },
-    [selectedWorkspace, addFilesToQueue, startUpload, folderId, t],
+    [selectedWorkspace, addFilesToQueue, startUpload, folderId, maxFileSize, t],
   );
 
   return (
@@ -65,7 +65,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
       </Button>
       {/* Desktop: full button with text */}
       <Button variant='outline' size='sm' className='hidden md:flex' onClick={handleClick} disabled={!selectedWorkspace || isUploading}>
-        <Plus className='h-4 w-4 mr-2' />
+        <Plus className='h-4 w-4 me-2' />
         {t('upload.button.add')}
       </Button>
     </>

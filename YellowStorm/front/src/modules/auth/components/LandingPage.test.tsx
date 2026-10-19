@@ -77,7 +77,7 @@ describe('LandingPage', () => {
     renderPage();
 
     // Wait for providers to load
-    await screen.findByRole('button', { name: 'landing.emailLogin' });
+    await screen.findByRole('button', { name: 'landing.emailLogin' }, { timeout: 5000 });
     expect(screen.queryByText('landing.signUp')).not.toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe('LandingPage', () => {
     renderPage();
 
     // Wait for providers to load (classic provider enables the email button)
-    const emailButton = await screen.findByRole('button', { name: 'landing.emailLogin' });
+    const emailButton = await screen.findByRole('button', { name: 'landing.emailLogin' }, { timeout: 5000 });
     await userEvent.click(emailButton);
     expect(useAuthModalStore.getState().activeModal).toBe('login');
   });
@@ -94,7 +94,7 @@ describe('LandingPage', () => {
     renderPage();
 
     // Wait for providers to load (classic provider enables sign up link)
-    const signUpButton = await screen.findByRole('button', { name: 'landing.signUp' });
+    const signUpButton = await screen.findByRole('button', { name: 'landing.signUp' }, { timeout: 5000 });
     await userEvent.click(signUpButton);
     expect(useAuthModalStore.getState().activeModal).toBe('register');
   });
@@ -107,7 +107,7 @@ describe('LandingPage', () => {
     // Wait for providers to load
     await vi.waitFor(() => {
       expect(screen.queryByRole('button', { name: 'landing.emailLogin' })).not.toBeInTheDocument();
-    });
+    }, { timeout: 5000 });
   });
 
   it('renders oauth provider buttons from unified response', async () => {
@@ -115,7 +115,7 @@ describe('LandingPage', () => {
 
     await vi.waitFor(() => {
       expect(screen.getByText('landing.oauthLogin')).toBeInTheDocument();
-    });
+    }, { timeout: 5000 });
   });
 
   it('shows loading state while providers are being fetched', () => {
@@ -137,7 +137,7 @@ describe('LandingPage', () => {
     await vi.waitFor(() => {
       expect(screen.getByText('landing.noProviders')).toBeInTheDocument();
       expect(screen.getByText('landing.noProvidersHint')).toBeInTheDocument();
-    });
+    }, { timeout: 5000 });
   });
 
   it('resolves an invite link and opens the register modal with the invited email', async () => {

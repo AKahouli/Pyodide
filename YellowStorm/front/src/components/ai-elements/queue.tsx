@@ -47,7 +47,7 @@ export type QueueItemDescriptionProps = ComponentProps<'div'> & {
   completed?: boolean;
 };
 
-export const QueueItemDescription = ({ completed = false, className, ...props }: QueueItemDescriptionProps) => <div className={cn('ml-6 text-xs', completed ? 'text-muted-foreground/40 line-through' : 'text-muted-foreground', className)} {...props} />;
+export const QueueItemDescription = ({ completed = false, className, ...props }: QueueItemDescriptionProps) => <div className={cn('ms-6 text-xs', completed ? 'text-muted-foreground/40 line-through' : 'text-muted-foreground', className)} {...props} />;
 
 export type QueueItemActionsProps = ComponentProps<'div'>;
 
@@ -78,7 +78,7 @@ export type QueueListProps = ComponentProps<typeof ScrollArea>;
 
 export const QueueList = ({ children, className, ...props }: QueueListProps) => (
   <ScrollArea className={cn('-mb-1 mt-2', className)} {...props}>
-    <div className='max-h-40 pr-4'>
+    <div className='max-h-40 pe-4'>
       <ul>{children}</ul>
     </div>
   </ScrollArea>
@@ -94,7 +94,7 @@ export type QueueSectionTriggerProps = ComponentProps<'button'>;
 
 export const QueueSectionTrigger = ({ children, className, ...props }: QueueSectionTriggerProps) => (
   <CollapsibleTrigger asChild>
-    <button className={cn('group flex w-full items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-left font-medium text-muted-foreground text-sm transition-colors hover:bg-muted', className)} type='button' {...props}>
+    <button className={cn('group flex w-full items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-start font-medium text-muted-foreground text-sm transition-colors hover:bg-muted', className)} type='button' {...props}>
       {children}
     </button>
   </CollapsibleTrigger>

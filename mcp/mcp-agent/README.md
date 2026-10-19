@@ -31,12 +31,32 @@ and a missing acting user raise MCP tool errors.
 - **JWT mode**: set `AGENT_MCP_AUTH_MODE=JWT`, `AGENT_MCP_JWT_PUBLIC_KEY_FILE`,
   `AGENT_MCP_JWT_ISSUER`, and `AGENT_MCP_JWT_AUDIENCE=mcp-agent`. The server verifies
   YellowStorm's five-minute RS256 token and uses signed `sub` as the acting user,
-  ignoring a caller-supplied user header. Connector and ADK calls renew it. Agent
+  rejecting a caller-supplied user header that disagrees with it. Required integer
+  time claims must satisfy `0 < exp - iat <= 300` seconds. Connector and ADK calls renew it. Agent
   ownership and shares are checked by the backend on each operation.
 - **Egress (this server → backend)**: every call to
-  `/api/v1/internal/agent-crud/*` carries `X-Internal-Token: $YELLOWSTORM_INTERNAL_SERVICE_TOKEN`
-  (same value as the backend `INTERNAL_SERVICE_SECRET`) plus the identity headers above.
-  The backend resolves the acting user from `X-YellowStorm-User-Id`.
+  `/api/v1/internal/agent-crud/*` carries `X-YellowStorm-Service-Principal: mcp-agent` and `X-YellowStorm-Service-Token: $AGENT_MCP_BACKEND_SERVICE_TOKEN`
+  plus the identity headers above and, in JWT mode, `X-YellowStorm-Mcp-Assertion`.
+  The backend authenticates the scoped service principal and its shared
+  `DelegatedActorGuard` derives the user from that signed assertion, never a naked
+  user-id header. The invoking user's permissions, ownership and shares remain
+  authoritative (ADR-0024). Bearer ingress is a development compatibility mode,
+  not sufficient delegation for protected backend operations.
+
+### Request isolation
+
+The production entrypoint explicitly uses `stateless_http=True`. Every HTTP request
+authenticates independently; an old or foreign `Mcp-Session-Id` cannot select an
+actor or retain an initialization assertion. Actor, assertion and logging bindings
+restore their previous values after success, rejection, exceptions, cancellation
+and partial setup. Renewed assertions are forwarded on the current call.
+
+`tests/test_request_isolation.py` exercises the production entrypoint with real
+FastMCP default SSE responses and the actual backend client against a mock backend:
+initialization/discovery, concurrent users, legacy-session replay, renewal,
+rejections without downstream calls, nested context and task cancellation. This is
+local regression coverage, not deployment certification. Restart existing MCP
+processes to activate the change; do not roll back to stateful identity retention.
 
 ## Configuration
 
@@ -45,7 +65,7 @@ Copy `.env.example` to `.env` (auto-loaded; real environment variables win):
 | Variable | Default | Purpose |
 |---|---|---|
 | `YELLOWSTORM_BACKEND_URL` | `http://localhost:3000` | NestJS backend base URL |
-| `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` | — (required) | Must match backend `INTERNAL_SERVICE_SECRET` |
+| `AGENT_MCP_BACKEND_SERVICE_TOKEN` | — (required) | Unique `mcp-agent` machine principal credential (distinct from connector slug `agent-mcp`); no shared-secret fallback; minimum 32 characters in production; signed actor audience must be `mcp-agent` |
 | `AGENT_MCP_INGRESS_TOKEN` | — (Bearer mode) | Static ingress token when JWT is disabled |
 | `AGENT_MCP_AUTH_MODE` | `Bearer` | Set `JWT` for signed per-user tokens |
 | `AGENT_MCP_JWT_PUBLIC_KEY_FILE` | — | Public PEM path when JWT is enabled |

@@ -16,10 +16,15 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Optional, Tuple
 from contextlib import aclosing
+from functools import cached_property
+from types import SimpleNamespace
+from typing import Literal
+import re
 
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
 from google.adk.models.llm_request import LlmRequest
+from google.adk.integrations.openai import OpenAIResponsesLlm
 
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
@@ -75,6 +80,7 @@ class InstrumentedLiteLlm(LiteLlm):
         from src.root_runtime.model_capacity import CapacityClient
         capacity = self.llm_client if isinstance(self.llm_client, CapacityClient) else None
         token = capacity.begin() if capacity else None
+        primary_usage = None
         try:
             provider = self
             if not any(tool.function_declarations for tool in llm_request.config.tools or []):
@@ -88,7 +94,195 @@ class InstrumentedLiteLlm(LiteLlm):
                 async for response in responses:
                     if is_primary_call:
                         trace.mark_llm_first_delta()
+                        if response.usage_metadata is not None:
+                            primary_usage = response.usage_metadata
                     yield response
         finally:
-            if capacity:
-                await capacity.end(token)
+            try:
+                if capacity:
+                    await capacity.end(token)
+            finally:
+                if primary_usage is not None:
+                    from .latency_diagnostics import emit_provider_usage_log
+                    emit_provider_usage_log(trace, primary_usage)
+
+
+class InstrumentedResponsesLlm(OpenAIResponsesLlm):
+    """Native Responses with private session history and conversation gates."""
+
+    history_mode: Literal['application', 'provider'] = 'application'
+    reasoning_history: Literal['none', 'last', 'all', 'auto'] = 'none'
+    summary_mode: Literal['off', 'auto', 'concise', 'detailed'] = 'off'
+
+    @cached_property
+    def _openai_client(self):
+        client = super()._openai_client
+        from src.config.settings import get_settings
+        if getattr(get_settings(), 'ROOT_WORK_LLM_CAPACITY_ENABLED', False):
+            from src.root_runtime.model_capacity import CapacityClient
+            return SimpleNamespace(responses=CapacityClient(client.with_options(max_retries=0).responses))
+        return client
+
+    def _get_response_create_kwargs(self, llm_request, *, stream):
+        # Never mutate a shared request or attach provider-owned conversation state.
+        request = llm_request.model_copy(update={'previous_interaction_id': None})
+        kwargs = super()._get_response_create_kwargs(request, stream=stream)
+        from .responses_history import prepare
+        pending = prepare(self, llm_request, kwargs)
+        object.__setattr__(llm_request, '_responses_pending', pending)
+        # Newer GPT models expose explicit prompt-block caching. Keep the
+        # volatile factory timestamp outside the stable instruction block,
+        # without changing a single instruction byte or private replay item.
+        family = re.fullmatch(r'(?:azure/|openai/)?gpt-(\d+)(?:\.(\d+))?(?:-[a-z0-9-]+)?', self.model)
+        suffix = '\n\n the current timestamp is {time}. \n'
+        template = getattr(llm_request, '_responses_instruction_template', None)
+        timestamp = getattr(llm_request, '_responses_timestamp', None)
+        instructions = kwargs.get('instructions')
+        if (self.history_mode == 'application' and family
+            and (int(family[1]), int(family[2] or 0)) >= (5, 6)
+            and isinstance(template, str) and template.endswith(suffix)
+            and isinstance(timestamp, str) and timestamp
+            and isinstance(instructions, str)):
+            rendered = suffix.replace('{time}', timestamp)
+            if instructions.count(rendered) == 1:
+                stable, _, tail = instructions.partition(rendered)
+                if stable:
+                    kwargs['input'] = [{'type': 'message', 'role': 'developer', 'content': [
+                        {'type': 'input_text', 'text': stable,
+                         'prompt_cache_breakpoint': {'mode': 'explicit'}},
+                        {'type': 'input_text', 'text': rendered + tail},
+                    ]}, *kwargs['input']]
+                    kwargs.pop('instructions')
+        if not kwargs.get('tools'):
+            kwargs.pop('parallel_tool_calls', None)
+            kwargs.pop('tool_choice', None)
+        return kwargs
+
+    async def generate_content_async(self, llm_request, stream=False):
+        trace = get_current_conversation_latency_trace()
+        primary = trace is not None and trace.claim_first_model_call()
+        if primary:
+            trace.mark_llm_request_start()
+            emit_runner_pre_model_log(
+                trace, session_id=str(trace.session_id or ''),
+                agent_name=str(trace.diagnostics.agent_name or 'unknown'),
+                llm_counts=_cheap_llm_counts(llm_request),
+            )
+        from src.root_runtime.model_capacity import CapacityClient
+        from src.smart_rag.infrastructure.monitoring.model_response_recovery import recover_empty_response, ResponsesStream
+        resource = self._openai_client.responses
+        capacity = resource if isinstance(resource, CapacityClient) else None
+        token = capacity.begin() if capacity else None
+        streams = []
+        native_summary_delta = False
+        primary_usage = None
+        observed_stream = False
+        async def create(**kwargs):
+            nonlocal observed_stream
+            from openai import BadRequestError, NotFoundError
+            try:
+                result = await resource.create(**kwargs)
+            except (BadRequestError, NotFoundError) as error:
+                # Retry only an explicit rejected/expired lineage, never an
+                # uncertain dispatch, a tool failure or an alternate API.
+                if not kwargs.get('previous_response_id') or error.code not in (
+                    'previous_response_not_found', 'response_not_found',
+                ):
+                    raise
+                from .responses_history import select_reasoning
+                kwargs.pop('previous_response_id')
+                llm_request._responses_pending['provider_chained'] = False
+                kwargs['input'] = select_reasoning(llm_request._responses_pending['items'], self.reasoning_history)
+                result = await resource.create(**kwargs)
+            if kwargs.get('stream'):
+                if not capacity:
+                    result = ResponsesStream(result)
+                streams.append(result)
+                observe = primary and not observed_stream
+                observed_stream = True
+                async def observed_events():
+                    nonlocal native_summary_delta
+                    async for event in result:
+                        if observe:
+                            from .latency_diagnostics import observe_responses_event
+                            observe_responses_event(trace, event)
+                        event_type = event.get('type') if isinstance(event, dict) else getattr(event, 'type', None)
+                        native_summary_delta = event_type == 'response.reasoning_summary_text.delta'
+                        yield event
+                return observed_events()
+            return result
+        provider = self.model_copy()
+        provider.__dict__['_openai_client'] = SimpleNamespace(responses=SimpleNamespace(create=create))
+        try:
+            async with aclosing(recover_empty_response(
+                super(InstrumentedResponsesLlm, provider).generate_content_async, llm_request, stream, self.model,
+            )) as responses:
+                async for response in responses:
+                    # Capture the original ordered provider output before stripping
+                    # opaque replay material from every public ADK event.
+                    metadata = (response.custom_metadata or {}).get('openai_response', {})
+                    if metadata.get('status') == 'completed' and 'output' in metadata:
+                        import copy
+                        from .responses_history import projection
+                        pending = copy.deepcopy(getattr(llm_request, '_responses_pending', {}))
+                        if pending:
+                            output = metadata['output']
+                            pending['items'].extend(output)
+                            if response.content:
+                                projected = super()._get_response_input(LlmRequest(contents=[response.content]))
+                                pending['projection'].extend(projection(projected))
+                            pending['response_id'] = metadata.get('id')
+                            object.__setattr__(response, '_responses_commit', pending)
+                    if response.content:
+                        for part in response.content.parts or []:
+                            part.thought_signature = None
+                        if self.summary_mode == 'off':
+                            response.content.parts = [part for part in response.content.parts or [] if not part.thought]
+                        elif response.partial is not True:
+                            # ADK emits each native summary section as a separate
+                            # Part in the final snapshot. The activity tracker
+                            # reconciles one complete snapshot, so retain every
+                            # adjacent section rather than replacing it per Part.
+                            parts = []
+                            for part in response.content.parts or []:
+                                if (parts and part.thought and part.text
+                                    and not part.function_call and not part.function_response
+                                    and parts[-1].thought and parts[-1].text
+                                    and not parts[-1].function_call and not parts[-1].function_response):
+                                    parts[-1].text += '\n\n' + part.text
+                                else:
+                                    parts.append(part)
+                            response.content.parts = parts
+                    if response.custom_metadata and 'openai_response' in response.custom_metadata:
+                        # Only lifecycle metadata is needed by the activity renderer.
+                        response.custom_metadata = {'openai_response': {
+                            key: metadata[key] for key in ('id', 'status', 'stream_event') if key in metadata
+                        }}
+                    # ADK also calls provider reasoning_text "thought". Only
+                    # explicit native summaries carry summary provenance.
+                    reasoning_items = [item for item in metadata.get('output', []) if item.get('type') == 'reasoning']
+                    native_summary = (native_summary_delta if response.partial is True else
+                                      bool(reasoning_items) and any(item.get('summary') for item in reasoning_items)
+                                      and not any(item.get('content') for item in reasoning_items))
+                    if native_summary and response.content and any(part.thought and part.text for part in response.content.parts or []):
+                        response.custom_metadata = {**(response.custom_metadata or {}),
+                                                    'activity_kind': 'reasoning_summary'}
+                    if primary:
+                        trace.mark_llm_first_delta()
+                        if response.usage_metadata is not None:
+                            primary_usage = response.usage_metadata
+                    yield response
+        finally:
+            try:
+                for opened in streams:
+                    close = getattr(opened, 'aclose', None) or opened.close
+                    await close()
+            finally:
+                if capacity:
+                    await capacity.end(token)
+                if primary:
+                    from .latency_diagnostics import emit_provider_stream_log
+                    emit_provider_stream_log(trace)
+                if primary_usage is not None:
+                    from .latency_diagnostics import emit_provider_usage_log
+                    emit_provider_usage_log(trace, primary_usage)

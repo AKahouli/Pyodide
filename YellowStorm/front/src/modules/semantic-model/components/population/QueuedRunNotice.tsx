@@ -41,7 +41,7 @@ export function QueuedRunNotice({ queue, queuedSince }: Readonly<{
   return <p role='status' className='flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground'>
     <Hourglass className='h-4 w-4 shrink-0' />
     {running + queued === 0
-      ? t('population.queued.next')
+      ? t('myJobs.waitingWorker')
       : t('population.queued.position', { position: queue.position, running, queued })}
   </p>;
 }

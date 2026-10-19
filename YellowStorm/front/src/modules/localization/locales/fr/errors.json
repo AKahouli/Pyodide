@@ -220,5 +220,7 @@
   "ERR_1132": "Ce lien d'invitation est invalide ou a déjà été utilisé.",
   "ERR_1133": "Ce lien d'invitation a expiré. Demandez à un administrateur d'en envoyer un nouveau.",
   "ERR_1134": "Cette invitation a été émise pour une autre adresse email.",
-  "ERR_1203": "L'email d'invitation n'a pas pu être envoyé. Veuillez réessayer."
+  "ERR_1203": "L'email d'invitation n'a pas pu être envoyé. Veuillez réessayer.",
+  "ERR_3102": "Ce transport MCP n'est pas pris en charge pour l'inspection HTTP.",
+  "ERR_3103": "Cette destination de serveur MCP n'est pas autorisée."
 }

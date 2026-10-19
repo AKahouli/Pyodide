@@ -1,3 +1,4 @@
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelValidationService } from './semantic-model-validation.service';
 import { businessKey, SemanticModelAssistantService } from './semantic-model-assistant.service';
 import type { SemanticGraph } from '../domain/semantic-model.types';
@@ -8,8 +9,12 @@ const customer = {
   attributes: [{ key: 'customer_number', label: 'Customer number', type: 'text' as const, required: true }],
 };
 const documents = { ...customer, id: '00000000-0000-4000-8000-000000000009', key: 'documents', label: 'Documents', systemKey: 'workspace_documents', attributes: [] };
+const recordProvenance = [
+  { workspaceId: 'ws-1', documentId: 'doc-1', assetId: 'doc-1', filename: 'contract-one.pdf' },
+  { workspaceId: 'ws-2', documentId: 'doc-2', assetId: 'doc-2', filename: 'contract-two.pdf' },
+];
 
-type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents' | 'graphSearch', unknown>>;
+type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents' | 'graphSearch' | 'modelWorkspaces', unknown>>;
 
 function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-1', revision: 3, nodes: [customer, documents], relations: [], records: [], recordRelations: [] }, deps: Deps = {}) {
   const database = { query: jest.fn(async (sql: string, _params?: unknown[]) => sql.includes('INSERT INTO semantic_model.assistant_change_sets') ? { rows: [{ id: 'change-1' }] } : { rows: [] }) };
@@ -22,7 +27,7 @@ function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-
   const crossSource = { listIdentityRules: jest.fn().mockResolvedValue([]), saveIdentityRule: jest.fn().mockResolvedValue({ revision: 8 }) };
   const service = new SemanticModelAssistantService(
     database as never, models as never, graphService as never, new SemanticModelValidationService(), crossSource as never,
-    (deps.sourceMappings ?? {}) as never, {} as never, (deps.population ?? {}) as never, {} as never, (deps.workspaces ?? {}) as never,
+    (deps.sourceMappings ?? {}) as never, (deps.modelWorkspaces ?? {}) as never, (deps.population ?? {}) as never, {} as never, (deps.workspaces ?? {}) as never,
     (deps.workspaceShares ?? {}) as never, (deps.documents ?? {}) as never, (deps.graphSearch ?? {}) as never,
   );
   return { service, database, graphService, crossSource, models };
@@ -230,7 +235,7 @@ describe('SemanticModelAssistantService', () => {
         status: 'index_not_ready', modeUsed: 'lexical_only', index: { state: 'indexing' },
         concepts: [{ conceptId: 'c-1', key: 'customer', label: 'Customer' }], unknownConcepts: [],
         seeds: [{ entityId: 'e-1', conceptId: 'c-1', conceptLabel: 'Customer', label: 'Acme', keyFields: { customer_number: 'C1' },
-          snippet: 'Acme, Paris', matchClass: 'lexical', rank: 1, diagnostics: { score: 0.4 }, provenance: [{ assetId: 'a-1', workspaceId: 'ws-1' }] }],
+          snippet: 'Acme, Paris', matchClass: 'lexical', rank: 1, diagnostics: { score: 0.4 }, provenance: recordProvenance }],
         coverage: { expectedCount: 10, indexedCount: 4, exactOnlyCount: 0 },
       }),
     };
@@ -241,8 +246,9 @@ describe('SemanticModelAssistantService', () => {
     expect(result).toMatchObject({
       model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'index_not_ready', searchMode: 'lexical_only', indexState: 'indexing',
       concepts: ['Customer'],
-      records: [{ entityId: 'e-1', concept: 'Customer', name: 'Acme', keyFields: { customer_number: 'C1' }, match: 'lexical', sourceCount: 1 }],
+      records: [{ entityId: 'e-1', concept: 'Customer', name: 'Acme', keyFields: { customer_number: 'C1' }, match: 'lexical', sourceCount: 2, provenance: recordProvenance }],
     });
+    expect(result.records[0].provenance).toEqual(recordProvenance);
     expect(result.records[0]).not.toHaveProperty('diagnostics');
     expect(result.notes.join(' ')).toMatch(/not ready.*4 of 10/);
     expect(result.notes.join(' ')).toMatch(/Search by meaning was unavailable/);
@@ -322,7 +328,7 @@ describe('SemanticModelAssistantService', () => {
         status: 'found', truncated: true, hiddenSeeds: 1,
         nodes: [
           { entityId: 'e-1', conceptId: 'c-1', conceptLabel: 'Contract', label: 'K-1', keyFields: {}, inclusionReason: 'seed', path: [], provenance: [] },
-          { entityId: 'e-3', conceptId: 'c-3', conceptLabel: 'Invoice', label: 'F-9', keyFields: { number: 'F-9' }, inclusionReason: 'relationship', provenance: [],
+          { entityId: 'e-3', conceptId: 'c-3', conceptLabel: 'Invoice', label: 'F-9', keyFields: { number: 'F-9' }, inclusionReason: 'relationship', provenance: recordProvenance,
             path: [{ fromEntityId: 'e-1', relationId: 'r-1', relationKey: 'signed_by', direction: 'outgoing', toEntityId: 'e-2' },
               { fromEntityId: 'e-2', relationId: 'r-2', relationKey: 'billed', direction: 'outgoing', toEntityId: 'e-3' }] },
         ],
@@ -339,6 +345,7 @@ describe('SemanticModelAssistantService', () => {
     });
     expect(result.records[1]).toEqual({
       entityId: 'e-3', concept: 'Invoice', name: 'F-9', keyFields: { number: 'F-9' }, includedBecause: 'linked',
+      provenance: recordProvenance,
       path: [{ from: 'e-1', relation: 'signed_by', direction: 'outgoing', to: 'e-2' }, { from: 'e-2', relation: 'billed', direction: 'outgoing', to: 'e-3' }],
     });
     expect(result.records[0].includedBecause).toBe('asked_for');
@@ -354,7 +361,7 @@ describe('SemanticModelAssistantService', () => {
         concept: { conceptId: 'c-1', key: 'invoice', label: 'Invoice' }, total: 120, hiddenRecords: 3, unparsable: { issued: 2 },
         appliedQuery: { filters: [{ field: 'issued', fieldLabel: 'Issue date', type: 'date', op: 'between', value: 'last_3_months',
           range: { from: '2026-07-04T00:00:00Z', to: '2026-10-04T00:00:00Z' } }] },
-        records: [{ entityId: 'e-1', name: 'F-1', keyFields: { number: 'F-1' }, values: { notes: 'x…' }, truncated: true, truncatedFields: ['notes'] }],
+        records: [{ entityId: 'e-1', name: 'F-1', keyFields: { number: 'F-1' }, values: { notes: 'x…' }, provenance: recordProvenance, truncated: true, truncatedFields: ['notes'] }],
         returned: 1, offset: 0, nextOffset: 1, pageCutShort: false,
       }),
     };
@@ -371,6 +378,7 @@ describe('SemanticModelAssistantService', () => {
       records: [{ entityId: 'e-1', name: 'F-1', values: { notes: 'x…' }, truncated: true }],
     });
     expect(result.appliedQuery.filters?.[0]).toMatchObject({ range: { from: '2026-07-04T00:00:00Z' } });
+    expect(result).toMatchObject({ records: [{ provenance: recordProvenance }] });
     const notes = result.notes.join(' ');
     expect(notes).toMatch(/2 values of "Issue date" could not be read as dates/);
     expect(notes).toMatch(/3 records of this concept come from sources the user cannot open/);
@@ -394,6 +402,24 @@ describe('SemanticModelAssistantService', () => {
     expect(result).not.toHaveProperty('unparsable');
     expect(result.notes.join(' ')).toMatch(/Only the first 1 groups/);
     expect(result.notes.join(' ')).toMatch(/another version of the model/);
+  });
+
+  it('preserves source provenance on records returned by a traverse', async () => {
+    const graphSearch = {
+      traverseRecords: jest.fn().mockResolvedValue({
+        status: 'ok', dataRevisionId: 'dr-1', modelVersionId: 'v-1', definitionsVersionId: 'v-1',
+        concept: { conceptId: 'c-fact', key: 'fact', label: 'Fact' }, total: 1, hiddenRecords: 0,
+        appliedQuery: {}, records: [{ entityId: 'fact-1', name: 'Fact 1', keyFields: {}, values: { text: 'Source-backed' }, provenance: recordProvenance }],
+        returned: 1, offset: 0, nextOffset: null,
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+
+    const result = await service.traverseRecords('user-1', 'model-1', {
+      start: { concept: 'Customer', recordIds: ['customer-1'] }, steps: [{ relation: 'has_fact' }],
+    });
+
+    expect(result).toMatchObject({ records: [{ provenance: recordProvenance }] });
   });
 
   it('reads the records linked to a record with their values, and says how many exist in all', async () => {
@@ -484,7 +510,7 @@ describe('SemanticModelAssistantService', () => {
             { fromEntityId: 'p', relationId: 'r-part', relationKey: 'has_participant', direction: 'incoming', toEntityId: 'm' }] }],
           records: [{ entityId: 'a', conceptId: 'c', conceptLabel: 'Correspondant', label: 'Alice', keyFields: {} },
             { entityId: 'p', conceptId: 'p', conceptLabel: 'Participation', label: 'M1 Alice', keyFields: {} },
-            { entityId: 'm', conceptId: 'm', conceptLabel: 'Message', label: 'Contrat', keyFields: {} }],
+            { entityId: 'm', conceptId: 'm', conceptLabel: 'Message', label: 'Contrat', keyFields: {}, provenance: recordProvenance }],
         })
         .mockResolvedValueOnce({ status: 'not_connected', maxLinks: 4, searchedLinks: 4, truncated: true, dataRevisionId: 'dr-1', paths: [], records: [] })
         .mockResolvedValueOnce({ status: 'not_connected', maxLinks: 4, searchedLinks: 4, truncated: false, dataRevisionId: 'dr-1', paths: [], records: [] }),
@@ -495,6 +521,7 @@ describe('SemanticModelAssistantService', () => {
     expect(linked).toMatchObject({ status: 'connected', links: 2, completeness: { complete: true },
       paths: [{ records: [{ name: 'Alice' }, { name: 'M1 Alice' }, { name: 'Contrat', concept: 'Message' }],
         steps: [{ relation: 'designates', direction: 'incoming' }, { relation: 'has_participant' }] }] });
+    expect(linked.paths[0].records[2].provenance).toEqual(recordProvenance);
     const cut = await service.connectRecords('user-1', 'model-1', { fromRecordId: 'a', toRecordId: 'z' });
     expect(cut.completeness).toMatchObject({ complete: false, reasons: ['search_cut'] });
     expect(cut.notes[0]).toMatch(/a connection may exist/);
@@ -589,8 +616,17 @@ describe('SemanticModelAssistantService cloneModel', () => {
     const clone = jest.fn().mockResolvedValue({ id: 'copy-1', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'copied', records: 5 } });
     Object.assign(models, { clone });
     const result = await service.cloneModel(actor, 'model-1', { includeData: true });
-    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: true, data: true, shares: false });
+    // WP04.2: explicit data still carries its sources; the MCP default is structure-only.
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: false, data: true, shares: false });
     expect(result).toMatchObject({ modelId: 'copy-1', sourceModelId: 'model-1', dataCopy: { status: 'copied' } });
+  });
+
+  it('clones the structure only unless sources are explicitly requested (WP04.2)', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-3', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'skipped' } });
+    Object.assign(models, { clone });
+    await service.cloneModel(actor, 'model-1', {});
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: false, data: false, shares: false });
   });
 
   it('keeps a given name and leaves out what is not asked', async () => {
@@ -599,5 +635,38 @@ describe('SemanticModelAssistantService cloneModel', () => {
     Object.assign(models, { clone });
     await service.cloneModel(actor, 'model-1', { name: ' Lean ', includeSources: false });
     expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Lean', { sources: false, data: false, shares: false });
+  });
+});
+
+describe('SemanticModelAssistantService already-linked workspace access (SEC-04 / WP03.6)', () => {
+  const linkedModelWorkspaces = {
+    list: jest.fn().mockResolvedValue([
+      { workspaceId: 'ws-1', enabled: true, role: 'origin' },
+    ]),
+  };
+
+  it('rechecks current workspace access even when the workspace is already linked', async () => {
+    const sourceMappings = { profileAsset: jest.fn().mockResolvedValue({ fields: [] }) };
+    const { service } = setup(undefined, {
+      sourceMappings,
+      modelWorkspaces: linkedModelWorkspaces,
+      workspaceShares: { hasAccess: jest.fn().mockResolvedValue(false) },
+      documents: {},
+    });
+    await expect(service.profileSpreadsheet(actor, 'model-1', 'ws-1', 'doc-1'))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(sourceMappings.profileAsset).not.toHaveBeenCalled();
+  });
+
+  it('profiles an already-linked workspace the actor can still read', async () => {
+    const sourceMappings = { profileAsset: jest.fn().mockResolvedValue({ sheets: [], fields: [], sampleRows: [] }) };
+    const { service } = setup(undefined, {
+      sourceMappings,
+      modelWorkspaces: linkedModelWorkspaces,
+      workspaceShares: { hasAccess: jest.fn().mockResolvedValue(true) },
+      documents: {},
+    });
+    await expect(service.profileSpreadsheet(actor, 'model-1', 'ws-1', 'doc-1')).resolves.toBeDefined();
+    expect(sourceMappings.profileAsset).toHaveBeenCalledWith(actor.userId, 'model-1', 'ws-1', 'doc-1', { workspaceId: 'ws-1' });
   });
 });

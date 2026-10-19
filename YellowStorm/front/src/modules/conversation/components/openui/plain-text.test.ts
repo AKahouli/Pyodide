@@ -31,6 +31,15 @@ describe('domToPlainText', () => {
 });
 
 describe('programToPlainText', () => {
+  it('keeps static mini-app text through nested layouts without exporting presentation enums', () => {
+    expect(programToPlainText('root = Card([app])\napp = MiniApp("a", "App", "", [panel])\npanel = MiniPanel([text])\ntext = MiniText("Saved summary [1]", "heading", "end", "muted")')).toBe('Saved summary [1]');
+  });
+  it('omits unevaluated mini-app text instead of mistaking its style for content', () => {
+    expect(programToPlainText('root = Card([text])\ntext = MiniText($value, "heading", "end", "muted")')).toBe('');
+    expect(programToPlainText('root = Card([text])\ntext = MiniText("Value " + $number, "heading")')).toBe('');
+    expect(programToPlainText('root = Card([text])\ntext = MiniText("default", "body")')).toBe('default');
+  });
+
   it('keeps the strings of the text-bearing components and drops enums and layout', () => {
     const source = 'root = Stack([h, t, c])\nh = CardHeader("Summary", "Q3")\nt = TextContent("Revenue grew \\"12%\\".", "large")\nc = Callout("warning", "Heads up", "Check [1].")\nb = Button("Go", Action([]))';
     expect(programToPlainText(source)).toBe('Summary\nQ3\n\nRevenue grew "12%".\n\nHeads up\nCheck [1].');

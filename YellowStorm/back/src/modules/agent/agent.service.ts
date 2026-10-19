@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { measureBackendPreparation } from '@modules/conversation/utils/backend-latency-tracker';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { deriveAgentSlug } from '@common/utils/slugify';
@@ -29,7 +30,7 @@ import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
-import { IConnectorResponse } from '../connector/interfaces/connector.interface';
+import { RuntimeConnectorDefinition } from '../connector/interfaces/connector-runtime.interface';
 import { ConnectorCitationMode } from '../connector/connector.types';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
@@ -48,7 +49,7 @@ import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
 } from './constants/platform-copilot.constants';
-import { isTrustedMcpServerUrl, normalizeMcpServerUrl } from '../connector/utils/trusted-mcp-server.util';
+import { canonicalMcpEndpoint } from '../connector/utils/mcp-destination-policy.util';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -76,7 +77,7 @@ export function buildSemanticModelChatContext(model: { id: string; name: string 
  * The semantic connector's tools a chat on a model gets: the read tools the agent selected for that connector, or all
  * its enabled read tools when the agent has no selection. A chat on a model reads published data and changes nothing.
  */
-export function semanticModelChatActionKeys(connector: IConnectorResponse, selected: Set<string> | undefined): Set<string> {
+export function semanticModelChatActionKeys(connector: RuntimeConnectorDefinition, selected: Set<string> | undefined): Set<string> {
   return new Set((connector.actions ?? [])
     .filter((action) => action.isEnabled !== false && (action.safety ?? 'read') === 'read')
     .map((action) => action.key)
@@ -327,6 +328,16 @@ export class AgentService {
     const response = this.toResponse((await this.hydrateOne(agent))!);
     if (shareInfo) response.shareInfo = shareInfo;
     return response;
+  }
+
+  async findUserAgentBootstrap(userId: string, agentId: string): Promise<Pick<IAgentResponse, 'name' | 'rootExecutionPolicy'>> {
+    const agent = await this.agentRepository.findBootstrapById(agentId);
+    if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+    if (!agent.isDefault && agent.createdBy.toString() !== userId
+      && !(await this.agentShareService.getShareInfo(userId, agentId))) {
+      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+    }
+    return { name: agent.name, rootExecutionPolicy: (agent.rootExecutionPolicy as unknown as RootExecutionPolicy) || undefined };
   }
 
   async updatePersonal(userId: string, agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
@@ -625,7 +636,7 @@ export class AgentService {
     groupMembers?: any[],
     selectedConnectorId?: string,
     semanticModel?: { id: string; name: string },
-    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
+    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean; implicitRoot?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
     webConnectorAccessEnabled = true,
@@ -649,7 +660,7 @@ export class AgentService {
     // as an unhandledRejection — the backend treats that as fatal. Awaiting
     // the original below still propagates the error to the request.
     monoAgentPromise?.catch(() => undefined);
-    const userAgents = await this.getAgentsForUser(userId);
+    const userAgents = await measureBackendPreparation('agent.roster', () => this.getAgentsForUser(userId));
 
     // Fetch shared agents if any
     let finalUserAgents = [...userAgents];
@@ -775,10 +786,12 @@ export class AgentService {
       ? (await this.modelsService.getDefaultModel())?.id || ''
       : '';
 
-    // A chat-level model selection applies directly to untagged mono-agent
-    // requests. Explicitly routed agents inherit the Admin Models default.
+    // A bound root is an implicit conversation route, not an @ mention. Its
+    // model/effort follow the composer just like an untagged mono-agent turn.
+    // Explicitly routed agents retain their configured model or Admin default.
+    const useSelectedModel = pingedAgents.length === 0 || runtimeContext?.implicitRoot === true;
     const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
-      pingedAgents.length === 0
+      useSelectedModel
         ? fallbackModelId || agent.model || inheritedDefaultModelId
         : agent.model || inheritedDefaultModelId || fallbackModelId || '';
 
@@ -812,7 +825,7 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings, semanticSearchConnector] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings, semanticSearchConnector] = await measureBackendPreparation('agent.configuration', () => Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
@@ -824,7 +837,7 @@ export class AgentService {
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
       semanticModel ? this.resolveSemanticModelSearchConnector(semanticModel.id) : Promise.resolve(null),
-    ]);
+    ]));
     for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
     // A selected semantic model binds the configured semantic connector to the answering agent (Yellowmind), restricted
     // to its read tools and pinned to the model's published data.
@@ -838,12 +851,16 @@ export class AgentService {
     const toolsMap = new Map<string, IToolResponse>();
     for (const t of fetchedTools) toolsMap.set(t.id, t);
 
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; responsesHistoryMode: string; reasoningHistory: string; reasoningSummary: string; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
     for (const m of modelResults) {
       if (m) {
         modelMap.set(m.id, {
           model: m.id,
           omitTemperature: m.omitTemperature,
+          conversationApi: m.conversationApi ?? 'chat_completions',
+          responsesHistoryMode: m.responsesHistoryMode ?? 'application',
+          reasoningHistory: m.reasoningHistory ?? 'auto',
+          reasoningSummary: m.reasoningSummary ?? 'off',
           inputModalities: m.inputModalities,
           maxInputTokens: m.maxInputTokens,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
@@ -868,10 +885,13 @@ export class AgentService {
       ),
     ];
     const skillsMap = new Map<string, ISkillResponse>();
-    if (allSkillIds.length > 0) {
-      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+    const skillsPromise = (async () => {
+      const fetchedSkills = allSkillIds.length > 0
+        ? await measureBackendPreparation('agent.skills', () => this.skillService.findByIds(allSkillIds)) : [];
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
-    }
+    })();
+    // A connector failure can precede the join below; retain rejection ownership.
+    skillsPromise.catch(() => undefined);
 
     const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
@@ -889,14 +909,13 @@ export class AgentService {
       const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
-      const requestedReasoningEffort = reasoningEffort && pingedAgents.length === 0
+      const requestedReasoningEffort = reasoningEffort && useSelectedModel
         ? reasoningEffort
         : agent.reasoningEffort;
       const effectiveReasoningEffort = requestedReasoningEffort
         && resolvedModel?.reasoningEfforts.includes(requestedReasoningEffort)
         ? requestedReasoningEffort
         : undefined;
-      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([
           ...(agent.connectorIds || []),
@@ -910,14 +929,16 @@ export class AgentService {
         actionKeysByConnectorId.set(semanticSearchConnector.id,
           semanticModelChatActionKeys(semanticSearchConnector, actionKeysByConnectorId.get(semanticSearchConnector.id)));
       }
-      const connectorBindings = await this.buildConnectorBindings(
+      const connectorBindings = await measureBackendPreparation('agent.connector_authorization', () => this.buildConnectorBindings(
         connectorsMap,
         effectiveConnectorIds,
         userId,
         actionKeysByConnectorId,
         semanticSearchFixedParams,
         agent.id,
-      );
+      ));
+      await skillsPromise;
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const semanticFixedParamKeys = semanticSearchConnectorId
         ? Object.keys(semanticSearchFixedParams?.get(semanticSearchConnectorId) ?? {})
         : [];
@@ -1002,7 +1023,7 @@ export class AgentService {
         prompt,
         agent_type: agent.agentTypeSlug,
         save_memory: false,
-        tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        tools: (await measureBackendPreparation('agent.tool_tokens', () => this.buildToolsWithTokens(agentTools, userId))).concat(connectorToolDefs),
         connector_bindings: connectorBindings,
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
@@ -1019,7 +1040,9 @@ export class AgentService {
         agent_params: {
           params: {
             user_id: userId,
-
+            agent_id: agent.id,
+            ...(runtimeContext?.conversationId ? { conversation_id: runtimeContext.conversationId } : {}),
+            ...this.imageGenerationParams(agentTools),
             connector_bindings_json: JSON.stringify(connectorBindings),
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
@@ -1033,6 +1056,10 @@ export class AgentService {
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             ...(semanticModel ? { semantic_model_id: semanticModel.id } : {}),
+            conversation_api: resolvedModel?.conversationApi ?? 'chat_completions',
+            responses_history_mode: resolvedModel?.responsesHistoryMode ?? 'application',
+            reasoning_history: resolvedModel?.reasoningHistory ?? 'auto',
+            reasoning_summary: resolvedModel?.reasoningSummary ?? 'off',
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }
               : { temperature: String(agent.temperature) }),
@@ -1137,7 +1164,7 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean),
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; responsesHistoryMode: string; reasoningHistory: string; reasoningSummary: string; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
@@ -1146,6 +1173,10 @@ export class AgentService {
         if (m) modelMap.set(m.id, {
           model: m.id,
           omitTemperature: m.omitTemperature,
+          conversationApi: m.conversationApi ?? 'chat_completions',
+          responsesHistoryMode: m.responsesHistoryMode ?? 'application',
+          reasoningHistory: m.reasoningHistory ?? 'auto',
+          reasoningSummary: m.reasoningSummary ?? 'off',
           inputModalities: m.inputModalities,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
           maxInputTokens: m.maxInputTokens ?? undefined,
@@ -1279,6 +1310,9 @@ export class AgentService {
           agent_params: {
             params: {
               user_id: userId,
+              agent_id: agent.id,
+              ...(runtimeContext?.conversationId ? { conversation_id: runtimeContext.conversationId } : {}),
+              ...this.imageGenerationParams(agentTools),
               enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
               document_tree_injection_enabled: String(documentTreeSettings.enabled),
@@ -1297,6 +1331,10 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              conversation_api: resolvedModel?.conversationApi ?? 'chat_completions',
+              responses_history_mode: resolvedModel?.responsesHistoryMode ?? 'application',
+              reasoning_history: resolvedModel?.reasoningHistory ?? 'auto',
+              reasoning_summary: resolvedModel?.reasoningSummary ?? 'off',
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),
@@ -2051,7 +2089,7 @@ export class AgentService {
   }
 
   private getConnectorSkillIds(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[],
   ): string[] {
     return this.getConnectorRuntime().getConnectorSkillIds(connectorsMap, connectorIds);
@@ -2144,17 +2182,17 @@ export class AgentService {
   private buildRuntimeConnectorActionKeysByConnectorId(
     agent: Pick<IAgentForStream, 'agentTypeSlug' | 'connectorActionSelections'>,
     connectorIds: string[],
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
   ): Map<string, Set<string>> | undefined {
     const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
     if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
 
     // The Copilot uses every current action of the playbook MCP (the connector pointing at PLAYBOOK_MCP_SERVER_URL).
-    const playbookMcpUrl = normalizeMcpServerUrl(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', ''));
+    const playbookMcpUrl = canonicalMcpEndpoint(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', '') ?? '');
     const runtimeSelections = new Map(selected ?? []);
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
-      if (connector && playbookMcpUrl && normalizeMcpServerUrl(connector.mcpServerUrl) === playbookMcpUrl) {
+      if (connector && playbookMcpUrl && canonicalMcpEndpoint(connector.mcpServerUrl) === playbookMcpUrl) {
         runtimeSelections.set(connectorId, new Set(
           connector.actions
             .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
@@ -2167,6 +2205,14 @@ export class AgentService {
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
     return this.getConnectorRuntime().toGrpcSkill(skill);
+  }
+
+  /** Carry image model selection through the fixed native Tool protobuf fields. */
+  private imageGenerationParams(tools: IToolResponse[]): Record<string, string> {
+    const imageTool = tools.find((tool) => tool.name === 'generate_image');
+    if (!imageTool) return {};
+    const model = imageTool.attributes?.find((attribute) => attribute.name === 'model')?.value;
+    return { image_generation_model: typeof model === 'string' && model.trim() ? model.trim() : 'gpt-image-2.5-flare' };
   }
 
   /**
@@ -2204,30 +2250,34 @@ export class AgentService {
     );
   }
 
-  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, RuntimeConnectorDefinition>> {
     return this.getConnectorRuntime().buildConnectorsMap(connectorIds);
   }
 
   /**
-   * Bindings that receive the acting user's identity: connectors pointing at a trusted internal MCP server
-   * (playbook, agent, semantic model, TRUSTED_MCP_SERVER_URLS), matched by server URL, never by slug.
+   * Only bindings resolved under current connector delegation policy receive
+   * the acting identity. Sharing a slug or URL never grants that authority.
    */
   private isTrustedIdentityBinding(binding: Record<string, unknown>): boolean {
-    return isTrustedMcpServerUrl(this.configService, binding.mcp_server_url);
+    // Only current connector policy resolution can create this server-side
+    // delegated binding; sharing a URL with another connector grants nothing.
+    const env = binding.auth_env as Record<string, unknown> | undefined;
+    return typeof env?.YELLOWSTORM_MCP_JWT_CONNECTOR_ID === 'string'
+      && env.YELLOWSTORM_MCP_JWT_CONNECTOR_ID === binding.connector_id;
   }
 
   /**
    * The connector-library connector named by SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG, or null (with a warning)
    * when none is configured, active or readable. It receives the acting user only through the trusted-URL rule.
    */
-  private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<IConnectorResponse | null> {
+  private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<RuntimeConnectorDefinition | null> {
     const connectorSlug = this.configService.get<string>('semanticModel.searchConnectorSlug', '') ?? '';
     if (!connectorSlug) {
       this.logger.warn('SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG is not set; chat on the model has no search tools', { semanticModelId });
       return null;
     }
     try {
-      const connector = await this.connectorService.findBySlug(connectorSlug);
+      const connector = await this.connectorService.findRuntimeBySlug(connectorSlug);
       if (!connector) {
         this.logger.warn('Semantic model search connector is not available; chat on the model has no search tools', {
           connectorSlug,
@@ -2266,7 +2316,7 @@ export class AgentService {
   }
 
   private async buildConnectorBindings(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[] = [],
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,

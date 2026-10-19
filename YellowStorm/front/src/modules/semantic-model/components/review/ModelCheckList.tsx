@@ -46,7 +46,7 @@ export function ModelCheckList({ check, loadFailed = false, mappings = [], deriv
       <h4 className='truncate px-1.5 pb-1 text-sm font-semibold' title={titleOf(group)}>{titleOf(group)}</h4>
       <ul className='space-y-0.5'>{group.issues.map((issue, index) => <li key={`${issue.code}-${issue.fieldId ?? ''}-${index}`}>
         <button type='button' onClick={() => onOpenIssue?.(issue)} data-severity={issue.severity}
-          className='flex w-full gap-2 rounded-lg p-1.5 text-left text-xs hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
+          className='flex w-full gap-2 rounded-lg p-1.5 text-start text-xs hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
           {issue.severity === 'error' ? <AlertCircle className='mt-0.5 h-4 w-4 shrink-0 text-destructive' aria-hidden /> : <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0 text-amber-600' aria-hidden />}
           <span className='min-w-0 whitespace-normal break-words'>{issueText(translate, issue)}</span>
         </button>

@@ -44,7 +44,9 @@ class SandboxMountGuard:
         self,
         expected_inputs: list[dict[str, str]],
         available_actions: set[str],
+        hydrate: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
+        self._hydrate = hydrate
         self._expected_inputs = expected_inputs
         self._available_actions = available_actions
         self._create_started = False
@@ -70,6 +72,9 @@ class SandboxMountGuard:
 
             created = await call("sandbox_create", create_params)
             missing = await self._missing_inputs(call)
+            if missing and self._hydrate is not None:
+                await self._hydrate(missing)
+                missing = await self._missing_inputs(call)
             if missing:
                 await call("sandbox_destroy", {})
                 created = await call("sandbox_create", create_params)

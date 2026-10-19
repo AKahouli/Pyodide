@@ -17,8 +17,6 @@ import { UserModule } from '@modules/user';
 import { WorkspaceModule } from '@modules/workspace';
 import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
 import { SemanticModelController } from './controllers/semantic-model.controller';
-import { SemanticAttributeExtractionInternalController } from './controllers/semantic-attribute-extraction-internal.controller';
-import { SemanticAttributeExtractionService } from './services/semantic-attribute-extraction.service';
 import { WorkspaceSemanticModelController } from './controllers/workspace-semantic-model.controller';
 import { SemanticDataTokenController } from './controllers/semantic-data-token.controller';
 import { SemanticModelDatabaseService } from './infrastructure/semantic-model-database.service';
@@ -33,6 +31,7 @@ import { SemanticModelValidationService } from './services/semantic-model-valida
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from './services/semantic-model-workspace.service';
 import { SemanticSourceMappingService } from './services/semantic-source-mapping.service';
+import { SemanticSourceAccessService } from './services/semantic-source-access.service';
 import { SemanticModelShareService } from './services/semantic-model-share.service';
 import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
 import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
@@ -54,19 +53,27 @@ import { SemanticModelAssistantService } from './services/semantic-model-assista
 import { SemanticGraphSearchService } from './services/semantic-graph-search.service';
 import { SemanticRecordCitationService } from './services/semantic-record-citation.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
-import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
+import { SemanticAssistantModelGuard } from './guards/semantic-assistant-model.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+// Registered locally (the connector module does not import this module) so the
+// shared delegated-user guard (ADR-0024) can verify the actor assertion with the
+// shared key pair.
+import { McpJwtService } from '../connector/services/mcp-jwt.service';
+import { PgConnectorStore } from '../connector/persistence/pg-connector.store';
+import { SemanticAssetGrantService } from './services/semantic-asset-grant.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule),forwardRef(() => NotificationsModule)],
-  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticDataConnectionController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticDataConnectionController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticModelAssistantInternalController],
   providers: [
+    SemanticAssetGrantService,
     SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticDataConnectionService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,
-    SemanticAttributeExtractionService,
     SemanticModelShareService,
     SemanticSourceMappingService,
+    SemanticSourceAccessService,
     DocumentExtractionConceptResolver,
     SemanticCrossSourceService,
     SemanticBusinessTrustService,
@@ -86,9 +93,11 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticModelAssistantService,
     SemanticGraphSearchService,
     SemanticRecordCitationService,
-    SemanticAssistantActorGuard,
+    McpJwtService,
+    PgConnectorStore,
+    DelegatedActorGuard,
     SemanticAssistantModelGuard,
   ],
-  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
+  exports: [SemanticAssetGrantService,SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
 })
 export class SemanticModelModule {}

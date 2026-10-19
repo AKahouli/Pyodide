@@ -168,6 +168,7 @@ export const API_ENDPOINTS = {
   },
   adminWorkspaceUploadSettings: {
     base: '/admin/workspace-settings/uploads',
+    storage: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/admin-storage`,
   },
   workspaceArtifacts: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts`,
@@ -300,6 +301,8 @@ export const API_ENDPOINTS = {
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    searchMessages: (id: string) => `/conversations/${id}/messages/search`,
+    messagesAround: (id: string, messageId: string) => `/conversations/${id}/messages/${messageId}/around`,
     activeStreams: (id: string) => `/conversations/${id}/active-streams`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
     rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
@@ -321,6 +324,9 @@ export const API_ENDPOINTS = {
     report: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/report`,
     markMentionSeen: (conversationId: string, messageId: string) => `/conversations/${conversationId}/messages/${messageId}/mention-seen`,
     workspaceDocuments: (id: string) => `/conversations/${id}/workspace-documents`,
+    files: (id: string) => `/conversations/${id}/files`,
+    assets: (id: string) => `/conversations/${encodeURIComponent(id)}/assets`,
+    asset: (id: string, ref: string) => `/conversations/${encodeURIComponent(id)}/assets/${encodeURIComponent(ref)}`,
     fileUploadUrl: (convId: string) => `/conversations/${convId}/files/upload-url`,
     fileUpload: (convId: string) => `/conversations/${convId}/files/upload`,
     fileConfirm: (convId: string) => `/conversations/${convId}/files/confirm`,
@@ -330,6 +336,10 @@ export const API_ENDPOINTS = {
       `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
     citationUrl: (conversationId: string, messageId: string) =>
       `/conversations/${conversationId}/messages/${messageId}/citations/url`,
+    generatedImageUrl: (conversationId: string, messageId: string, documentId: string) =>
+      `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/generated-images/${encodeURIComponent(documentId)}/url`,
+    generatedImageHistory: (conversationId: string, messageId: string, documentId: string) =>
+      `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/generated-images/${encodeURIComponent(documentId)}/history`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints
@@ -515,6 +525,7 @@ export const API_ENDPOINTS = {
     lastUsedMapping: (id: string) => `/semantic-models/${id}/mapping-presets/last-used`,
     sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
     sourceMappingDocumentLabels: (id: string) => `/semantic-models/${id}/source-mappings/document-labels`,
+    documentFieldSuggestions: (id: string) => `/semantic-models/${id}/source-mappings/document-field-suggestions`,
     computedFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/computed-preview`,
     sheetFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/sheet-preview`,
     relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
@@ -534,6 +545,9 @@ export const API_ENDPOINTS = {
     populationGraphStatus: (id: string) => `/semantic-models/${id}/population/graph-status`,
     populationJob: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}`,
     populationJobs: (id: string) => `/semantic-models/${id}/population/jobs`,
+    myJobs: '/semantic-models/population/jobs',
+    myJobStop: (jobId: string) => `/semantic-models/population/jobs/${encodeURIComponent(jobId)}/stop`,
+    myQueuedJobsRemove: '/semantic-models/population/jobs/queued/remove',
     populationJobStop: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}/stop`,
     populationActive: (id: string) => `/semantic-models/${id}/population/active`,
     sourceSuggestions: (id: string) => `/semantic-models/${id}/source-suggestions`,

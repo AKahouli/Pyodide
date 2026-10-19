@@ -99,7 +99,7 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
               </span>
             )}
           </div>
-          <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
+          <ChevronsUpDown className="ms-1 h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -129,7 +129,7 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
                 >
                   <div
                     className={cn(
-                      'mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary',
+                      'me-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary',
                        selectedWorkspaceId === ws.id
                          ? 'bg-primary text-primary-foreground'
                          : 'opacity-50',
@@ -146,12 +146,12 @@ export function PlaybookWorkspaceSelect({ value, onChange }: Props) {
                     )}
                     </div>
                     {isSharedWorkspace(ws) && (
-                      <Badge variant="outline" className="ml-2 text-[10px] shrink-0">
+                      <Badge variant="outline" className="ms-2 text-[10px] shrink-0">
                         {t('workspace.sharedBadge')}
                       </Badge>
                     )}
                     {selectedWorkspaceId === ws.id && (
-                      <Badge variant="secondary" className="ml-auto text-[10px] shrink-0">
+                      <Badge variant="secondary" className="ms-auto text-[10px] shrink-0">
                         {ws.documentCount}
                       </Badge>
                   )}

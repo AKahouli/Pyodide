@@ -35,7 +35,7 @@ export function StreamReportPage({ streamId: streamIdProp }: StreamReportPagePro
           type="button"
           data-testid="report-generate"
           onClick={() => generate.mutate()}
-          className="ml-2 text-blue-600 hover:underline"
+          className="ms-2 text-blue-600 hover:underline"
         >
           {t('report.generate')}
         </button>

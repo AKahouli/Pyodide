@@ -10,7 +10,64 @@ Boundaries (plan §4.4): sample preview ≠ full coverage; exact text match ≠
 business role; task success ≠ evidence completeness; a scope token is not an
 authorization check.
 
-## Schemas
+## Runtime-owned AI extraction (current)
+
+The executable request models and endpoints in `app/api/population_routes.py`
+own the extraction contract; `app/datasource/attribute_extraction.py` owns the
+non-secret profile and direct LiteLLM transport. Existing service authentication
+and the 256 KiB command limit apply:
+
+| Method / path | Contract |
+| --- | --- |
+| `GET /v1/semantic-model-population/ai-extraction/profile` | Runtime profile identity, excluding URL/key; unavailable configuration returns 503 |
+| `POST /v1/semantic-model-population/ai-extraction/extract` | Bounded supplied evidence/attributes, optional bound identity and multiple-record mode; no document retrieval or persistence |
+
+Population `aiExtraction` carries `{profileId, model, contractVersion, promptVersion,
+maxTokens}` instead of an agent-library identity. It participates in existing
+execution and extraction-cache fingerprints. Admission/worker execution reject
+legacy or changed profiles explicitly; identity-free direct admission pins the
+runtime profile only when no precomputed fingerprint was supplied. Extraction
+values are candidates; document/cell/derived readers accept generated values with
+known field keys, expected JSON value types and at least one citation to evidence
+actually supplied to the model. Literal value-to-text matching is not required
+(user-approved behavior, 2026-10-16). Summaries and reformatted values can therefore
+pass without a verbatim anchor. Citations record the model's sources, not independent
+verification of its claims. Nonblank strings, finite JSON numbers (excluding booleans),
+booleans and configured enum choices remain checked. Existing configured cleanup and
+date normalization still apply. Preview and population use the same acceptance path;
+all valid references remain in field provenance, with the first used as the page/column anchor.
+Document extraction v3 and prompt v2 invalidate prior filtered answer/cache identities;
+existing stored revisions remain unchanged until another population run. Nest accepts
+prompt v1 or v2 for compatibility and fingerprints the actual returned version; runtime
+API/workers must load matching profiles, so restart both alongside the backend.
+Sender/receiver coverage lives in
+backend `semantic-runtime-client.service.spec.ts` and runtime
+`tests/test_semantic_ai_runtime.py` / `tests/test_attribute_extraction_client.py`.
+
+## Document field suggestions
+
+`POST /v1/semantic-model-population/document-field-suggestions` is read-only
+on the existing service-authenticated population router. Executable bounds and
+response shaping live in `app/population/field_discovery.py`. The coordinator
+requires model edit access, an enabled editable workspace link and a draft
+concept, then resolves authoritative source metadata. The runtime reauthorizes
+every asset for the acting user before reading indexed text or calling AI.
+
+Discovery samples up to five documents and supplies AI with at most forty usable
+blocks and 12,000 text characters per document, reporting unread files and
+truncated coverage. Underlying source reads retain existing index closure limits. Quotes
+must occur in supplied text. Only locally generated rules verified against every
+complete, uncut sample are offered as deterministic; other grounded fields use
+AI. File identity/name suggestions use metadata. The existing runtime-owned
+profile handles inference; no database migration or new service is needed.
+
+Proposals are reviewed in the document/workspace mapper before Apply. Apply uses
+existing graph commands to autosave new fields and the reviewed concept purpose,
+and prepares the selected mappings. The normal Save mapping command persists
+those mappings after graph autosave completes. Existing field definitions remain
+unchanged; an existing mapping is replaced only when explicitly selected.
+
+## Captured datasource schemas
 
 | File | Purpose |
 |---|---|

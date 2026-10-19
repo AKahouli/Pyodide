@@ -186,7 +186,7 @@ export function AdvisorEvaluationWorkspace({
   if (loading) {
     return (
       <div className="flex min-h-72 items-center justify-center rounded-lg border bg-muted/20 text-sm text-muted-foreground" role="status" aria-live="polite">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <Loader2 className="me-2 h-4 w-4 animate-spin" />
         {t('evaluationWorkspace.loading' as any)}
       </div>
     );
@@ -197,7 +197,7 @@ export function AdvisorEvaluationWorkspace({
       <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-center" role="alert">
         <AlertTriangle className="h-5 w-5 text-destructive" />
         <div className="text-sm">{t('evaluationWorkspace.error' as any)}</div>
-        <Button variant="outline" size="sm" onClick={() => void refresh()}><RefreshCw className="mr-2 h-4 w-4" />{t('evaluationWorkspace.retry' as any)}</Button>
+        <Button variant="outline" size="sm" onClick={() => void refresh()}><RefreshCw className="me-2 h-4 w-4" />{t('evaluationWorkspace.retry' as any)}</Button>
       </div>
     );
   }
@@ -215,7 +215,7 @@ export function AdvisorEvaluationWorkspace({
             <button
               type="button"
               className={cn(
-                'w-full rounded-md border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+                'w-full rounded-md border px-3 py-2 text-start outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
                 isWholePlaybook ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted',
               )}
               onClick={() => selectScope(WHOLE_PLAYBOOK_SCOPE)}
@@ -231,7 +231,7 @@ export function AdvisorEvaluationWorkspace({
                   key={task.id}
                   className={cn('rounded-md border px-3 py-2 transition-colors', selectedScope === task.id ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted')}
                 >
-                  <button type="button" className="w-full truncate text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => selectScope(task.id)}>
+                  <button type="button" className="w-full truncate text-start text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => selectScope(task.id)}>
                     {task.title || t('evaluationWorkspace.untitledStep' as any)}
                   </button>
                   <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">

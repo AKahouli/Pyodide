@@ -33,7 +33,15 @@ export class GraphSearchEnvironmentQueryDto {
   environment: SearchEnvironment = 'draft';
 }
 
-export class GraphSearchIndexDto extends GraphSearchEnvironmentQueryDto {}
+export class GraphSearchIndexDto extends GraphSearchEnvironmentQueryDto {
+  @ApiPropertyOptional({ description: 'Refuse if the environment now serves different data' })
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(200)
+  expectedDataRevisionId?: string;
+
+  @ApiPropertyOptional({ description: 'Retry only this generation under the current profile and index settings' })
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(200)
+  expectedIndexId?: string;
+}
 
 /** A record a chat answer cited: which data it was read from (published by default) and the revision then. */
 export class CitedRecordQueryDto {

@@ -42,7 +42,7 @@ export class WorkspaceDocumentRead {
 
     const documents = await this.documentStore.findByIds(documentIds);
 
-    return documents.map((d) => this.support.mapToResponse(d));
+    return documents.filter(d => !d.metadata?.assetDeletedAt).map((d) => this.support.mapToResponse(d));
   }
 
   /**
@@ -54,7 +54,7 @@ export class WorkspaceDocumentRead {
 
     const documents = await this.documentStore.findByIdsInWorkspace(workspaceId, documentIds);
 
-    return documents.map((d) => this.support.mapToResponse(d));
+    return documents.filter(d => !d.metadata?.assetDeletedAt).map((d) => this.support.mapToResponse(d));
   }
 
   /** Merge string flags into a document's metadata (workspace-scoped). */
@@ -175,10 +175,11 @@ export class WorkspaceDocumentRead {
   async findById(
     workspaceId: string,
     documentId: string,
+    includeDeleted = false,
   ): Promise<DocumentResponse> {
     const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
-    if (!document) {
+    if (!document || (!includeDeleted && document.metadata?.assetDeletedAt)) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
@@ -197,7 +198,7 @@ export class WorkspaceDocumentRead {
   ): Promise<DownloadUrlResponse> {
     const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
-    if (!document) {
+    if (!document || document.metadata?.assetDeletedAt) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',

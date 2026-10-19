@@ -79,13 +79,13 @@ function ArtifactRow({
           <PlaybookArtifactActions executionId={executionId} artifactId={artifact.artifactId} filename={artifact.filename || 'artifact'} mimeType={artifact.mimeType} />
         ) : onInspect && hasInspectableContent && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
-            <Search className="mr-1 h-3 w-3" />
+            <Search className="me-1 h-3 w-3" />
             {t('artifacts.view' as any)}
           </Button>
         )}
         {hasDownload && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={handleDownload}>
-            <Download className="mr-1 h-3 w-3" />
+            <Download className="me-1 h-3 w-3" />
             {t('artifacts.download' as any)}
           </Button>
         )}

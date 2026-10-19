@@ -1,4 +1,4 @@
-import { completedTurnHistory } from './completed-turn-history';
+import { completedTurnHistory, completedTurnSeed } from './completed-turn-history';
 import type { MessageRecord } from '../persistence/message-store';
 
 describe('completed turn history', () => {
@@ -31,5 +31,22 @@ describe('completed turn history', () => {
       message('answer', 'ai', 11, { questionMessageId: 'current', isComplete: false }),
     ], 'answer');
     expect(history.map((entry) => entry.text)).toEqual(['q1', 'latest']);
+  });
+  it('selects only the latest included completed ancestor for private session continuity', () => {
+    const seed = completedTurnSeed([
+      message('q1', 'user', 1), message('old', 'ai', 2, { questionMessageId: 'q1' }),
+      message('latest', 'ai', 3, { questionMessageId: 'q1' }),
+      message('concurrent-question', 'user', 4),
+      message('concurrent', 'ai', 5, { questionMessageId: 'concurrent-question', updatedAt: new Date(12) }),
+      message('current', 'user', 10), message('answer', 'ai', 11, { questionMessageId: 'current', isComplete: false }),
+    ], 'answer');
+    expect(seed.sourceSessionId).toBe('turn_latest');
+    expect(seed.history.map((entry) => entry.text)).toEqual(['q1', 'latest']);
+  });
+  it('does not use an edited answer as a private history source', () => {
+    expect(completedTurnSeed([
+      message('q1', 'user', 1), message('edited', 'ai', 2, { questionMessageId: 'q1', isEdited: true }),
+      message('current', 'user', 10), message('answer', 'ai', 11, { questionMessageId: 'current', isComplete: false }),
+    ], 'answer').sourceSessionId).toBeUndefined();
   });
 });

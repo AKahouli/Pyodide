@@ -80,7 +80,7 @@ export function RootGuard() {
   // navigation. v2 uses its own per-user pipe (one connection for all
   // conversation-v2 sessions) so multiple conversations can stream at once.
   useConversationStream();
-  useAppBuilderStudioStreamConnection();
+  useAppBuilderStudioStreamConnection(/^\/(?:studio|app-builder|conversation-v2)(?:\/|$)/.test(location.pathname));
   // Playbook execution events drive live canvas step statuses during runs.
   usePlaybookStreamGlobal(isAuthenticated);
 

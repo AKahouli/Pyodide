@@ -1,6 +1,8 @@
 """Pytest configuration and fixtures for smart_rag tests."""
 
 import asyncio
+import base64
+import json
 import os
 import sys
 from unittest.mock import MagicMock, Mock
@@ -30,8 +32,9 @@ for field_name, field_info in mock_fields.items():
         env_value = str(field_value)
     os.environ[field_name] = env_value
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Import application packages as src.*; adding src itself shadows the installed
+# top-level mcp SDK with our neutral src.mcp client package.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
 from src.smart_rag.infrastructure.processing.prompt_processor import PromptProcessor
@@ -340,7 +343,7 @@ def mock_external_deps(monkeypatch):
     mock_mcp_toolset_class = MagicMock()
 
     monkeypatch.setattr("google.adk.Agent", mock_agent_class)
-    monkeypatch.setattr("google.adk.tools.mcp_tool.MCPToolset", mock_mcp_toolset_class)
+    monkeypatch.setattr("google.adk.tools.mcp_tool.mcp_toolset.MCPToolset", mock_mcp_toolset_class)
 
     # Mock logger
     mock_logger = MagicMock()
@@ -380,6 +383,30 @@ class MockAsyncQueue:
 def mock_settings():
     from tests.common_schema import MockSettings
     yield MockSettings()
+
+
+def _native_authority_proof(execution_id: str) -> str:
+    """Structurally valid native dispatch authority proof (same encoding as production metadata)."""
+    payload = base64.urlsafe_b64encode(json.dumps({"executionId": execution_id}).encode()).decode().rstrip("=")
+    return f"header.{payload}.signature"
+
+
+@pytest.fixture
+def native_dispatch_authority(monkeypatch):
+    """Test-only machine credential for with_root_authority-wrapped servicer RPCs.
+
+    Returns a proof factory; tests attach the proof to their mock gRPC context's
+    ``invocation_metadata`` under ``x-yellowstorm-native-authority``. Production
+    settings validation stays fail-closed: this only supplies the settings field
+    (ADK_ROOT_RUNTIME_SERVICE_TOKEN) that the decorator reads.
+    """
+    from types import SimpleNamespace
+    from src.root_runtime import delegate_resolver
+    monkeypatch.setattr(
+        delegate_resolver, "get_settings",
+        lambda: SimpleNamespace(ADK_ROOT_RUNTIME_SERVICE_TOKEN="test-root-machine", API_URL="http://backend/api"),
+    )
+    return _native_authority_proof
 
 
 @pytest.fixture

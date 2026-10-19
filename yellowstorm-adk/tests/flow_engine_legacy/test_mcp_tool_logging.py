@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from src.flow_engine.mcp import call_mcp_tool
+from src.mcp import call_mcp_tool
 
 
 class _AsyncContext:
@@ -113,7 +113,7 @@ async def test_call_mcp_tool_logs_request_and_response(
     monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
 
-    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+    caplog.set_level(logging.INFO, logger="src.mcp")
 
     response = await call_mcp_tool(
         "stdio",
@@ -170,7 +170,7 @@ async def test_call_mcp_tool_can_suppress_sensitive_payload_logging(
     monkeypatch.setitem(sys.modules, "mcp", mcp_module)
     monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
-    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+    caplog.set_level(logging.INFO, logger="src.mcp")
 
     await call_mcp_tool(
         "stdio",
@@ -201,7 +201,7 @@ async def test_call_mcp_tool_suppresses_sensitive_error_text(
     monkeypatch.setitem(sys.modules, "mcp", mcp_module)
     monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
-    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+    caplog.set_level(logging.INFO, logger="src.mcp")
 
     response = await call_mcp_tool(
         "stdio",
@@ -230,7 +230,7 @@ async def test_call_mcp_tool_suppresses_exception_group_text(
     monkeypatch.setitem(sys.modules, "mcp", mcp_module)
     monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
-    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+    caplog.set_level(logging.INFO, logger="src.mcp")
 
     response = await call_mcp_tool(
         "stdio",
@@ -261,7 +261,7 @@ async def test_call_mcp_tool_preserves_image_content_parts(
     monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
 
-    caplog.set_level(logging.INFO, logger="src.flow_engine.mcp")
+    caplog.set_level(logging.INFO, logger="src.mcp")
 
     response = await call_mcp_tool(
         "stdio",

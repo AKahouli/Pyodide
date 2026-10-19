@@ -210,6 +210,8 @@ class ToolConfigurationManager:
         tool_dict_normalized = tool_dict.copy()
         if 'tool_type' in tool_dict_normalized:
             tool_dict_normalized['tool_type'] = tool_dict_normalized['tool_type'].lower()
+        elif tool_name_lower == 'generate_image':
+            tool_dict_normalized['tool_type'] = 'custom'
 
         config = ToolConfig.from_dict(tool_dict_normalized, default_description or "")
 

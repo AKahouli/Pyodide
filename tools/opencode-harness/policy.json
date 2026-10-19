@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "documentationIndex": "docs/agent-context/README.md",
+  "documentationRoutes": [
+    { "prefix": "YellowStorm/front/", "document": "YellowStorm/front/AGENTS.md" },
+    { "prefix": "YellowStorm/back/", "document": "YellowStorm/back/AGENTS.md" },
+    { "prefix": "yellowstorm-adk/", "document": "yellowstorm-adk/README.md" },
+    { "prefix": "tools/opencode-harness/", "document": "tools/opencode-harness/README.md" }
+  ]
+}

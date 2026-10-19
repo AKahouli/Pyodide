@@ -81,7 +81,7 @@ export function ShareStreamDialog({ streamId, title, open, onOpenChange }: Share
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='flex max-h-[80vh] w-[95vw] max-w-2xl flex-col gap-0 p-0'>
         <DialogHeader className='border-b p-4 pb-3'>
-          <DialogTitle className='pr-8 text-base'>{t('sharing.title', { title })}</DialogTitle>
+          <DialogTitle className='pe-8 text-base'>{t('sharing.title', { title })}</DialogTitle>
           <DialogDescription className='sr-only'>
             {t('sharing.description', { title })}
           </DialogDescription>

@@ -27,11 +27,14 @@ import { ExpandCard } from './ExpandCard';
 import { ReadingTextContext } from './readingText';
 import { adaptToSheet, cellLabelSuggestions, cellValue } from './sheetMapping';
 import { foundSpans, markText, type Highlight } from './SheetSourceMappingDrawer';
+import { closesDerivationCycle } from '../../utils/designer-flow';
 
 export interface DerivedSourceTarget {
   conceptId: string;
   /** The derived source to change; none to add one. */
   derived?: DerivedSource;
+  /** The source explicitly dragged onto this concept when adding a derived source. */
+  initialSourceConceptId?: string;
 }
 
 export const CONFLICT_RULES: DerivedConflictRule[] = ['most_frequent', 'latest', 'longest', 'leave_empty'];
@@ -49,6 +52,11 @@ const FOLDED: Record<Pane, boolean> = { samples: false, expand: false, fields: f
 const usesItem = (field: { sourceAttribute?: string; mode?: string; computed?: unknown }) =>
   isItemField(field.sourceAttribute) || recipeColumnsOf(field as never).some(isItemField);
 const recipeColumnsOf = (field: { mode?: string; computed?: Parameters<typeof recipeColumns>[0] }) => field.mode === 'computed' ? recipeColumns(field.computed) : [];
+const derivedDraftKey = (sourceConceptId: string, fieldMappings: ReturnType<typeof derivedPayload>, identityFields: string[], conflictRule: DerivedConflictRule,
+  orderBy: string, aiSettings: Partial<AiExtractionSettings>, expand: DerivedExpand | null) => JSON.stringify([
+  sourceConceptId, fieldMappings, identityFields, conflictRule, conflictRule === 'latest' ? orderBy : '',
+  Object.keys(aiSettings).length ? aiSettings : null, expandPayload(expand) ?? null,
+]);
 
 const words = (text: string) => text.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
@@ -72,7 +80,7 @@ export function suggestSourceField(field: Pick<AttributeDefinition, 'key' | 'lab
  * The fields are the shared field mapping (as for a document or a sheet): each one copied from a source
  * field, read out of its text with rules and/or AI, taken by a recipe, or fixed, tried on sample records.
  */
-export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ modelId: string; target: DerivedSourceTarget | null; onClose: () => void }>) {
+export function DerivedSourceDrawer({ modelId, target, onClose, pendingSwitch = false, onCancelPendingSwitch }: Readonly<{ modelId: string; target: DerivedSourceTarget | null; onClose: () => void; pendingSwitch?: boolean; onCancelPendingSwitch?: () => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const graph = useSemanticModelEditorStore((state) => state.graph);
@@ -99,14 +107,14 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   // Each field is one line until opened; the rows as last saved, to mark and revert a changed field.
   const [openFields, setOpenFields] = useState<string[]>([]);
   const [savedRows, setSavedRows] = useState<Record<string, SourceFieldMapping> | null>(null);
+  const [savedDraftKey, setSavedDraftKey] = useState<string | null>(null);
+  const [closePrompt, setClosePrompt] = useState(false);
   const toggleField = (field: string) => setOpenFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field]);
   const paneProps = (pane: Pane) => ({ id: `derived-${pane}`, open: panes[pane], onOpenChange: (open: boolean) => setPane(pane, open) });
 
-  // A concept filled from another one cannot fill a third, so derivations never chain.
   const others = derivedSources.filter((source) => source.id !== target?.derived?.id);
   const candidates = useMemo(() => (graph?.nodes ?? []).filter((node) => !node.systemKey && node.id !== target?.conceptId
-    && node.attributes.length > 0 && !others.some((other) => other.conceptId === node.id)), [graph?.nodes, others, target?.conceptId]);
-  const fillsAnother = others.some((other) => other.sourceConceptId === target?.conceptId);
+    && node.attributes.length > 0 && !closesDerivationCycle(others,node.id,target?.conceptId ?? '')), [graph?.nodes, others, target?.conceptId]);
   const source = graph?.nodes.find((node) => node.id === sourceConceptId);
   const sourceFields = useMemo(() => source?.attributes.map((field) => field.key) ?? [], [source]);
   const sourceLabels = useMemo(() => Object.fromEntries((source?.attributes ?? []).map((field) => [field.key, field.label])), [source]);
@@ -123,7 +131,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     // A concept already linked to this one is the likeliest source: contracts name their customer.
     const linked = graph?.relations.flatMap((relation) => relation.sourceNodeTypeId === concept.id ? [relation.targetNodeTypeId]
       : relation.targetNodeTypeId === concept.id ? [relation.sourceNodeTypeId] : []) ?? [];
-    const start = derived?.sourceConceptId ?? candidates.find((node) => linked.includes(node.id))?.id ?? candidates[0]?.id ?? '';
+    const initial = candidates.find((node) => node.id === target.initialSourceConceptId)?.id;
+    const start = derived?.sourceConceptId ?? initial ?? candidates.find((node) => linked.includes(node.id))?.id ?? candidates[0]?.id ?? '';
     setSourceConceptId(start);
     // A field removed from the source concept since saving is no longer offered, so it is not kept.
     const fromFields = graph?.nodes.find((node) => node.id === start)?.attributes.map((field) => field.key) ?? [];
@@ -135,20 +144,35 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     setOpenFields([]);
     setPanes(FOLDED);
     const identity = identityRules.find((item) => item.conceptId === concept.id)?.fields ?? [];
-    setKeys(identity.length ? identity : next.filter((row) => row.mode !== 'ignore').slice(0, 1).map((row) => row.targetAttribute));
-    setRule(derived?.conflictRule ?? 'most_frequent');
-    setOrderBy(derived?.orderBy && fromFields.includes(derived.orderBy) ? derived.orderBy : '');
-    setAiSettings({ ...(derived?.aiSettings ?? {}) });
-    setExpand(derived?.expand ?? null);
+    const initialKeys = identity.length ? identity : next.filter((row) => row.mode !== 'ignore').slice(0, 1).map((row) => row.targetAttribute);
+    const initialRule = derived?.conflictRule ?? 'most_frequent';
+    const initialOrderBy = derived?.orderBy && fromFields.includes(derived.orderBy) ? derived.orderBy : '';
+    const initialAiSettings = { ...(derived?.aiSettings ?? {}) };
+    const initialExpand = derived?.expand ?? null;
+    setKeys(initialKeys);
+    setRule(initialRule);
+    setOrderBy(initialOrderBy);
+    setAiSettings(initialAiSettings);
+    setExpand(initialExpand);
+    setSavedDraftKey(derived ? derivedDraftKey(start, derivedPayload(next, (derived.fieldMappings ?? []).map((field) => field.targetAttribute)), initialKeys,
+      initialRule, initialOrderBy, initialAiSettings, initialExpand) : null);
     setPicked(null);
     setShownId(null);
     setHighlight(null);
     setTextField(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.conceptId, target?.derived?.id, concept?.id, identityRules.length, candidates.length]);
+  }, [target?.conceptId, target?.derived?.id, target?.initialSourceConceptId, concept?.id, identityRules.length, candidates.length]);
 
   const savedOrder = useMemo(() => (target?.derived?.fieldMappings ?? []).map((field) => field.targetAttribute), [target?.derived]);
   const payload = useMemo(() => derivedPayload(rows, savedOrder), [rows, savedOrder]);
+  const dirty = Boolean(target && (target.derived
+    ? savedDraftKey !== null && savedDraftKey !== derivedDraftKey(sourceConceptId, payload, keys, rule, orderBy, aiSettings, expand)
+    : Boolean(sourceConceptId || rows.length)));
+  useEffect(() => {
+    if (!pendingSwitch || !target) return;
+    if (dirty) { setClosePrompt(true); return; }
+    onClose();
+  }, [dirty, onClose, pendingSwitch, target]);
   const payloadRows = rows.filter((row) => row.mode !== 'ignore');
   const usesAi = mappingsUseAi(payloadRows);
   // What blocks saving, field by field: as on a sheet, a source field is a column.
@@ -160,7 +184,6 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   }).map((row) => row.targetAttribute);
   const unmappedKey = keys.find((key) => !payload.some((field) => field.targetAttribute === key));
   const problem = !source ? t('derived.problem.source')
-    : fillsAnother ? t('derived.problem.fillsAnother', { concept: concept?.label ?? '' })
     : !payload.length ? t('derived.problem.noField')
     : fieldProblems.length ? t('mapping.cell.saveBlocked', { fields: fieldProblems.map(attributeLabel).join(', ') })
     : !keys.length ? t('derived.problem.noKey')
@@ -357,6 +380,11 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const toggleKey = (key: string) => setKeys((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   const keyLabels = keys.map(attributeLabel).join(', ');
   const busy = save.isPending || remove.isPending;
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) { setClosePrompt(true); return; }
+    onClose();
+  };
   const recordCount = samplesQuery.data?.total ?? samples.length;
   // What each folded part says on its title: the values in force, or what to fix in it.
   const aiFields = payloadRows.filter((row) => row.mode === 'extract' && row.extractionStrategy !== 'deterministic' && row.extractionStrategy !== undefined).length;
@@ -382,7 +410,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const liveSummary = !canRead ? t('derived.incomplete') : live.loading ? t('derived.readingRecords', { count: pickedIds.length })
     : live.result && !stale ? t('derived.readRecords', { count: live.result.records.length }) : usesAi ? t('mapping.live.aiManual') : t('derived.readingRecords', { count: pickedIds.length });
 
-  return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
+  return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) requestClose(); }}>
     {target && concept && <SheetContent side='right' className={cn('flex w-full flex-col gap-0 p-0 sm:max-w-3xl', sideBySide && 'xl:max-w-6xl')} onInteractOutside={(event) => event.preventDefault()}>
       <SheetHeader className='border-b p-5'>
         <SheetTitle className='flex items-center gap-2'><GitMerge className='h-4 w-4' />{t('derived.title', { concept: concept.label })}</SheetTitle>
@@ -418,7 +446,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                   return <li key={record.id} className={cn('flex items-center gap-2 px-2 py-1', shown?.id === record.id && 'bg-muted/60')}>
                     <input type='checkbox' checked={checked} disabled={!checked && pickedIds.length >= MAX_RECORDS}
                       aria-label={t('derived.recordFor', { record: record.label || record.id })} onChange={() => togglePicked(record.id)} />
-                    <button type='button' className='min-w-0 flex-1 truncate text-left disabled:opacity-60' disabled={!checked}
+                    <button type='button' className='min-w-0 flex-1 truncate text-start disabled:opacity-60' disabled={!checked}
                       aria-label={t('derived.showRecord', { record: record.label || record.id })} onClick={() => { setShownId(record.id); setHighlight(null); }}>
                       {record.label || record.id}
                     </button>
@@ -431,7 +459,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                 {live.loading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <Rows className='h-3.5 w-3.5 shrink-0' />}
                 <span className='min-w-0 flex-1 truncate'>{liveSummary}</span>
                 {canRead && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.loading} onClick={() => void readRecords()}>
-                  <RefreshCw className='mr-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('derived.readNow') : t('mapping.live.readAgain')}
+                  <RefreshCw className='me-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('derived.readNow') : t('mapping.live.readAgain')}
                 </Button>}
               </div>
               {live.error && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{`${t('mapping.previewError')}: ${live.error}`}</p>}
@@ -573,18 +601,26 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
       </ReadingTextContext.Provider>
       <div className='flex items-center gap-2 border-t p-4'>
         {target.derived && <Button variant='outline' className={DELETE_BUTTON} disabled={busy} onClick={() => remove.mutate()}>
-          <Trash2 className='mr-1.5 h-4 w-4' />{t('derived.remove')}
+          <Trash2 className='me-1.5 h-4 w-4' />{t('derived.remove')}
         </Button>}
         <div className='min-w-0 flex-1 space-y-0.5'>
-          {problem && (source || fillsAnother) && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
+          {problem && source && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
             <AlertTriangle className='h-3.5 w-3.5 shrink-0' /><span className='line-clamp-2'>{problem}</span></p>}
           {/* What a run costs in AI, in sight when saving. */}
           {usesAi && source && <p className='flex items-center gap-1.5 text-[11px] text-muted-foreground' title={aiEstimate}>
             <Bot className='h-3.5 w-3.5 shrink-0' /><span className='truncate'>{t('derived.aiFooter', { calls: Math.min(recordCount, MAX_AI_RECORDS).toLocaleString() })}</span></p>}
         </div>
-        <Button variant='outline' onClick={onClose} disabled={busy}>{t('action.cancel')}</Button>
+        <Button variant='outline' onClick={requestClose} disabled={busy}>{t('action.cancel')}</Button>
         <Button onClick={() => save.mutate()} disabled={Boolean(problem) || busy}>{save.isPending ? t('derived.saving') : t('derived.save')}</Button>
       </div>
+      {closePrompt && <div role='dialog' aria-label={t('leave.title')} className='border-t bg-muted/30 p-4'>
+        <p className='mb-3 text-sm text-muted-foreground'>{t('leave.description')}</p>
+        <div className='flex justify-end gap-2'>
+          <Button variant='outline' onClick={() => { setClosePrompt(false); if (pendingSwitch) onCancelPendingSwitch?.(); }}>{t('action.cancel')}</Button>
+          <Button variant='outline' onClick={onClose}>{t('leave.discard')}</Button>
+          <Button onClick={() => { setClosePrompt(false); save.mutate(); }} disabled={Boolean(problem) || busy}>{t('derived.save')}</Button>
+        </div>
+      </div>}
     </SheetContent>}
   </Sheet>;
 }

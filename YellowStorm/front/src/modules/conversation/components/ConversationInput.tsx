@@ -13,6 +13,8 @@ import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowed
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
+import { AssetPromptBridge } from './AssetPromptBridge';
+import { useConversationUiStore } from '../uiStore';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
@@ -26,7 +28,7 @@ interface ConversationInputProps {
 export function ConversationInput({ conversationId }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const updateConversation = useConversationStore((s) => s.updateConversation);
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
   const conversationSettings = useConversationSettings();
   const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const stopStream = useConversationStore((s) => s.stopStream);
@@ -49,6 +51,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
+  const assetSelection = useConversationUiStore(state => state.selectedAssets);
+  const selectedAssets = assetSelection && assetSelection.actorId === user?.id && assetSelection.conversationId === conversationId ? assetSelection.items : [];
+  const composerScope = useRef({ actorId: user?.id, conversationId });
+  composerScope.current = { actorId: user?.id, conversationId };
   const deepSearchEnabled = useDeepSearchEnabled();
   const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const selectedModelId = useSelectedModelId();
@@ -151,7 +157,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
 
   const handleSubmit = useCallback(
     async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
-      if (!message.text?.trim() && !completedFileIds.length) return false;
+      const actorId = user?.id ?? '';
+      const selection = useConversationUiStore.getState().selectedAssets;
+      const submittedAssets = selection?.actorId === actorId && selection.conversationId === conversationId ? [...selection.items] : [];
+      if (!message.text?.trim() && !completedFileIds.length && !submittedAssets.length) return false;
       const differentAgent = !!agentIds?.length && !(agentIds.length === 1 && agentIds[0] === currentConversation?.rootAgentId);
       if ((runningCount > 0 || isStreaming || isAwaitingFirstChunk) && (!concurrentReplies || differentAgent || teamIds?.length || memberIds?.length)) {
         toast.error(t('input.waitForReply'));
@@ -181,9 +190,11 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           downloadUrl: '', // Will be populated by backend on next fetch
         }));
 
+      if (composerScope.current.actorId !== actorId || composerScope.current.conversationId !== conversationId) return false;
+      const assetContext = submittedAssets.map(asset => t('assets.promptReference', { name: asset.name, ref: asset.ref })).join('\n');
       await sendMessage(conversationId, {
         requestId: crypto.randomUUID(),
-        content: message.text || '',
+        content: [message.text || '', assetContext].filter(Boolean).join('\n\n'),
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
@@ -196,18 +207,19 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         ...(!runtimeManaged && !hasStickyTaggedAgents && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
-        parentMessageId: replyingToMessage?.id,
+        parentMessageId: submittedReplyId ?? submittedAssets.find(asset => asset.sourceMessageId)?.sourceMessageId,
         connectorRepo: runtimeManaged ? undefined : submittedConnector,
         skillIds: !runtimeManaged && submittedSkillIds.length
           ? submittedSkillIds
           : undefined,
       });
 
+      useConversationUiStore.getState().clearSubmittedAssets(actorId, conversationId, submittedAssets.map(asset => asset.nonce));
       clearSubmitted(uploadFiles.filter((file) => file.status === 'completed').map((file) => file.localId));
       if (useConversationStore.getState().replyingToMessage?.id === submittedReplyId) clearReplyingTo();
       return true;
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearSubmitted, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort, isStreaming, isAwaitingFirstChunk, concurrentReplies, currentConversation?.rootAgentId, runningCount, t],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearSubmitted, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort, isStreaming, isAwaitingFirstChunk, concurrentReplies, currentConversation?.rootAgentId, runningCount, t, user?.id],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -275,6 +287,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       <Input
         draftKey={`${user?.id ?? 'anonymous'}:conversation:${conversationId}`}
         onSubmit={handleSubmit}
+        hasSelectedContext={selectedAssets.length > 0}
         onStop={stopStream}
         status={status}
         disabled={inputDisabled || isLimitExceeded}
@@ -284,6 +297,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         onFileRemoved={handleFileRemoved}
         uploadingFiles={uploadFiles}
         accept={accept}
+        maxFileSize={maxFileSize}
         maxFiles={5}
         attachmentsDisabled={attachmentsDisabled}
         members={membersToTag}
@@ -301,6 +315,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
             <ReliabilityCheckToggle />
           </>
         }
+        aboveTextarea={<AssetPromptBridge conversationId={conversationId} />}
         belowTextarea={
           <ComposerSuggestionChips
             fetchDisabled={

@@ -64,6 +64,8 @@ export type DocumentUpdatePatch = Partial<
  * listing queries — those differ (pagination shapes, folder scoping).
  */
 export interface DocumentStore {
+  listPendingAssetCleanup(workspaceId: string, actorId?: string): Promise<WorkspaceDocumentRecord[]>;
+  getAssetRevocationState(workspaceId: string): Promise<{ epoch: string | null; cleanupPending: boolean }>;
   create(input: DocumentCreateInput): Promise<WorkspaceDocumentRecord>;
   findById(id: string): Promise<WorkspaceDocumentRecord | null>;
   findByIdAndWorkspace(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null>;
@@ -94,11 +96,19 @@ export interface DocumentStore {
   /** Dotted metadata merge ($set: { 'metadata.<key>': value }), workspace-scoped. */
   mergeMetadata(workspaceId: string, documentId: string, patch: Record<string, string>): Promise<void>;
   /** save()-path mutations preserved as semantic operations (find → set → save in Mongo). */
+  /** Claim PENDING completion and account workspace bytes/count atomically; null if already claimed. */
   markUploaded(id: string, fields: { status: string; uploadedAt: Date; url?: string; metadata?: Record<string, string> }): Promise<WorkspaceDocumentRecord | null>;
   renameOriginalName(id: string, originalName: string): Promise<WorkspaceDocumentRecord | null>;
   renameFolder(id: string, folderName: string): Promise<WorkspaceDocumentRecord | null>;
   /** null parent = move to root. */
   setParent(id: string, parentId: string | null): Promise<void>;
+  /** Hold the direct-upload row lock across storage PUT/publication; missing/non-uploading rows cannot publish. */
+  withUploadingDocument<T>(id: string, action: () => Promise<T>): Promise<T>;
+  /** Claim old direct reservations without waiting for or deleting live row-locked writers. */
+  deleteAbandonedDirectUploads(createdBefore: Date): Promise<WorkspaceDocumentRecord[]>;
+  findExpiredPendingUploads(now: Date, legacyCreatedBefore: Date): Promise<WorkspaceDocumentRecord[]>;
+  /** Atomically claim a pending upload for cleanup; never delete an already completed upload. */
+  deletePendingUpload(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null>;
   deleteById(id: string): Promise<void>;
   deleteByIdAndWorkspace(id: string, workspaceId: string): Promise<void>;
   deleteManyByWorkspace(workspaceId: string): Promise<number>;

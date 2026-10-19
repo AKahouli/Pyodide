@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from .documents import humanize
+from .retrieval import describe_provenance
 from .typed_values import (fold, fold_sql, is_blank_sql, near_match, parse_boolean, parse_number,
                            typed_value_sql)
 
@@ -1206,19 +1207,20 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
 # SQL ---------------------------------------------------------------------------------------
 
 
-def base_sql(plan: Plan) -> str:
+def base_sql(plan: Plan, *, include_provenance: bool = False) -> str:
     """The records of the concept, read with their types, then those matching. Groups on
     linked records join them in ``grouped``, which every statement carries (each binds all
     the parameters) and only the groups read: a CTE nobody reads is not run."""
     raw = "".join(f", {column}" for column in plan.raw_columns)
     typed = "".join(f", {column}" for column in plan.typed_columns)
+    provenance = ", e.provenance" if include_provenance else ""
     grouped = ""
     if plan.laterals:
         values = "".join(f", lg{index}.k AS lg{index}_k, lg{index}.v AS lg{index}_v"
                          for index, group in enumerate(plan.group) if group.get("linked"))
         grouped = (", grouped AS (SELECT matched.*" + values + " FROM matched "
                    + " ".join(plan.laterals) + ")")
-    return ("WITH scoped AS (SELECT e.id, e.label, e.identity_key, e.attributes" + raw +
+    return ("WITH scoped AS (SELECT e.id, e.label, e.identity_key, e.attributes" + provenance + raw +
             " FROM semantic_population.entities e"
             " WHERE e.model_id = $1 AND e.data_revision_id = $2 AND e.concept_id = $3::text AND " + _visible("e") +
             "), typed AS (SELECT scoped.*" + typed + " FROM scoped)"
@@ -1238,7 +1240,8 @@ def stats_sql(plan: Plan) -> str:
 
 def records_sql(plan: Plan) -> str:
     limit = len(plan.params) + 1
-    return (base_sql(plan) + " SELECT id, label, identity_key, attributes FROM matched ORDER BY "
+    return (base_sql(plan, include_provenance=True)
+            + " SELECT id, label, identity_key, attributes, provenance FROM matched ORDER BY "
             + ", ".join(plan.order) + f" LIMIT ${limit} OFFSET ${limit + 1}")
 
 
@@ -1283,7 +1286,10 @@ def _record(row: Any, plan: Plan, budget: list[int]) -> dict[str, Any]:
             cut.append(item.key)
         budget[0] -= len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
         values[item.key] = value
-    record = {"entityId": row["id"], "name": row["label"] or "", "keyFields": identity, "values": values}
+    provenance = row["provenance"]
+    provenance = json.loads(provenance) if isinstance(provenance, str) else dict(provenance or {})
+    record = {"entityId": row["id"], "name": row["label"] or "", "keyFields": identity,
+              "values": values, "provenance": describe_provenance(provenance)}
     if cut:
         record["truncated"] = True
         record["truncatedFields"] = cut

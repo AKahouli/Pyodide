@@ -35,7 +35,7 @@ export type AnswerSegment =
   | { kind: 'openui'; content: string; isLast: boolean; citations?: CitationData[]; componentId?: string };
 
 /** The start of a stored OpenUI program: a chat card or a report root on the first line. */
-const OPENUI_PROGRAM_START = /^\s*root\s*=\s*(?:Card|Report)\s*\(/;
+const OPENUI_PROGRAM_START = /^\s*root\s*=\s*(?:Card|Report|Presentation)\s*\(/;
 
 /**
  * Answers keep the form they were produced in: a stored text that is an OpenUI program still renders

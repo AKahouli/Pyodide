@@ -77,13 +77,28 @@ export interface BuiltAgentExecutionRequest {
 @Injectable()
 export class ConversationAgentRequestBuilder {
   build(input: BuildAgentExecutionRequestInput): BuiltAgentExecutionRequest {
+    // Current document attachments are resolved server-side inside the conversation workspace.
+    // Previous-turn files and client page hints must never introduce workspace scope here.
+    const workspaceContexts = [...input.workspaceContexts];
+    const workspaceIds = new Set(workspaceContexts.flatMap(context => context && typeof context === 'object'
+      && 'workspace_id' in context && typeof context.workspace_id === 'string' ? [context.workspace_id] : []));
+    for (const file of input.attachedFiles) {
+      if (!file || typeof file !== 'object' || !('type' in file) || file.type !== 'document'
+        || !('document' in file) || !file.document || typeof file.document !== 'object') continue;
+      const document = file.document;
+      if (!('workspace_id' in document) || typeof document.workspace_id !== 'string' || !/^[a-f0-9]{24}$/i.test(document.workspace_id)
+        || !('document_id' in document) || typeof document.document_id !== 'string' || !/^[a-f0-9]{24}$/i.test(document.document_id)
+        || workspaceIds.has(document.workspace_id)) continue;
+      workspaceIds.add(document.workspace_id);
+      workspaceContexts.push({ workspace_id: document.workspace_id, workspace_name: document.workspace_id, workspace_documents: [] });
+    }
     const baseRequest: Record<string, unknown> = {
       user_context: { user_id: input.userId, username: input.username || '' },
       conversation_id: input.conversationId,
       query: this.buildContextualQuery(input.request),
       ...(input.request.taskSummary ? { task_summary: input.request.taskSummary } : {}),
-      workspace_context: input.workspaceContexts.length
-        ? input.workspaceContexts
+      workspace_context: workspaceContexts.length
+        ? workspaceContexts
         : [{ workspace_id: input.conversationId, workspace_name: input.conversationId, workspace_documents: [] }],
       attached_files: input.attachedFiles,
       previous_attached_files: input.previousAttachedFiles,
@@ -112,7 +127,11 @@ export class ConversationAgentRequestBuilder {
       ...(input.nativeInputResponses ? { native_input_responses: input.nativeInputResponses.map((response) => ({
         input_id: response.inputId, function_name: response.functionName, response: toGrpcStruct(response.response),
       })) } : {}),
-      ...(input.rootDelegation ? { root_context: input.rootDelegation.rootContext } : {}),
+      ...(input.rootDelegation ? { root_context: {
+        ...input.rootDelegation.rootContext,
+        // Server-owned visible text before contextual page hints are appended.
+        visible_user_message: input.request.content,
+      } } : {}),
       ...(input.rootDelegation && input.rootDelegation.candidates.length
         ? { delegate_candidates: input.rootDelegation.candidates }
         : {}),

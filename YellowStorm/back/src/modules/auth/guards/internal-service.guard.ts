@@ -4,15 +4,25 @@ import { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 
 /**
- * Guard for internal service-to-service authentication.
- * Validates the `X-Internal-Token` header against `INTERNAL_SERVICE_SECRET`.
+ * Legacy guard for internal service-to-service authentication on the
+ * non-semantic internal routes (document ingest, workspace ingest, connector
+ * transfer, root delegate, telegram validation, agent/team CRUD). Validates
+ * the `X-Internal-Token` header against `INTERNAL_SERVICE_SECRET`.
+ *
+ * Trust-domain note (WP07.4): `APP_RUNTIME_BIND_TOKEN` is NOT accepted here —
+ * it is valid only for the app-runtime bind surface via the scoped
+ * AppRuntimeServiceGuard, and the semantic privileged surfaces use
+ * SemanticMcpServiceGuard. This shared secret remains a narrowly bounded
+ * compatibility path for the remaining internal callers with a documented
+ * removal gate; it is never a universal fallback for semantic privileged
+ * endpoints.
  */
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
   private readonly secret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = this.configService.get<string>('INTERNAL_SERVICE_SECRET', '').trim();
+    this.secret = (this.configService.get<string>('INTERNAL_SERVICE_SECRET') ?? '').trim();
   }
 
   canActivate(context: ExecutionContext): boolean {

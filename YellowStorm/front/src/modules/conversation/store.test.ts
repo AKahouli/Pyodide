@@ -10,6 +10,7 @@ const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
+const fetchAroundMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamsMock = vi.hoisted(() => vi.fn());
@@ -107,6 +108,7 @@ vi.mock('./api', async (importOriginal) => ({
   sendMessage: sendMessageMock,
   fetchMessage: fetchMessageMock,
   fetchMessages: fetchMessagesMock,
+  fetchMessagesAround: fetchAroundMock,
   fetchActiveStream: fetchActiveStreamMock,
   fetchActiveStreams: fetchActiveStreamsMock,
   fetchBranches: fetchBranchesMock,
@@ -210,11 +212,29 @@ describe('conversation optimistic messages', () => {
 
   it('refetches canonical messages when the server reports a stream resync', async () => {
     fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
-    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    fetchConversationMock.mockResolvedValue({ id: 'conv-1' });
+    await useConversationStore.getState().setCurrentConversation('conv-1');
 
     useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap', lastSeenCursor: 'boot-1:9' });
 
     await vi.waitFor(() => expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', expect.anything()));
+  });
+
+  it.each([true, false])('ignores repeated resync for an unloaded route (loading=%s)', async conversationLoading => {
+    useConversationStore.setState({ currentConversationId: 'denied', currentConversation: null, conversationLoading });
+    for (let index = 0; index < 3; index++) useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await Promise.resolve();
+    expect(fetchActiveStreamsMock).not.toHaveBeenCalled();
+    expect(fetchActiveStreamMock).not.toHaveBeenCalled();
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('still resyncs an unhydrated conversation with a pending send before stream_start', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
+    useConversationStore.setState({ currentConversationId: 'conv-1', currentConversation: null, inFlightSendConversations: new Set(['conv-1']) });
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamsMock).toHaveBeenCalledWith('conv-1'));
+    expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1');
   });
 
   it('preserves choice interaction display text while the request is pending', async () => {
@@ -1797,5 +1817,35 @@ describe('concurrent reply lifecycle', () => {
     expect(Object.keys(useConversationStore.getState().liveAnswers)).toHaveLength(2);
     useConversationStore.getState().clearAll();
     expect(useConversationStore.getState().liveAnswers).toEqual({});
+  });
+});
+
+describe('historical message navigation', () => {
+  it('merges an outside-page target, selects its branch and preserves running streams and pagination', async () => {
+    const current = { id: 'current', conversationId: 'conv-1', conversationType: 'user' as const, createdAt: '2026-10-18T00:00:00Z' };
+    const question = { ...current, id: 'old-question', createdAt: '2026-01-01T00:00:00Z' };
+    const target = { ...question, id: 'old-answer', conversationType: 'ai' as const, questionMessageId: question.id };
+    useConversationStore.setState({ currentConversationId: 'conv-1', messages: [current], messagesCursor: 'cursor', messagesHasMore: true, isStreaming: true, streamingMessageId: 'live', selectedModelId: 'draft-model' });
+    fetchAroundMock.mockResolvedValueOnce({ messages: [question], branchesByQuestion: { [question.id]: [target] }, pagination: { mode: 'around', hasOlder: true, hasNewer: true } });
+    await useConversationStore.getState().loadMessageAround(target.id);
+    const state = useConversationStore.getState();
+    expect(state.messages.map(message => message.id)).toEqual(['old-question', 'old-answer', 'current']);
+    expect(state.activeBranches.get(question.id)).toBe(target.id);
+    expect(state).toMatchObject({ isStreaming: true, streamingMessageId: 'live', messagesCursor: 'cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
+    expect(ensureConnectedMock).not.toHaveBeenCalled();
+  });
+  it('rejects missing targets, failed access and late responses after actor reset', async () => {
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    fetchAroundMock.mockResolvedValueOnce({ messages: [], branchesByQuestion: {} });
+    await expect(useConversationStore.getState().loadMessageAround('deleted')).rejects.toThrow('unavailable');
+    fetchAroundMock.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(useConversationStore.getState().loadMessageAround('foreign')).rejects.toThrow('Forbidden');
+    let done!: (value: unknown) => void;
+    fetchAroundMock.mockImplementationOnce(() => new Promise(resolve => { done = resolve; }));
+    const pending = useConversationStore.getState().loadMessageAround('old');
+    useConversationStore.getState().clearAll();
+    done({ messages: [{ id: 'old', conversationId: 'conv-1' }] });
+    await expect(pending).rejects.toThrow('changed');
+    expect(useConversationStore.getState().messages).toEqual([]);
   });
 });

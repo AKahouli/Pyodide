@@ -38,7 +38,7 @@ function ConversationLoadingShell({ label }: Readonly<{ label: string }>) {
             <Skeleton className='h-4 w-4/5 motion-reduce:animate-none' />
             <Skeleton className='h-4 w-3/5 motion-reduce:animate-none' />
           </div>
-          <div className='ml-auto w-3/5 space-y-2 rounded-2xl bg-primary/10 p-4'>
+          <div className='ms-auto w-3/5 space-y-2 rounded-2xl bg-primary/10 p-4'>
             <Skeleton className='h-4 w-full motion-reduce:animate-none' />
           </div>
         </div>

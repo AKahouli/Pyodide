@@ -14,8 +14,9 @@ const runCommand = {
   actorUserId: 'u1',
   modelId: 'm1',
   workspaceId: 'w1',
-  payload: { purpose: 'build' },
+  payload: { purpose: 'build', sources: [] },
 };
+const assetGrants = { admit: jest.fn().mockResolvedValue('signed-admission') };
 
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -29,14 +30,81 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
+  it('preserves safe diagnostic details through authenticated job and index status reads', async () => {
+    const errorDetails = { code: 'DataError', errorType: 'DataError', message: 'Database argument has an incompatible type.',
+      occurredAt: '2026-10-15T09:02:15Z', jobId: 'job-1', sqlState: '22000',
+      frames: [{ file: 'app/graph_search/indexer.py', function: 'build_index', line: 203 }] };
+    const client = new SemanticRuntimeClientService(config() as never);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'job-1', state: 'failed', errorCode: 'attempts_exhausted', errorDetails }));
+    await expect(client.getJob('job-1', 'u1')).resolves.toMatchObject({ errorDetails });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ modelId: 'm1', index: { state: 'failed', lastErrorCode: 'attempts_exhausted', errorDetails } }));
+    await expect(client.getGraphSearchIndex('m1', 'draft', 'u1')).resolves.toMatchObject({ index: { errorDetails } });
+    expect(fetchMock.mock.calls.every(([, options]) => options.headers['X-Actor-User-Id'] === 'u1')).toBe(true);
+  });
+
+  describe('runtime-owned AI extraction profile', () => {
+    const identity = { profileId: 'semantic-runtime', model: 'openai/extractor', contractVersion: 'ai-attribute-v2',
+      promptVersion: 'semantic-attributes-v1', maxTokens: 4096 };
+
+    it('reads the authenticated profile with writes disabled and forwards only non-secret identity', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ...identity, apiKey: 'not-forwarded' }));
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as never);
+      await expect(client.getAiExtractionIdentity()).resolves.toEqual(identity);
+      expect(fetchMock).toHaveBeenCalledWith('http://runtime:8000/v1/semantic-model-population/ai-extraction/profile', {
+        method: 'GET', headers: { 'X-Semantic-Service-Key': 'secret' }, signal: expect.any(AbortSignal),
+      });
+      expect(timeout).toHaveBeenCalledWith(5000);
+      timeout.mockRestore();
+    });
+
+    it('accepts the generated-value prompt identity and preserves it for fingerprints', async () => {
+      const generated = { ...identity, promptVersion: 'semantic-attributes-v2' };
+      fetchMock.mockResolvedValueOnce(jsonResponse(generated));
+      await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity()).resolves.toEqual(generated);
+    });
+
+    it.each([503, 404, 401])('fails closed when the profile endpoint returns %s', async (status) => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status }));
+      await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity())
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, status: 503 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([null, {}, { ...identity, model: '' }, { ...identity, profileId: 'agent' },
+      { ...identity, contractVersion: 'ai-attribute-v1' }, { ...identity, promptVersion: 'wrong' },
+      { ...identity, maxTokens: 0 }, { ...identity, maxTokens: 1.5 }, { ...identity, maxTokens: '4096' }])
+      ('rejects malformed or incompatible identity %j', async (payload) => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(payload));
+        await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity())
+          .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      });
+
+    it('rejects malformed JSON and unreachable profiles without retrying', async () => {
+      const client = new SemanticRuntimeClientService(config() as never);
+      fetchMock.mockResolvedValueOnce(new Response('not json', { status: 200 }));
+      await expect(client.getAiExtractionIdentity()).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+      await expect(client.getAiExtractionIdentity()).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('requires runtime configuration without requesting a profile', async () => {
+      await expect(new SemanticRuntimeClientService(config({ runtimeServiceKey: '' }) as never).getAiExtractionIdentity())
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('posts population runs with service key, idempotency key and timeout', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j1', reused: false }));
-    const client = new SemanticRuntimeClientService(config() as any);
+    const client = new SemanticRuntimeClientService(config() as any, assetGrants as never);
     const result = await client.requestPopulationRun(runCommand, 'idem-1');
     expect(result).toEqual({ jobId: 'j1', reused: false });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://runtime:8000/v1/semantic-model-population/runs');
-    expect(JSON.parse(init.body)).toEqual(runCommand);
+    expect(JSON.parse(init.body)).toEqual({ ...runCommand, payload: { ...runCommand.payload, assetAdmission: 'signed-admission', assetCommand: JSON.stringify(runCommand) } });
+    expect(assetGrants.admit).toHaveBeenCalledWith('u1', 'm1', 'population', [], 'idem-1', runCommand);
     expect(init.headers).toEqual(expect.objectContaining({
       'X-Semantic-Service-Key': 'secret',
       'Idempotency-Key': 'idem-1',
@@ -139,7 +207,7 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
   });
 
   it('says why the runtime refused a run, and that it cannot be reached when it is down', async () => {
-    const client = new SemanticRuntimeClientService(config() as any);
+    const client = new SemanticRuntimeClientService(config() as any, assetGrants as never);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: [
       { loc: ['body', 'payload', 'sources'], msg: 'Value error, a run reads at least one source' },
     ] }), { status: 422 }));
@@ -204,6 +272,18 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       await expect(client.ensureGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'production' }))
         .resolves.toMatchObject({ jobId: 'j1' });
       expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/indexes');
+    });
+
+    it('sends retry identity and preserves explicit stale conflicts from the runtime', async () => {
+      const client = new SemanticRuntimeClientService(config() as any);
+      const body = { actorUserId: 'u1', modelId: 'm1', environment: 'draft' as const, expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1' };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ index: { state: 'queued' } }));
+      await client.ensureGraphSearchIndex(body);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(body);
+      for (const detail of ['revision_changed', 'index_identity_changed']) {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 409 }));
+        await expect(client.ensureGraphSearchIndex(body)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT });
+      }
     });
 
     it('stops an index build through the runtime, which needs writes on', async () => {
@@ -347,7 +427,7 @@ describe('SemanticRuntimeClientService purgeModelData', () => {
 
 describe('SemanticRuntimeClientService cloneModelData', () => {
   let fetchMock: jest.Mock;
-  const command = { targetModelId: 't1', targetModelVersionId: 'v1', idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
+  const command = { targetModelId: 't1', targetModelVersionId: 'v1', allowedWorkspaceIds: ['ws-1'], idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
   beforeEach(() => {
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;

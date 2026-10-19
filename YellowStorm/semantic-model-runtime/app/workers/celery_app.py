@@ -32,7 +32,7 @@ SEARCH_QUEUES = ("semantic-model-search.index",)
 
 
 def broker_ssl(broker: str) -> dict[str, object] | bool:
-    """TLS options for a rediss:// broker.
+    """TLS options for a rediss:// broker: the peer certificate is verified.
 
     Declared explicitly rather than left to kombu: a bare rediss:// URL logs a
     warning and falls back on its own (kombu/connection.py:268), and a
@@ -40,17 +40,26 @@ def broker_ssl(broker: str) -> dict[str, object] | bool:
     channel only reads ``from_transport_options``, which has no ssl key.
     amqp:// keeps its own URL-level TLS, so it must stay False.
 
-    ponytail: traffic is encrypted but the server certificate is NOT verified,
-    so a MITM on the Redis route would not be detected. Switch to
-    ssl.CERT_REQUIRED (works as-is against Azure Cache for Redis, whose
-    certificate chains to a public CA) if the broker ever leaves a trusted
-    network.
+    P0-04: encrypted transport without certificate validation is not trusted
+    transport, so ``rediss://`` always requires a verifiable certificate chain
+    (Azure Cache for Redis chains to a public CA and works as-is). Set
+    ``SEMANTIC_BROKER_CA_CERTS`` to a CA bundle file for a private CA. A
+    configured bundle that cannot be read fails startup: refusing to start
+    beats silently connecting without trust.
     """
     if not broker.startswith("rediss://"):
         return False
     import ssl
 
-    return {"ssl_cert_reqs": ssl.CERT_NONE}
+    options: dict[str, object] = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+    ca_certs = os.environ.get("SEMANTIC_BROKER_CA_CERTS", "").strip()
+    if ca_certs:
+        if not os.path.isfile(ca_certs):
+            raise RuntimeError(
+                "SEMANTIC_BROKER_CA_CERTS does not name a readable CA bundle file;"
+                " refusing an unverifiable broker connection")
+        options["ssl_ca_certs"] = ca_certs
+    return options
 
 
 def make_celery() -> Celery:

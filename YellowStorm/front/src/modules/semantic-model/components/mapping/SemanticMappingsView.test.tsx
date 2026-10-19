@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
@@ -9,6 +9,7 @@ vi.mock('../../query/hooks', () => ({
     { id: 'crm', conceptId: 'organization', documentId: 'crm', documentName: 'CRM Production', sheetName: 'customers', assetKind: 'csv', status: 'ready', fieldMappings: [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct' }], identityFields: ['id'] },
     { id: 'excel', conceptId: 'organization', documentId: 'excel', documentName: 'customers.xlsx', sheetName: 'Customers', assetKind: 'excel_sheet', status: 'ready', fieldMappings: [{ sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' }], identityFields: ['id'] },
   ] }),
+  useDerivedSources: () => ({ isLoading: false, data: [{ id: 'derived-1', conceptId: 'organization', sourceConceptId: 'contract', fieldMappings: [{ sourceAttribute: 'customer_id', targetAttribute: 'id' }], conflictRule: 'most_frequent', orderBy: null, updatedAt: '' }] }),
   useRelationResolutionRules: () => ({ isLoading: false, data: [{ relationId: 'customer-of', sourceAttribute: 'id', targetAttribute: 'customerId', strategy: 'exact' }] }),
   useSourceResolutionPolicies: () => ({ isLoading: false, data: [{ conceptId: 'organization', priorities: [{ mappingId: 'crm', rank: 1 }, { mappingId: 'excel', rank: 2 }] }] }),
   useMappingHealth: () => ({ isLoading: false, dataUpdatedAt: 1, data: { items: [
@@ -38,6 +39,17 @@ describe('SemanticMappingsView', () => {
     expect(screen.getByText('mappingHealth.state.changed')).toBeInTheDocument();
     expect(screen.getByText('customers.xlsx / Customers')).toBeInTheDocument();
     expect(screen.getByText('sourceStatus.state.ready')).toBeInTheDocument();
+  });
+
+  it('includes derived feeds in source lineage and can open their editor', () => {
+    const onRepairDerived = vi.fn();
+    render(<QueryClientProvider client={new QueryClient()}><SemanticMappingsView modelId='model' canEdit onRepairDerived={onRepairDerived} /></QueryClientProvider>);
+
+    expect(screen.getByText('mappingsView.derivedFeeds')).toBeInTheDocument();
+    expect(screen.getByText('mappingsView.derivedFeed')).toBeInTheDocument();
+    expect(screen.getByText('mappingsView.derivedFeedFields_one')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'mappingsView.editDerivedFeed' }));
+    expect(onRepairDerived).toHaveBeenCalledWith(expect.objectContaining({ id: 'derived-1', conceptId: 'organization', sourceConceptId: 'contract' }));
   });
 
   it('does not offer source-priority edits to viewers', () => {

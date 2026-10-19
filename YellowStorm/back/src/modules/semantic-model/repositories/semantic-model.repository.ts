@@ -18,6 +18,13 @@ export interface SemanticModelRow {
   updatedAt: string;
 }
 
+export interface SemanticJobModel {
+  id: string;
+  name: string;
+  role: string;
+  conceptLabels: Record<string, string>;
+}
+
 const MODEL_COLUMNS = `
   m.id, m.owner_user_id AS "ownerUserId", m.name, m.description, m.kind, m.status,
   m.revision::int, m.origin_workspace_id AS "originWorkspaceId",
@@ -107,6 +114,18 @@ export class SemanticModelRepository {
       [userId, modelId],
     );
     return result.rows[0] ?? null;
+  }
+
+  /** Small, unpaginated allow-list for own jobs; the same owner/membership boundary as the catalog. */
+  async listJobModels(userId: string): Promise<SemanticJobModel[]> {
+    const result = await this.database.query<SemanticJobModel>(
+      `SELECT m.id, m.name, CASE WHEN m.owner_user_id = $1 THEN 'owner' ELSE membership.role END AS role,
+         COALESCE((SELECT jsonb_object_agg(nt.id::text, nt.label) FROM semantic_model.node_types nt
+                   WHERE nt.version_id = m.current_draft_version_id), '{}'::jsonb) AS "conceptLabels"
+       FROM semantic_model.models m
+       LEFT JOIN semantic_model.memberships membership ON membership.model_id = m.id AND membership.user_id = $1
+       WHERE m.owner_user_id = $1 OR membership.user_id IS NOT NULL ORDER BY m.name, m.id`, [userId]);
+    return result.rows;
   }
 
   async findByOriginWorkspace(workspaceId: string, userId: string): Promise<SemanticModelRow | null> {

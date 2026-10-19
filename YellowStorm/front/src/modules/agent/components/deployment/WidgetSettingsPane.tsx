@@ -88,7 +88,7 @@ export function WidgetSettingsPane({ value, onChange }: WidgetSettingsPaneProps)
           </Field>
           <Toggle label={t('createEdit.widget.customColors')} checked={value.theme.customEnabled} onCheckedChange={(customEnabled) => updateTheme({ customEnabled })} />
           <Button type="button" variant="outline" onClick={() => updateTheme({ colors: WIDGET_THEME_COLORS[value.theme.preset], customEnabled: true })}>
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />{t('createEdit.widget.resetPresetColors')}
+            <RotateCcw className="me-1.5 h-3.5 w-3.5" />{t('createEdit.widget.resetPresetColors')}
           </Button>
         </section>
 

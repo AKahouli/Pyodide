@@ -56,10 +56,10 @@ describe('CloneSemanticModelDialog', () => {
     navigate.mockReset();
   });
 
-  it('proposes "<name> (copy)", sources ticked, and shows the counts', async () => {
+  it('proposes "<name> (copy)", structure only by default (WP04.2), and shows the counts', async () => {
     renderDialog();
     expect(screen.getByRole('textbox')).toHaveValue('Contracts (clone.copySuffix)');
-    expect(box('sources')).toBeChecked();
+    expect(box('sources')).not.toBeChecked();
     expect(box('data')).not.toBeChecked();
     expect(box('shares')).not.toBeChecked();
     expect(await screen.findByText('120')).toBeInTheDocument();
@@ -67,10 +67,18 @@ describe('CloneSemanticModelDialog', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
   });
 
+  it('sends structure-only when nothing else is ticked (WP04.2)', async () => {
+    vi.mocked(semanticModelApi.clone).mockResolvedValue({ id: 'copy-3', dataCopy: { status: 'skipped' } } as never);
+    renderDialog();
+    await userEvent.clear(screen.getByRole('textbox'));
+    await userEvent.type(screen.getByRole('textbox'), 'Lean copy');
+    await userEvent.click(screen.getByRole('button', { name: /clone.submit/ }));
+    await waitFor(() => expect(semanticModelApi.clone).toHaveBeenCalledWith('m1', 'Lean copy', { sources: false, data: false, shares: false }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/semantic-models/copy-3'));
+  });
+
   it('ticking the data ticks and locks the sources', async () => {
     renderDialog();
-    await userEvent.click(box('sources'));
-    expect(box('sources')).not.toBeChecked();
     await userEvent.click(box('data'));
     expect(box('sources')).toBeChecked();
     expect(box('sources')).toBeDisabled();

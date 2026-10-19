@@ -14,7 +14,8 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from app.persistence.model_clone_store import CloneTargetNotEmpty, clone_model_data
+from app.persistence.model_clone_store import (CloneScopeExceeded, CloneScopeRequired, CloneTargetNotEmpty,
+                                                clone_model_data)
 from app.persistence.partitions import ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning
 from app.population.compiler import canonical_spec_hash
@@ -108,10 +109,11 @@ async def pool():
     await value.close()
 
 
-async def _clone(pool: asyncpg.Pool) -> dict:
+async def _clone(pool: asyncpg.Pool, allowed_workspace_ids: list[str] | None = ['ws1']) -> dict:
     return await clone_model_data(pool, source_model_id=SOURCE, target_model_id=TARGET,
                                   target_model_version_id=TARGET_VERSION,
-                                  id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION})
+                                  id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION},
+                                  allowed_workspace_ids=allowed_workspace_ids)
 
 
 @pytest.mark.asyncio
@@ -189,7 +191,8 @@ async def test_clone_uses_the_clone_plan_when_given(pool) -> None:  # type: igno
                "executionFingerprint": "sha256:" + "e" * 64}
     result = await clone_model_data(pool, source_model_id=SOURCE, target_model_id=TARGET,
                                     target_model_version_id=TARGET_VERSION,
-                                    id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION}, planned=planned)
+                                    id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION}, planned=planned,
+                                    allowed_workspace_ids=['ws1'])
     revision = await pool.fetchrow("SELECT spec_hash, execution_fingerprint FROM semantic_population.data_revisions "
                                    "WHERE id = $1", result["revisionId"])
     assert revision["spec_hash"] == planned["specHash"]
@@ -197,3 +200,53 @@ async def test_clone_uses_the_clone_plan_when_given(pool) -> None:  # type: igno
     stored = await pool.fetchrow("SELECT home_workspace_id, spec_hash FROM semantic_runtime.specifications "
                                  "WHERE model_id = $1", TARGET)
     assert (stored["home_workspace_id"], stored["spec_hash"]) == ("ws2", planned["specHash"])
+
+
+@pytest.mark.asyncio
+async def test_clone_refuses_an_unscoped_command(pool) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(CloneScopeRequired):
+        await _clone(pool, allowed_workspace_ids=None)
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.entities WHERE model_id = $1",
+                               TARGET) == 0
+
+
+@pytest.mark.asyncio
+async def test_clone_refuses_data_whose_observations_reach_outside_the_scope(pool) -> None:  # type: ignore[no-untyped-def]
+    revision = await pool.fetchval("SELECT data_revision_id FROM semantic_runtime.active_bindings "
+                                   "WHERE model_id = $1 AND environment = 'draft'", SOURCE)
+    await pool.execute(
+        "UPDATE semantic_population.data_revisions SET source_observations = $2::jsonb WHERE id = $1",
+        revision, json.dumps([{"assetRef": {"workspaceId": "ws-outside", "assetId": "a1"}}]))
+    with pytest.raises(CloneScopeExceeded):
+        await _clone(pool, allowed_workspace_ids=['ws1'])
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.entities WHERE model_id = $1",
+                               TARGET) == 0
+
+    # The same data copies once the scope covers the observed workspace.
+    await pool.execute("DELETE FROM semantic_population.data_revisions WHERE model_id = $1", TARGET)
+    result = await _clone(pool, allowed_workspace_ids=['WS1', 'ws-outside'])
+    assert result["copied"] is True
+
+
+@pytest.mark.asyncio
+async def test_clone_refuses_data_whose_entity_provenance_reaches_outside_the_scope(pool) -> None:  # type: ignore[no-untyped-def]
+    await pool.execute(
+        "UPDATE semantic_population.entities SET provenance = $2::jsonb "
+        "WHERE model_id = $1", SOURCE,
+        json.dumps({"conceptId": CONCEPT, "sources": [{"assetRef": {"workspaceId": "ws-outside", "assetId": "a2"}}]}))
+    with pytest.raises(CloneScopeExceeded):
+        await _clone(pool, allowed_workspace_ids=['ws1'])
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.entities WHERE model_id = $1",
+                               TARGET) == 0
+
+
+@pytest.mark.asyncio
+async def test_clone_allows_manual_source_free_data_under_an_empty_scope(pool) -> None:  # type: ignore[no-untyped-def]
+    revision = await pool.fetchval("SELECT data_revision_id FROM semantic_runtime.active_bindings "
+                                   "WHERE model_id = $1 AND environment = 'draft'", SOURCE)
+    await pool.execute(
+        "UPDATE semantic_population.data_revisions SET source_observations = '[]'::jsonb WHERE id = $1", revision)
+    await pool.execute("UPDATE semantic_population.entities SET provenance = $2::jsonb WHERE model_id = $1",
+                       SOURCE, json.dumps({"conceptId": CONCEPT}))
+    result = await _clone(pool, allowed_workspace_ids=[])
+    assert result["copied"] is True

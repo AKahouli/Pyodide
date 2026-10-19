@@ -3,6 +3,8 @@
  * Mongo documents; the service maps rows to the public ModelResponse.
  */
 
+import type { ConversationApi, ResponsesHistoryMode, ReasoningHistory, ReasoningSummary } from '../interfaces/model.interface';
+
 export interface ModelRow {
   id: string;
   modelId: string;
@@ -17,6 +19,10 @@ export interface ModelRow {
   isDefault: boolean;
   isAppBuilderDefault: boolean;
   omitTemperature: boolean;
+  conversationApi: ConversationApi;
+  responsesHistoryMode: ResponsesHistoryMode;
+  reasoningHistory: ReasoningHistory;
+  reasoningSummary: ReasoningSummary;
   inputModalities: string[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

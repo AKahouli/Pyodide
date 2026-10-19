@@ -208,7 +208,7 @@ export function AgentTypesPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={() => fetchAgentTypes()} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon("actionRetry")}
         </Button>
       </div>
@@ -227,7 +227,7 @@ export function AgentTypesPage() {
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button onClick={openCreate}>
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="me-2 h-4 w-4" />
             {t("agentTypes.actions.add")}
           </Button>
         </div>
@@ -239,7 +239,7 @@ export function AgentTypesPage() {
           placeholder={t("agentTypes.search.placeholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
+          className="ps-9"
         />
       </div>
 
@@ -263,7 +263,7 @@ export function AgentTypesPage() {
                   <TableHead>{t("agentTypes.table.columns.name")}</TableHead>
                   <TableHead className="hidden md:table-cell">{t("agentTypes.table.columns.prompts")}</TableHead>
                   <TableHead>{t("agentTypes.table.columns.active")}</TableHead>
-                  <TableHead className="text-right">{t("agentTypes.table.columns.actions")}</TableHead>
+                  <TableHead className="text-end">{t("agentTypes.table.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -299,7 +299,7 @@ export function AgentTypesPage() {
                           onCheckedChange={() => handleToggleActive(agentType)}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"

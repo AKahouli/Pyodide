@@ -6,6 +6,33 @@ from yellowmind_observability import get_logger
 logger = get_logger(__name__)
 
 
+class ResponsesStream:
+    """A clean HTTP EOF is insufficient without a terminal Responses event."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.iterator = stream.__aiter__()
+        self.terminal = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            event = await anext(self.iterator)
+        except StopAsyncIteration:
+            if not self.terminal:
+                raise ConnectionError('Responses stream ended before a terminal event') from None
+            raise
+        if event.type in ('response.completed', 'response.incomplete', 'response.failed', 'error'):
+            self.terminal = True
+        return event
+
+    async def aclose(self):
+        close = getattr(self.stream, 'aclose', None) or self.stream.close
+        await close()
+
+
 def _usable(response):
     return any(part.text or part.function_call or part.function_response or part.inline_data or part.file_data
         for part in getattr(response.content, 'parts', None) or [])

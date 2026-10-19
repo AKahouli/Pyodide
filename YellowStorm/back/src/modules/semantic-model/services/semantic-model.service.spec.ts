@@ -10,7 +10,7 @@ describe('SemanticModelService archived access', () => {
   };
   const repository = { findAccessible: jest.fn() };
   const runtime = { getPublishedBinding: jest.fn() };
-  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, {} as never, runtime as never);
+  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, {} as never, runtime as never, {} as never);
 
   beforeEach(() => {
     repository.findAccessible.mockReset();
@@ -121,7 +121,7 @@ describe('SemanticModelService clone', () => {
     return { client, inserts, insertsInto };
   }
 
-  function setup(role = 'owner', runtimeResult: unknown = { copied: true, counts: { entities: 12, relationships: 3 } }, population?: unknown) {
+  function setup(role = 'owner', runtimeResult: unknown = { copied: true, counts: { entities: 12, relationships: 3 } }, population?: unknown, authorizedWorkspaces: string[] = ['workspace-1']) {
     const repository = { findAccessible: jest.fn(), create: jest.fn() };
     const database = { query: jest.fn(), transaction: jest.fn() };
     const graphRepository = { getGraph: jest.fn(), apply: jest.fn() };
@@ -130,14 +130,23 @@ describe('SemanticModelService clone', () => {
     repository.findAccessible.mockImplementation(async (_user: string, id: string) => (id === SOURCE_ID ? source : { id, role: 'owner', status: 'draft' }));
     repository.create.mockResolvedValue({ id: 'clone-model', currentDraftVersionId: 'clone-version', description: 'Source', status: 'draft', role: 'owner' });
     graphRepository.getGraph.mockResolvedValue(sourceGraph());
-    database.query.mockResolvedValue({ rows: [{ revision: 4 }] });
+    database.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM semantic_model.source_mappings') && sql.includes('UNION')) {
+        return { rows: [{ workspaceId: 'workspace-1' }] };
+      }
+      return { rows: [{ revision: 4 }] };
+    });
+    const sourceAccess = {
+      accessibleWorkspaceIds: jest.fn().mockResolvedValue(authorizedWorkspaces),
+    };
     const fake = sourceClient();
     database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work(fake.client));
     if (runtimeResult instanceof Error) runtime.cloneModelData.mockRejectedValue(runtimeResult);
     else runtime.cloneModelData.mockResolvedValue(runtimeResult);
     const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, { enqueue: jest.fn() } as never, runtime as never,
+      sourceAccess as never,
       (population ? { get: () => population } : undefined) as never);
-    return { service, repository, graphRepository, runtime, database, ...fake };
+    return { service, repository, graphRepository, runtime, database, sourceAccess, ...fake };
   }
 
   it('copies structure only, remapping ids embedded in JSON, when nothing is ticked', async () => {
@@ -206,25 +215,64 @@ describe('SemanticModelService clone', () => {
     expect(viewer.database.transaction).not.toHaveBeenCalled();
   });
 
-  it('lets a viewer clone structure and sources', async () => {
-    const { service } = setup('viewer');
+  it('lets a viewer clone the structure only: no source inheritance by default (WP04.2)', async () => {
+    const { service, insertsInto, runtime } = setup('viewer');
     await expect(service.clone('user-id', SOURCE_ID, 'Copy', {})).resolves.toMatchObject({ id: 'clone-model' });
+    for (const table of ['workspace_links', 'knowledge_bindings', 'source_mappings']) {
+      expect(insertsInto(`semantic_model.${table}`)).toHaveLength(0);
+    }
+    expect(runtime.cloneModelData).not.toHaveBeenCalled();
   });
 
-  it('forces sources with data and asks the runtime to copy with the id map', async () => {
-    const { service, runtime, insertsInto } = setup();
+  it('forces sources with data and asks the runtime to copy with the id map and the authorized scope', async () => {
+    const { service, runtime, sourceAccess, insertsInto } = setup();
     const clone = await service.clone('user-id', SOURCE_ID, 'Copy', { sources: false, data: true });
 
+    expect(sourceAccess.accessibleWorkspaceIds).toHaveBeenCalledWith('user-id', SOURCE_ID);
     expect(insertsInto('semantic_model.source_mappings')).toHaveLength(1);
     expect(clone.dataCopy).toEqual({ status: 'copied', records: 12, links: 3 });
     const [sourceId, command, actor] = runtime.cloneModelData.mock.calls[0];
     expect(sourceId).toBe(SOURCE_ID);
     expect(actor).toBe('user-id');
+    expect(command.allowedWorkspaceIds).toEqual(['workspace-1']);
     expect(command.targetModelId).toBe('clone-model');
     expect(command.targetModelVersionId).toBe('clone-version');
     expect(Object.keys(command.idMap.concepts)).toEqual([NODE_A, NODE_B]);
     expect(Object.keys(command.idMap.relations)).toEqual([RELATION]);
     expect(Object.keys(command.idMap.mappings)).toEqual([MAPPING]);
+  });
+
+  it('fails closed on a data copy when any contributing source is out of scope, before creating anything', async () => {
+    const mixed = setup('owner', undefined, undefined, ['workspace-1', 'other-ws']);
+    void mixed;
+    const partial = setup('owner', undefined, undefined, []);
+    await expect(partial.service.clone('user-id', SOURCE_ID, 'Copy', { data: true }))
+      .rejects.toMatchObject({ status: 409, code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
+    // No target model, no revision rows, no runtime call.
+    expect(partial.database.transaction).not.toHaveBeenCalled();
+    expect(partial.runtime.cloneModelData).not.toHaveBeenCalled();
+  });
+
+  it('refuses a data copy from a viewer even with full workspace access', async () => {
+    const viewer = setup('viewer', undefined, undefined, ['workspace-1']);
+    await expect(viewer.service.clone('user-id', SOURCE_ID, 'Copy', { data: true }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(viewer.database.transaction).not.toHaveBeenCalled();
+  });
+
+  it('copies only authorized sources and reports a neutral skipped count (WP04.3)', async () => {
+    const partial = setup('viewer', undefined, undefined, []);
+    const clone = await partial.service.clone('user-id', SOURCE_ID, 'Copy', { sources: true });
+
+    expect(clone).toMatchObject({ id: 'clone-model', skippedSources: 3 });
+    // Nothing source-scoped is copied: links, bindings and mappings are all out of scope.
+    for (const table of ['workspace_links', 'knowledge_bindings', 'source_mappings']) {
+      expect(partial.insertsInto(`semantic_model.${table}`)).toHaveLength(0);
+    }
+    expect(partial.insertsInto('semantic_model.derived_sources')).toHaveLength(1);
+    expect(partial.insertsInto('semantic_model.source_resolution_policies')[0].sql).toContain('priorities');
+    const priorities = JSON.parse(partial.insertsInto('semantic_model.source_resolution_policies')[0].params.find((value) => typeof value === 'string' && value.startsWith('[')) as string);
+    expect(priorities).toEqual([]);
   });
 
   it('undoes the clone when the source is busy, and keeps it when the copy fails otherwise', async () => {
@@ -278,7 +326,7 @@ describe('SemanticModelService permanent delete', () => {
   const queries: string[] = [];
   const client = { query: jest.fn(async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 1 }; }) };
   const database = { transaction: jest.fn(async (work: (c: typeof client) => Promise<unknown>) => work(client)) };
-  const service = new SemanticModelService(database as never, repository as never, {} as never, {} as never, {} as never, runtime as never);
+  const service = new SemanticModelService(database as never, repository as never, {} as never, {} as never, {} as never, runtime as never, {} as never);
 
   beforeEach(() => {
     jest.clearAllMocks();

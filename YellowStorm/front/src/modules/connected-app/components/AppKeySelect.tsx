@@ -138,7 +138,7 @@ export function AppKeySelect({
                         key={preset.key}
                         onClick={() => handleSelect(preset.appKey)}
                         className={cn(
-                          'relative flex w-full cursor-pointer select-none items-center justify-between rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none',
+                          'relative flex w-full cursor-pointer select-none items-center justify-between rounded-sm py-1.5 ps-2 pe-8 text-sm outline-none',
                           'hover:bg-accent hover:text-accent-foreground',
                           value === preset.appKey && 'bg-accent text-accent-foreground',
                           existing && 'text-muted-foreground opacity-75',
@@ -179,7 +179,7 @@ export function AppKeySelect({
                       setIsOpen(false);
                     }}
                     className={cn(
-                      'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none',
+                      'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 ps-2 pe-8 text-sm outline-none',
                       'hover:bg-accent hover:text-accent-foreground',
                       showCustomInput && 'bg-accent text-accent-foreground',
                     )}

@@ -39,10 +39,10 @@ def _bounded(text: str) -> TextResult:
 
 
 def _extract_pdf(path: str) -> TextResult:
-    import fitz  # PyMuPDF
+    import pymupdf
 
     parts: List[str] = []
-    with fitz.open(path) as document:
+    with pymupdf.open(path) as document:
         for page_number, page in enumerate(document, start=1):
             parts.append(f"--- Page {page_number} ---")
             parts.append(page.get_text("text", sort=True))

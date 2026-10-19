@@ -10,7 +10,6 @@ import {
   type SourcePreviewIssue,
 } from '../domain/semantic-cross-source.types';
 import { aiFieldHints,
-  AI_EXTRACTION_CONTRACT_VERSION,
   computedInputRefs,
   computeFieldProfiles,
   joinInputProblem,
@@ -23,10 +22,10 @@ import { aiFieldHints,
   type SourceAssetKind,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { documentReadOptions, effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticSourceAccessService } from './semantic-source-access.service';
 import type {
   CreateSourceMappingDto,
   BulkDocumentSourceMappingDto,
@@ -35,6 +34,7 @@ import type {
   SourceMappingPreviewDto,
   ComputedFieldPreviewDto,
   DocumentLabelsDto,
+  DocumentFieldSuggestionsDto,
   SheetFieldPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
@@ -114,10 +114,18 @@ export class SemanticSourceMappingService {
     private readonly documents: WorkspaceDocumentService,
     private readonly runtime: SemanticRuntimeClientService,
     private readonly documentExtraction: DocumentExtractionConceptResolver,
+    private readonly sourceAccess?: SemanticSourceAccessService,
     private readonly workspaces?: WorkspaceService,
-    private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) {}
+
+  /** Fail-closed access to the source authorization path (WP-03): absent wiring denies everything. */
+  private get access(): SemanticSourceAccessService {
+    if (!this.sourceAccess) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Source authorization is not configured');
+    }
+    return this.sourceAccess;
+  }
 
   /** The readable files a workspace mapping covers right now, and those still being indexed. */
   async workspaceFiles(workspaceId: string, selection?: WorkspaceSelection | null) {
@@ -127,11 +135,14 @@ export class SemanticSourceMappingService {
 
   async listAssets(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const links = await this.database.query<{ workspaceId: string }>(
+    // WP-03: only the enabled linked workspaces the actor may read NOW —
+    // denied workspaces contribute no names, paths, ids or counts.
+    const allowed = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
+    const links = (await this.database.query<{ workspaceId: string }>(
       'SELECT workspace_id AS "workspaceId" FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled',
       [model.id],
-    );
-    const assets = await Promise.all(links.rows.map(async (link) => {
+    )).rows.filter((link) => allowed.has(link.workspaceId));
+    const assets = await Promise.all(links.map(async (link) => {
       const page = await this.documents.findAllByWorkspace(link.workspaceId, { page: 1, limit: 200 });
       return page.documents
         .filter((document) => !document.isFolder && this.assetKind(document.mimeType))
@@ -173,6 +184,7 @@ export class SemanticSourceMappingService {
 
   async profileAsset(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    await this.access.assertSourceReadable(userId, model.id, workspaceId, documentId);
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
@@ -194,7 +206,10 @@ export class SemanticSourceMappingService {
   }
 
   async requestProfile(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
-    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    // WP03.4: discovery costs runtime work, so only the people who edit the
+    // model may start one; a viewer reads existing profiles only.
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceReadable(userId, model.id, workspaceId, documentId);
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
@@ -214,6 +229,7 @@ export class SemanticSourceMappingService {
 
   async preview(userId: string, modelId: string, dto: SourceMappingPreviewDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId, dto.documentId);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
@@ -250,6 +266,7 @@ export class SemanticSourceMappingService {
    */
   async previewSheetFields(userId: string, modelId: string, dto: SheetFieldPreviewDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId, dto.documentId);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType);
@@ -270,7 +287,7 @@ export class SemanticSourceMappingService {
     });
     const usesAi = usesAiExtraction(fieldMappings);
     const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     return this.runtime.previewSheetFields({
       modelId: model.id,
       entry: {
@@ -281,7 +298,7 @@ export class SemanticSourceMappingService {
         ...(usesAi ? { options: { aiSettings: effectiveAiSettings(defaults, dto.aiSettings) } } : {}),
       },
       rows: dto.rows.map((row) => ({ rowNumber: row.rowNumber, values: row.values })),
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
       // Several records per row: each row is read once per item of the expanded column.
       ...(expand ? { expand: { ...expand } } : {}),
     });
@@ -293,10 +310,33 @@ export class SemanticSourceMappingService {
    */
   async documentLabels(userId: string, modelId: string, dto: DocumentLabelsDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
     return this.runtime.suggestDocumentLabels({
       actorUserId: userId,
+      sources: documents.map((document) => ({
+        workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
+        uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
+        indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
+      })),
+    });
+  }
+
+  async documentFieldSuggestions(userId: string, modelId: string, dto: DocumentFieldSuggestionsDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, []);
+    const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
+    if (documents.some((document) => !DOCUMENT_MIME_TYPES.has(document.mimeType))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Choose readable document sources');
+    }
+    return this.runtime.suggestDocumentFields({
+      actorUserId: userId,
+      concept: { id: concept.id, label: concept.label, description: dto.description ?? '',
+        attributes: concept.attributes.map(({ key, label, type, description }) => ({ key, label, type, ...(description ? { description } : {}) })),
+      },
       sources: documents.map((document) => ({
         workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
         uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
@@ -355,7 +395,7 @@ export class SemanticSourceMappingService {
     });
     const usesAi = usesAiExtraction(fieldMappings);
     const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     const preview = await this.runtime.previewDocumentFields({
       actorUserId: input.userId,
       modelId: input.modelId,
@@ -370,7 +410,7 @@ export class SemanticSourceMappingService {
         fieldMappings,
         ...documentReadOptions(usesAi, defaults, aiSettings),
       },
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
     });
     const values: Record<string, unknown> = {};
     const provenance: NonNullable<ResolvedEntity['provenance']['fields']> = {};
@@ -459,7 +499,14 @@ export class SemanticSourceMappingService {
        LEFT JOIN semantic_model.identity_rules i ON i.model_id = m.model_id AND i.concept_id = m.concept_id
        WHERE m.model_id=$1
        ORDER BY m.created_at`, [model.id]);
-    const documentIds = [...new Set(result.rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
+    // WP-03: rows of workspaces the person cannot read show a neutral
+    // placeholder before ANY document metadata is fetched — no workspace id,
+    // file names, paths, ids, mime types, sheet names, selections or counts
+    // leak, and no document of an unauthorized workspace is looked up.
+    const allowed = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
+    const documentIds = [...new Set(result.rows
+      .filter((row) => row.scope !== 'workspace' && allowed.has(row.workspaceId))
+      .map((row) => row.documentId))];
     const documents = documentIds.length ? await this.documents.findByIds(documentIds) : [];
     const names = new Map(documents.map((document) => [document.id, document.originalName]));
     // A workspace mapping shows how many files it covers today; each workspace is listed once.
@@ -476,6 +523,28 @@ export class SemanticSourceMappingService {
     };
     return Promise.all(result.rows.map(async (row) => {
       const { scope, folderId, selection, sourceLabel, ...rest } = row;
+      if (!allowed.has(row.workspaceId)) {
+        // Model-structural fields only: the restricted row carries no
+        // workspace id, sheet name, field mappings, selections or source ids.
+        return {
+          id: row.id,
+          conceptId: row.conceptId,
+          assetKind: row.assetKind,
+          status: row.status,
+          createdBy: row.createdBy,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          identityFields: row.identityFields ?? [],
+          fieldMappings: [],
+          scope: 'document' as const,
+          documentId: '',
+          documentName: 'Restricted source',
+          documentPath: '',
+          mimeType: '',
+          fileCount: 0,
+          waitingCount: 0,
+        };
+      }
       if (scope === 'workspace') {
         return {
           ...rest,
@@ -507,6 +576,7 @@ export class SemanticSourceMappingService {
    */
   async createWorkspace(userId: string, modelId: string, dto: WorkspaceSourceMappingDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     SemanticSourceMappingService.assertMappingModes('document', dto.fieldMappings);
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
@@ -619,10 +689,25 @@ export class SemanticSourceMappingService {
     const issues: SourcePreviewIssue[] = [];
     const incompleteConceptIds = new Set<string>();
     const previewRows = result.rows.slice(0, MAX_PREVIEW_MAPPINGS);
-    const documentNames = await this.documentNames(previewRows);
+    // WP-03: sources of workspaces the person cannot read resolve as a neutral
+    // restricted issue BEFORE any document metadata is fetched — names are
+    // only ever looked up for the workspaces the person can read.
+    const allowedWorkspaces = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
+    const documentNames = await this.documentNames(previewRows.filter((row) => allowedWorkspaces.has(row.workspaceId)));
     for (const mapping of previewRows) {
-      const documentName = documentNames.get(mapping.documentId) ?? '';
+      const documentName = allowedWorkspaces.has(mapping.workspaceId)
+        ? documentNames.get(mapping.documentId) ?? ''
+        : '';
       const source = documentName || 'This source';
+      if (!allowedWorkspaces.has(mapping.workspaceId)) {
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName: '', code: 'source_restricted',
+          reason: 'this source is not available to you',
+          message: 'A source of this model is not available for this preview.',
+        });
+        incompleteConceptIds.add(mapping.conceptId);
+        continue;
+      }
       if (!mapping.sourceEnabled) {
         issues.push({
           mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_disabled',
@@ -729,6 +814,7 @@ export class SemanticSourceMappingService {
 
   async create(userId: string, modelId: string, dto: CreateSourceMappingDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId, dto.documentId);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
@@ -795,6 +881,7 @@ export class SemanticSourceMappingService {
     const uniqueDocuments = [...new Map(dto.documents.map((document) => [`${document.workspaceId}:${document.documentId}`, document])).values()];
     const documents = new Map<string, Awaited<ReturnType<WorkspaceDocumentService['findById']>>>();
     for (const source of uniqueDocuments) {
+      await this.access.assertSourceEditable(userId, model.id, source.workspaceId, source.documentId);
       await this.requireLinkedWorkspace(model.id, source.workspaceId);
       const document = await this.documents.findById(source.workspaceId, source.documentId);
       if (this.assetKind(document.mimeType) !== 'document') {

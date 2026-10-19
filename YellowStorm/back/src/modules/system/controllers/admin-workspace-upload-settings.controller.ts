@@ -58,13 +58,14 @@ export class AdminWorkspaceUploadSettingsController {
     const result = await this.settingsService.updateSettings(
       body.allowedExtensions,
       user._id.toString(),
+      { maxFileSizeMb: body.maxFileSizeMb, conversationWorkspaceStorageMb: body.conversationWorkspaceStorageMb },
     );
 
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
       actorEmail: user.email,
       action: 'workspace.upload_settings.update',
-      metadata: { count: result.allowedExtensions.length },
+      metadata: { count: result.allowedExtensions.length, maxFileSizeMb: result.maxFileSizeMb, conversationWorkspaceStorageMb: result.conversationWorkspaceStorageMb },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });

@@ -10,12 +10,109 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from contextvars import ContextVar
+from contextlib import asynccontextmanager
+from functools import wraps
+from inspect import signature
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
                                         with_partition_locks)
 from app.persistence.vector_indexes import build_vector_indexes
+
+# Private attempt scope propagates to parallel embedding batches. Standalone
+# callers retain their existing API and generation-only behavior.
+_task_ownership: ContextVar[Any] = ContextVar("search_task_ownership", default=None)
+_generation_owner: ContextVar[str | None] = ContextVar("search_generation_owner", default=None)
+
+
+@asynccontextmanager
+async def _connection(pool: Any):
+    if hasattr(pool, "acquire"):
+        async with pool.acquire() as connection:
+            yield connection
+    else:
+        yield pool
+
+
+def _fenced(function):
+    parameters = signature(function)
+
+    @wraps(function)
+    async def mutate(pool, *args, **kwargs):
+        ownership = _task_ownership.get()
+        owner = ownership.lease_owner if ownership else _generation_owner.get()
+        if owner is None:
+            return await function(pool, *args, **kwargs)
+        from app.jobs.models import StaleLease
+
+        bound = parameters.bind(pool, *args, **kwargs).arguments
+        index_id = bound.get("index_id", bound.get("to_index"))
+        async with _connection(pool) as connection, connection.transaction():
+            # Task -> generation -> batch rows, held through the mutation.
+            if ownership is not None:
+                task = await connection.fetchrow(
+                    "SELECT id FROM semantic_jobs.tasks WHERE id = $1 AND job_id = $2::uuid "
+                    "AND lease_owner = $3 AND lease_epoch = $4 AND state = 'running' "
+                    "AND lease_expires_at > clock_timestamp() FOR UPDATE",
+                    ownership.task_id, ownership.job_id, owner, ownership.lease_epoch)
+                if task is None:
+                    raise StaleLease("search task lease lost before mutation")
+            # Claim still uses its own atomic conditional UPDATE (including busy).
+            # Adoption may displace an old generation owner only under a current task.
+            operation = function.__name__
+            task_cleanup = operation == "_fail_abandoned_generation" and ownership is not None
+            generation = await connection.fetchrow(
+                "SELECT index_id, state FROM semantic_graph_search.index_generations "
+                "WHERE index_id = $1::uuid AND ($2::uuid IS NULL OR job_id = $2::uuid) "
+                "AND ($4::boolean OR (state = 'queued' AND $5::boolean) "
+                "OR (state = 'indexing' AND ($6::boolean OR (owner = $3 "
+                "AND lease_until > clock_timestamp())))) FOR UPDATE",
+                index_id, ownership.job_id if ownership else None, owner,
+                operation == "claim_generation" or task_cleanup or (operation == "adopt_generation" and ownership is not None),
+                operation in ("adopt_generation", "fail_generation"),
+                operation == "adopt_generation" and ownership is not None)
+            if generation is None:
+                raise StaleLease("search generation lease lost before mutation")
+            # Predicates can be evaluated before a lock wait. Once both locks
+            # are held, check wall time again, not the transaction's fixed now().
+            if ownership is not None and not await connection.fetchval(
+                    "SELECT lease_expires_at > clock_timestamp() FROM semantic_jobs.tasks WHERE id=$1",
+                    ownership.task_id):
+                raise StaleLease("search task lease expired while acquiring mutation locks")
+            if operation in ("adopt_generation", "claim_generation") and generation.get("state") in ("ready", "failed"):
+                # The current task may reconcile a committed terminal generation,
+                # but must not invoke any mutation of that immutable generation.
+                return False
+            if not task_cleanup and operation not in ("claim_generation", "adopt_generation") and not await connection.fetchval(
+                    "SELECT state = 'queued' OR lease_until > clock_timestamp() "
+                    "FROM semantic_graph_search.index_generations WHERE index_id=$1::uuid", index_id):
+                raise StaleLease("search generation lease expired while acquiring mutation locks")
+            return await function(connection, *args, **kwargs)
+    return mutate
+
+
+@_fenced
+async def _fail_abandoned_generation(pool: Any, index_id: str, error_code: str) -> str:
+    """Final worker cleanup, authorized by the matching current task, not an
+    expired generation lease. Never a general-purpose generation write escape.
+    The decorator holds task then generation locks and rechecks the task clock.
+    """
+    from app.jobs.models import StaleLease
+
+    ownership = _task_ownership.get()
+    if ownership is None or error_code not in ("attempts_exhausted", "index_interrupted"):
+        raise StaleLease("abandoned generation cleanup requires current task authority")
+    row = await pool.fetchrow(
+        "UPDATE semantic_graph_search.index_generations "
+        "SET state='failed', owner=NULL, lease_until=NULL, last_error_code=$3 "
+        "WHERE index_id=$1::uuid AND job_id=$2::uuid AND state IN ('queued','indexing') RETURNING state",
+        index_id, ownership.job_id, error_code)
+    if row:
+        return row["state"]
+    return await pool.fetchval(
+        "SELECT state FROM semantic_graph_search.index_generations WHERE index_id=$1::uuid", index_id)
 
 # A build with no progress for this long reads as stalled even before its lease runs out. Longer
 # than the longest embedding call a build waits for.
@@ -63,7 +160,10 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
         return {"indexId": None, "state": "missing", "embeddingFingerprint": None}
     completed = generation.get("completed_at")
     progressed = generation.get("last_progress_at")
-    return {"indexId": generation["index_id"], "state": generation["state"],
+    from app.jobs.error_details import public_details
+    details = public_details(generation.get("errorDetails"))
+    return {**({"errorDetails": details} if details and generation.get("last_error_code") != "cancelled" else {}),
+            "indexId": generation["index_id"], "state": generation["state"],
             "embeddingFingerprint": generation["embedding_fingerprint"],
             "expectedCount": generation["expected_count"], "indexedCount": generation["indexed_count"],
             "exactOnlyCount": generation["exact_only_count"], "failedCount": generation["failed_count"],
@@ -87,19 +187,69 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
 
 
 async def get_generation(pool: Any, data_revision_id: str, fingerprint: str) -> dict[str, Any] | None:
-    return _generation(await pool.fetchrow(
+    return await hydrate_generation_error(pool, _generation(await pool.fetchrow(
         f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
         "WHERE data_revision_id = $1 AND embedding_fingerprint = $2",
-        data_revision_id, fingerprint))
+        data_revision_id, fingerprint)))
 
 
 async def latest_generation(pool: Any, data_revision_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:
     """The revision's most recently requested generation for this embedding profile, whatever
     its index settings."""
-    return _generation(await pool.fetchrow(
+    return await hydrate_generation_error(pool, _generation(await pool.fetchrow(
         f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
         "WHERE data_revision_id = $1 AND (embedding_fingerprint = $2 OR embedding_fingerprint LIKE $2 || ':ix:%') "
-        "ORDER BY created_at DESC LIMIT 1", data_revision_id, embedding_fingerprint))
+        "ORDER BY created_at DESC LIMIT 1", data_revision_id, embedding_fingerprint)))
+
+
+async def hydrate_generation_error(pool: Any, generation: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Only hydrate the selected model/revision generation, never a job supplied by a caller.
+
+    Model authorization remains at the existing trusted backend/status boundary.
+    This read reveals no command, result, actor, or other job's progress.
+    """
+    from app.jobs.error_details import public_details, _token
+    if not generation or not generation.get("job_id") or generation.get("last_error_code") == "cancelled":
+        return generation
+    row = await pool.fetchrow(
+        """SELECT j.progress->'errorDetails' AS job_details,
+                  t.checkpoint->'errorDetails' AS task_details,
+                  t.id::text AS task_id, o.last_error_code AS preceding_code,
+                  COALESCE(j.completed_at, j.updated_at) AS occurred_at
+           FROM semantic_graph_search.index_generations g
+           JOIN semantic_jobs.jobs j ON j.id = g.job_id AND j.model_id = g.model_id
+           LEFT JOIN LATERAL (
+             SELECT id, checkpoint FROM semantic_jobs.tasks WHERE job_id = j.id ORDER BY id LIMIT 1
+           ) t ON true
+           LEFT JOIN LATERAL (
+             SELECT last_error_code FROM semantic_jobs.outbox
+             WHERE task_id = t.id AND event_type = 'task.dispatch'
+             ORDER BY id DESC LIMIT 1
+           ) o ON true
+           WHERE g.index_id = $1::uuid AND g.job_id = $2::uuid
+             AND g.data_revision_id = $3 AND g.model_id = $4""",
+        generation["index_id"], generation["job_id"], generation["data_revision_id"], generation["model_id"])
+    if row is None:
+        return generation
+    def decoded(value: Any) -> Any:
+        try:
+            return json.loads(value) if isinstance(value, str) else value
+        except (ValueError, TypeError):
+            return None
+    details = public_details(decoded(row["job_details"])) or public_details(decoded(row["task_details"]))
+    if details is None and generation.get("state") == "failed" and generation.get("last_error_code") == "attempts_exhausted":
+        code = _token(row["preceding_code"], "attempts_exhausted")
+        timestamp = row["occurred_at"]
+        details = {"code": code, "errorType": code if code.endswith("Error") else "LegacyFailure",
+                   "message": "Legacy failure: exception details were not recorded; only a stored error identifier is available.",
+                   "occurredAt": timestamp.isoformat() if hasattr(timestamp, "isoformat") else timestamp,
+                   "legacy": True, "jobId": str(generation["job_id"]), "indexId": str(generation["index_id"])}
+        if row["task_id"] is not None:
+            details["taskId"] = str(row["task_id"])
+        details = public_details(details)
+    if details:
+        generation = {**generation, "errorDetails": details}
+    return generation
 
 
 async def latest_index_settings(pool: Any, model_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:
@@ -170,6 +320,7 @@ async def set_generation_job(pool: Any, index_id: str, attempt: int, job_id: str
         "WHERE index_id = $1::uuid AND attempt = $2", index_id, attempt, job_id)
 
 
+@_fenced
 async def claim_generation(pool: Any, index_id: str, owner: str, lease_seconds: int) -> bool:
     row = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
@@ -181,6 +332,7 @@ async def claim_generation(pool: Any, index_id: str, owner: str, lease_seconds: 
     return row is not None
 
 
+@_fenced
 async def adopt_generation(pool: Any, index_id: str, job_id: str, owner: str) -> bool:
     """Take over a generation another attempt of the same job left held. The caller holds the job's
     task lease, which is exclusive: whoever owned the generation under this job is gone (a crashed
@@ -192,6 +344,7 @@ async def adopt_generation(pool: Any, index_id: str, job_id: str, owner: str) ->
     return row is not None
 
 
+@_fenced
 async def renew_generation(pool: Any, index_id: str, owner: str, lease_seconds: int,
                            embedding_calls: int = 0) -> bool:
     """Extend the lease. Callers renew only after real progress (a wave stored, a page read, a chunk
@@ -205,6 +358,7 @@ async def renew_generation(pool: Any, index_id: str, owner: str, lease_seconds: 
     return row is not None
 
 
+@_fenced
 async def insert_documents(pool: Any, index_id: str, documents: list[dict[str, Any]]) -> None:
     if not documents:
         return
@@ -222,6 +376,7 @@ async def insert_documents(pool: Any, index_id: str, documents: list[dict[str, A
          for document in documents])
 
 
+@_fenced
 async def insert_passages(pool: Any, index_id: str, documents: list[dict[str, Any]]) -> int:
     """The passages of ``documents`` (``build_document`` shape); returns how many."""
     rows = [(index_id, document["entityId"], passage["ordinal"], document["conceptId"],
@@ -257,6 +412,7 @@ async def previous_ready_generation(pool: Any, model_id: str, embedding_fingerpr
         model_id, embedding_fingerprint, index_id))
 
 
+@_fenced
 async def record_build_plan(pool: Any, index_id: str, owner: str, *, card_digest: str, mode: str,
                             reason: str | None, carried_from: str | None) -> None:
     """How this attempt builds the generation. The counts restart at zero: a resumed attempt counts again
@@ -328,6 +484,7 @@ def _rows_of(tag: Any) -> int:
     return int(str(tag).split()[-1]) if tag else 0
 
 
+@_fenced
 async def carry_documents(pool: Any, *, from_index: str, to_index: str, entity_ids: list[str]) -> tuple[int, int]:
     """Copy the cards, passages and vectors of these records from a generation to another, with their
     digests, in the database. Records already there are left as they are (a resumed build). Returns the
@@ -385,7 +542,7 @@ async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: 
     reused = 0
     after = ""
     while True:
-        row = await pool.fetchrow(
+        row = await _cache_chunk(pool, index_id,
             "WITH chunk AS ("
             f"  SELECT DISTINCT entity_id FROM {table} "
             "   WHERE index_id = $1::uuid AND status = 'pending' AND entity_id > $2 "
@@ -404,12 +561,19 @@ async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: 
         after = row["last_entity"]
         if row["reused"]:
             reused += int(row["reused"])
-            await pool.execute(
-                "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
-                "WHERE index_id = $1::uuid", index_id, int(row["reused"]))
         if on_chunk is not None and not await on_chunk(reused):
             break
     return reused
+
+
+@_fenced
+async def _cache_chunk(pool: Any, index_id: str, sql: str, *args: Any) -> Any:
+    row = await pool.fetchrow(sql, *args)
+    if row and row["reused"]:
+        await pool.execute(
+            "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
+            "WHERE index_id = $1::uuid", index_id, int(row["reused"]))
+    return row
 
 
 async def pending_documents(pool: Any, index_id: str, limit: int) -> list[dict[str, Any]]:
@@ -428,10 +592,11 @@ async def pending_passages(pool: Any, index_id: str, limit: int) -> list[dict[st
     return [dict(row) for row in rows]
 
 
+@_fenced
 async def store_passage_vectors(pool: Any, *, index_id: str, model_id: str, fingerprint: str,
                                 vectors: list[tuple[str, int, str, str]]) -> None:
     """``vectors``: (entity_id, ordinal, content_hash, pgvector text). One transaction per batch."""
-    async with pool.acquire() as connection:
+    async with _connection(pool) as connection:
         async with connection.transaction():
             await connection.executemany(
                 "UPDATE semantic_graph_search.entity_passages "
@@ -446,10 +611,11 @@ async def store_passage_vectors(pool: Any, *, index_id: str, model_id: str, fing
                  for _, _, content_hash, vector in vectors])
 
 
+@_fenced
 async def store_vectors(pool: Any, *, index_id: str, model_id: str, fingerprint: str,
                         vectors: list[tuple[str, str, str]]) -> None:
     """``vectors``: (entity_id, content_hash, pgvector text). One transaction per batch."""
-    async with pool.acquire() as connection:
+    async with _connection(pool) as connection:
         async with connection.transaction():
             await connection.executemany(
                 "UPDATE semantic_graph_search.entity_documents "
@@ -480,6 +646,7 @@ async def generation_counts(pool: Any, index_id: str) -> dict[str, int]:
             "passages": int(passages["total"]), "passages_ready": int(passages["ready"])}
 
 
+@_fenced
 async def record_progress(pool: Any, index_id: str, owner: str, *, stage: str, loaded: int, expected: int,
                           indexed: int = 0, exact_only: int = 0, passages: int = 0,
                           passages_indexed: int = 0, carried: int | None = None, rebuilt: int | None = None,
@@ -498,6 +665,7 @@ async def record_progress(pool: Any, index_id: str, owner: str, *, stage: str, l
         carried, rebuilt, embedded)
 
 
+@_fenced
 async def finish_generation(pool: Any, index_id: str, owner: str, expected_count: int) -> str:
     """``ready`` when every record of the revision has a vector or is key-only, and every
     passage has a vector."""
@@ -519,6 +687,7 @@ async def finish_generation(pool: Any, index_id: str, owner: str, expected_count
     return updated["state"] if updated else "lease_lost"
 
 
+@_fenced
 async def fail_generation(pool: Any, index_id: str, error_code: str, owner: str | None = None) -> None:
     await pool.execute(
         "UPDATE semantic_graph_search.index_generations "

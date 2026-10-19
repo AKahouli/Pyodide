@@ -9,6 +9,9 @@ import { TeamAutoBuilderConfigService } from './services/team-auto-builder-confi
 import { TEAM_AUTO_BUILDER_STORE, TEAM_SHARE_STORE, TEAM_STORE } from './persistence/team.store';
 import { PgTeamAutoBuilderStore, PgTeamShareStore, PgTeamStore } from './persistence/pg-team.store';
 import { TeamPermissionGuard } from './guards/team-permission.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
+import { PgConnectorStore } from '@modules/connector/persistence/pg-connector.store';
 import { AgentModule } from '../agent/agent.module';
 import { UserModule } from '../user/user.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -34,7 +37,11 @@ import { ModelsModule } from '../models/models.module';
     // Teams cutover (plan 4.3-4.5): PG-backed stores.
     { provide: TEAM_STORE, useClass: PgTeamStore },
     { provide: TEAM_SHARE_STORE, useClass: PgTeamShareStore },
-    { provide: TEAM_AUTO_BUILDER_STORE, useClass: PgTeamAutoBuilderStore },TeamService, TeamShareService, TeamAutoBuilderConfigService, TeamPermissionGuard],
+    { provide: TEAM_AUTO_BUILDER_STORE, useClass: PgTeamAutoBuilderStore },TeamService, TeamShareService, TeamAutoBuilderConfigService, TeamPermissionGuard,
+    // ADR-0024: shared delegated-user guard for the mcp-agent team routes.
+    McpJwtService,
+    PgConnectorStore,
+    DelegatedActorGuard],
   exports: [TeamService, TeamShareService],
 })
 export class TeamModule {}

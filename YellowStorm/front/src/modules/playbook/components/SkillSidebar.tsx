@@ -95,7 +95,7 @@ export function SkillSidebar({ isOpen, onDragStart }: SkillSidebarProps) {
             placeholder={t('skills.searchPlaceholder')}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="h-8 pl-8 text-xs"
+            className="h-8 ps-8 text-xs"
           />
         </div>
       </div>
@@ -158,7 +158,7 @@ function SkillCard({
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <OverflowTooltip text={skill.name} />
           {skill.categoryName ? (
-            <Badge variant="secondary" className="ml-auto px-1.5 py-0 text-[10px]">
+            <Badge variant="secondary" className="ms-auto px-1.5 py-0 text-[10px]">
               {skill.categoryName}
             </Badge>
           ) : null}
@@ -166,7 +166,7 @@ function SkillCard({
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="ml-7 mt-0.5 rounded px-2 py-1 text-xs text-muted-foreground">
+        <div className="ms-7 mt-0.5 rounded px-2 py-1 text-xs text-muted-foreground">
           {skill.description || skill.name}
         </div>
       </CollapsibleContent>

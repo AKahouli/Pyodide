@@ -1,10 +1,12 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from '@/modules/agent/store';
 import type { Message, MessageComponent } from '../types';
 import { useConversationUiStore } from '../uiStore';
+import { GroupConversationContent } from './GroupConversationContent';
 import { ConversationContent } from './ConversationContent';
+import type { LiveAnswer } from '../live-streams';
 
 const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
 vi.mock('../api', () => ({
@@ -18,7 +20,7 @@ vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationFollow: ({ active }: { active: boolean }) => <div data-testid='conversation-follow' data-active={active} />,
-  ChatMessageBubble: ({ footerActions }: { footerActions?: ReactNode }) => <div>bubble{footerActions}</div>,
+  ChatMessageBubble: ({ message, contentFooter, footerActions }: { message: { content: string }; contentFooter?: ReactNode; footerActions?: ReactNode }) => <div><div data-testid='user-bubble'>bubble<span>{message.content}</span>{contentFooter}</div>{footerActions}</div>,
   ChatScrollButton: ({ className }: { className?: string }) => <button type='button' className={className}>scroll</button>,
   ChatConversationEmptyState: () => <div>empty-state</div>,
 }));
@@ -28,12 +30,16 @@ vi.mock('@/components/ai-elements/message-context', () => ({
 }));
 
 vi.mock('./MessageActions', () => ({ MessageActions: () => <div>message-actions</div> }));
-vi.mock('./UserMessageActions', () => ({ UserMessageActions: () => <div>user-actions</div> }));
+const actionMessage = vi.hoisted(() => vi.fn());
+vi.mock('./UserMessageActions', () => ({ UserMessageActions: ({ message }: { message: Message }) => { actionMessage(message); return <div>user-actions</div>; } }));
 vi.mock('./EditableUserMessage', () => ({ EditableUserMessage: () => <div>editable-message</div> }));
 vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</div> }));
 vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageReliabilityCard', () => ({ MessageReliabilityCard: () => <div>reliability-card</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
+vi.mock('./MessageAvatar', () => ({ MessageAvatar: () => null }));
+vi.mock('./ParentMessagePreview', () => ({ ParentMessagePreview: () => null }));
+vi.mock('./MentionMessageJump', () => ({ MentionMessageJump: () => null }));
 vi.mock('./BackgroundResultNotice', () => ({ BackgroundResultNotice: () => null }));
 vi.mock('./outline/OutlineAnchorScroller', () => ({ OutlineAnchorScroller: () => null }));
 
@@ -48,8 +54,10 @@ const storeState = {
   messagesLoading: false,
   currentConversationId: 'conv-1',
   fetchBranches: vi.fn(),
-  branchCache: new Map(),
+  branchCache: new Map<string, Message[]>(),
+  activeBranches: new Map<string, string>(),
   messages: [] as Message[],
+  liveAnswers: {} as Record<string, LiveAnswer>,
 };
 
 let isAwaitingFirstChunk = false;
@@ -66,12 +74,40 @@ vi.mock('../store', () => ({
   useAwaitingConversationId: () => storeState.awaitingConversationId,
   useMessagesHasMore: () => false,
   useMessagesLoadingOlder: () => false,
-  useBranchCache: () => new Map(),
-  useActiveBranches: () => new Map(),
+  useBranchCache: () => storeState.branchCache,
+  useActiveBranches: () => storeState.activeBranches,
   useEditingMessageId: () => null,
 }));
 
 describe('ConversationContent', () => {
+  it('shows readable artifact tags inside sent user bubbles after remount while preserving raw action payloads', () => {
+    const ref = btoa(JSON.stringify(['document', 'workspace', 'document'])).replace(/=/g, '');
+    const content = `Summarize the report.\n\nUse this conversation asset: Report [Q1].pdf [${ref}]`;
+    const message = { id: 'user-assets', conversationId: 'conv-1', conversationType: 'user', content, createdAt: '2026-01-01T00:00:00Z' } as Message;
+    displayMessages = [message]; storeState.messages = [message];
+    const mounted = render(<ConversationContent />);
+    expect(screen.getByText('Summarize the report.')).toBeInTheDocument();
+    const chip = screen.getByText('Report [Q1].pdf');
+    expect(screen.getByTestId('user-bubble')).toContainElement(chip);
+    expect(document.body.textContent).not.toContain(ref);
+    expect(document.body.innerHTML).not.toContain(ref);
+    expect(actionMessage).toHaveBeenCalledWith(message);
+    expect(message.content).toBe(content);
+    mounted.unmount(); render(<ConversationContent />);
+    expect(screen.getByText('Report [Q1].pdf')).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(ref);
+  });
+
+  it.each(['owner', 'other-member'])('shows historical asset tags for %s in group conversations without changing source text', senderId => {
+    const ref = btoa(JSON.stringify(['artifact', 'message', 'output'])).replace(/=/g, '');
+    const content = `Utiliser ce contenu de la conversation : Résumé.docx [${ref}]`;
+    const message = { id: 'group-user', conversationId: 'conv-1', conversationType: 'user', senderId, content, createdAt: '2026-01-01T00:00:00Z' } as Message;
+    displayMessages = [message]; storeState.messages = [message];
+    render(<GroupConversationContent />);
+    expect(screen.getByTestId('user-bubble')).toContainElement(screen.getByText('Résumé.docx'));
+    expect(document.body.innerHTML).not.toContain(ref);
+    expect(message.content).toBe(content);
+  });
   beforeEach(() => {
     vi.useRealTimers();
     displayMessages = [];
@@ -82,10 +118,47 @@ describe('ConversationContent', () => {
     storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
     storeState.messages = [];
+    storeState.branchCache = new Map();
+    storeState.activeBranches = new Map();
+    storeState.liveAnswers = {};
+    storeState.currentConversationId = 'conv-1';
     useConversationUiStore.setState({ autoReliabilityEnabled: false });
     // Shared Zustand agent directory — reset so parallel bubble/identity suites cannot
     // leave a stale directory that blanks the answer-producer header.
     useAgentStore.setState({ agents: [], isInitialized: true, isLoading: false, error: null });
+  });
+
+  it.each(['live-answer', 'fallback'])('preserves reading preferences through the %s handoff and resets them across conversations', (mode) => {
+    vi.useFakeTimers();
+    try {
+      const components: LiveAnswer['components'] = [{ id: 'summary', type: 'agentActivity', data: {
+        activityKind: 'reasoning_summary', summary: 'Inspect the supplied evidence carefully', status: 'completed',
+      } }];
+      displayMessages = [{ id: 'question', conversationId: 'conv-1', conversationType: 'user', content: 'Check this evidence', createdAt: '2026-10-17T09:59:00Z' }];
+      storeState.streamingComponents = components;
+      storeState.liveAnswers = mode === 'fallback' ? {} : { answer: { conversationId: 'conv-1', messageId: 'answer', components, createdAt: '2026-10-17T10:00:00Z', revision: 1 } };
+      storeState.isStreaming = true;
+      storeState.streamingMessageId = 'answer';
+      storeState.streamingConversationId = 'conv-1';
+      const { container, rerender } = render(<ConversationContent />);
+      const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+      Object.defineProperties(pane, { scrollHeight: { value: 800 }, clientHeight: { value: 200 } });
+      pane.scrollTop = 120;
+      fireEvent.scroll(pane);
+      storeState.liveAnswers = {};
+      storeState.isStreaming = false;
+      storeState.streamingConversationId = null;
+      displayMessages = [{ id: 'answer', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-10-17T10:00:00Z', components }];
+      rerender(<ConversationContent />);
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+      expect((container.querySelector('[data-activity-pane]') as HTMLElement).scrollTop).toBe(120);
+
+      storeState.currentConversationId = 'conv-2';
+      displayMessages = [{ ...displayMessages[0], id: 'another-answer', conversationId: 'conv-2' }];
+      rerender(<ConversationContent />);
+      expect(container.querySelector('[data-activity-pane-shell]')).toHaveAttribute('data-collapsed');
+    } finally { vi.useRealTimers(); }
   });
 
   it('renders empty state when there are no messages', () => {
@@ -156,6 +229,18 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('keeps saved answer history visible while an unrelated new turn streams', () => {
+    const old = { id: 'old-answer', questionMessageId: 'old-question', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z', components: [{ type: 'text', data: { content: 'Saved' } }] } as Message;
+    displayMessages = [old];
+    storeState.branchCache.set('old-question', [old, { ...old, id: 'old-version' }]);
+    storeState.activeBranches.set('old-question', old.id);
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'new-answer';
+    render(<ConversationContent />);
+    expect(screen.getByText('branch-nav')).toBeInTheDocument();
   });
 
   it('places user actions in the message metadata footer', () => {

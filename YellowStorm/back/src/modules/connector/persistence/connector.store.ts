@@ -19,6 +19,8 @@ export interface ConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  mcpSecurityPolicy?: import('../connector.types').McpSecurityPolicy;
+  securityRevision?: number;
   workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
@@ -33,6 +35,8 @@ export interface ConnectorRow {
 }
 
 export interface NewConnectorRow {
+  mcpSecurityPolicy?: import('../connector.types').McpSecurityPolicy;
+  securityRevision?: number;
   slug: string;
   name: string;
   description: string;
@@ -83,7 +87,7 @@ export interface ConnectorStore {
   insert(row: NewConnectorRow): Promise<ConnectorRow>;
   /** Catalog import: all connectors (any flags), ids optional. */
   findAllExport(ids?: string[]): Promise<ConnectorRow[]>;
-  update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null>;
+  update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }, expectedSecurityRevision?: number): Promise<ConnectorRow | null>;
   findBySlugExcludingOwner(slug: string, excludeId: string, createdBy: string): Promise<ConnectorRow | null>;
   delete(id: string): Promise<ConnectorRow | null>;
 }

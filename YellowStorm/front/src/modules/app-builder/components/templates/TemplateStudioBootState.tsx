@@ -77,7 +77,7 @@ export function TemplateStudioBootState({ className }: TemplateStudioBootStatePr
           <span className='size-2 rounded-full bg-border' />
           <span className='size-2 rounded-full bg-border' />
           <span className='size-2 rounded-full bg-border' />
-          <div className='ml-2 h-4 flex-1 rounded-md ts-boot-shimmer' />
+          <div className='ms-2 h-4 flex-1 rounded-md ts-boot-shimmer' />
         </div>
         <div className='grid h-[calc(100%-2.25rem)] grid-cols-[7rem_1fr] gap-3 p-3'>
           <div className='space-y-2 rounded-md border border-border/30 p-2'>
@@ -160,7 +160,7 @@ export function TemplateStudioBootState({ className }: TemplateStudioBootStatePr
                   </span>
                   <span className={cn(current && 'font-medium')}>{labels[step.id]}</span>
                   {current ? (
-                    <span className='ml-auto flex gap-0.5' aria-hidden>
+                    <span className='ms-auto flex gap-0.5' aria-hidden>
                       {[0, 1, 2].map((dot) => (
                         <span
                           key={dot}

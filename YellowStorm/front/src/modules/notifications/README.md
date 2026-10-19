@@ -2,6 +2,12 @@
 
 The notifications module provides real-time notification delivery via Server-Sent Events (SSE), with automatic reconnection, heartbeat monitoring, and a React Context for state management.
 
+Hidden tabs pause their notification EventSource and timers to leave browser
+HTTP/1.1 connections available for file/API requests. Returning to a visible tab
+reconnects the authenticated owner and reloads notifications/unread count. This
+does not pause agent execution or conversation streaming. Late responses from a
+previous owner cannot repopulate another user's notification state.
+
 ## Table of Contents
 
 - [Overview](#overview)

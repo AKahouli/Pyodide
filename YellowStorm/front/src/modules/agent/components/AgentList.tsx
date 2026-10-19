@@ -136,7 +136,7 @@ export function AgentList() {
           <h3 className="font-semibold">{t('list.heading')}</h3>
         </div>
         <Button size="sm" onClick={openCreate}>
-          <Plus className="mr-1 h-4 w-4" />
+          <Plus className="me-1 h-4 w-4" />
           {t('list.newAgent')}
         </Button>
       </div>

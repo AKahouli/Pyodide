@@ -18,7 +18,7 @@ export function documentFilterMatchesNothing(filter: DocumentFilter): boolean {
 
 /** Shared drizzle translation of the typed DocumentFilter (Step D PG side). */
 export function documentFilterToWhere(filter: DocumentFilter) {
-  const conditions = [];
+  const conditions = filter.includeDeleted ? [] : [sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`];
   if (filter.id) conditions.push(eq(DOCUMENTS.id, filter.id));
   if (filter.workspaceId) conditions.push(eq(DOCUMENTS.workspaceId, filter.workspaceId));
   // An explicit empty list means "match nothing", never "no filter".
@@ -83,7 +83,7 @@ export class PgWorkspaceDocumentReadAdapter {
   }
 
   async findById(id: string): Promise<WorkspaceDocumentRecord | null> {
-    const rows = await this.q.select().from(DOCUMENTS).where(eq(DOCUMENTS.id, id)).limit(1);
+    const rows = await this.q.select().from(DOCUMENTS).where(and(eq(DOCUMENTS.id, id), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`)).limit(1);
     return rows[0] ? documentRowToRecord(rows[0]) : null;
   }
 

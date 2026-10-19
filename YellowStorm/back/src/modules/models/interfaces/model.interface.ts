@@ -42,6 +42,16 @@ export interface ReasoningEffortOption {
 }
 
 // Internal types
+export const CONVERSATION_APIS = ['chat_completions', 'responses'] as const;
+export type ConversationApi = (typeof CONVERSATION_APIS)[number];
+
+export const RESPONSES_HISTORY_MODES = ['application', 'provider'] as const;
+export type ResponsesHistoryMode = (typeof RESPONSES_HISTORY_MODES)[number];
+export const REASONING_HISTORIES = ['none', 'last', 'all', 'auto'] as const;
+export type ReasoningHistory = (typeof REASONING_HISTORIES)[number];
+export const REASONING_SUMMARIES = ['off', 'auto', 'concise', 'detailed'] as const;
+export type ReasoningSummary = (typeof REASONING_SUMMARIES)[number];
+
 export interface ModelResponse {
   id: string;
   name: string;
@@ -55,6 +65,10 @@ export interface ModelResponse {
   isDefault: boolean;
   isConversationV2Default: boolean;
   omitTemperature: boolean;
+  conversationApi: ConversationApi;
+  responsesHistoryMode: ResponsesHistoryMode;
+  reasoningHistory: ReasoningHistory;
+  reasoningSummary: ReasoningSummary;
   inputModalities: ModelInputModality[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

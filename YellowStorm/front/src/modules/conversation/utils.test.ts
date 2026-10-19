@@ -1,7 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, formatChoiceSubmissionContent, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
+  it('shows the label of a typed OpenUI submission while keeping its stored values separate', () => {
+    expect(getUserMessageDisplayText({ id: 'submission', conversationId: 'conversation', conversationType: 'user',
+      content: 'Apply filters\n\n{"count":0}', createdAt: '2026-10-16',
+      interaction: { type: 'openui', schemaVersion: 1, actionType: 'continue_conversation', sourceMessageId: 'answer',
+        componentId: 'form', label: 'Apply filters', formState: { count: 0, enabled: false } } })).toBe('Apply filters');
+  });
+  it('renders a recovered interruption beside the saved partial answer', () => {
+    const translate = vi.spyOn(i18nInstance, 't').mockImplementation(((key: string) => key) as typeof i18nInstance.t);
+    try {
+    const parts = mapConversationComponentsToContentParts([
+      { id: 'text', type: 'text', data: { content: 'Partial answer' } },
+      { id: 'error', type: 'error', data: { reason: 'interrupted', code: 'ERR_1404' } },
+    ]);
+    expect(parts).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'error', title: expect.any(String), content: expect.any(String) })]));
+    expect(JSON.stringify(parts)).toContain('Partial answer');
+    } finally { translate.mockRestore(); }
+  });
   it('formats timing values', () => {
     expect(formatTimingMs(undefined)).toBe('--');
     expect(formatTimingMs(550)).toBe('550ms');
@@ -167,6 +185,16 @@ describe('conversation utils', () => {
     }
   });
 
+  it('keeps reused markers bound to their owning text when different sources collide', () => {
+    const parts = mapComponentsToContentParts([
+      { id: 'first', type: 'text', data: { content: 'First [1]' } },
+      { id: 'second', type: 'text', data: { content: 'Second [1]' } },
+      { type: 'citation', data: { parentId: 'first', reference: '1', source: 'first.pdf' } },
+      { type: 'citation', data: { parentId: 'second', reference: '1', source: 'second.pdf' } },
+    ] as never);
+    expect(parts.map((part) => part.type === 'text' ? part.citations?.map((citation) => citation.source) : [])).toEqual([['first.pdf'], ['second.pdf']]);
+  });
+
   it('converts components to markdown', () => {
     const markdown = componentsToMarkdown([
       { type: 'text', data: { content: 'Hi' } },
@@ -279,4 +307,10 @@ describe('formatChoiceSubmissionContent', () => {
     expect(formatChoiceSubmissionContent('Bonjour, peux-tu vérifier ?')).toBe('Bonjour, peux-tu vérifier ?');
     expect(formatChoiceSubmissionContent('{not json')).toBe('{not json');
   });
+});
+
+it('excludes deleted source before invoking the copy projector', () => {
+  const project = vi.fn(() => 'private rendered text');
+  expect(componentsToMarkdown([{ id: 'deleted', type: 'text', data: { content: 'private source', assetDeletedAt: '2026-10-18' } }], project)).toBe('');
+  expect(project).not.toHaveBeenCalled();
 });

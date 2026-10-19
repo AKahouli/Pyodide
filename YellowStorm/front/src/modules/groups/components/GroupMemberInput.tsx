@@ -66,7 +66,7 @@ export function GroupMemberInput({ members, onAdd, onRemove, disabled }: Readonl
     <div className='space-y-2'>
       <div className={cn('relative rounded-md border bg-background px-2 py-1', disabled && 'opacity-50')}>
         <Search className='absolute left-3 top-3 h-4 w-4 text-muted-foreground' />
-        <div className='flex flex-wrap items-center gap-2 pl-8 pr-8'>
+        <div className='flex flex-wrap items-center gap-2 ps-8 pe-8'>
           {members.map((m) => (
             <div key={m.id} className='flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs font-medium'>
               <span className='max-w-40 truncate'>{displayName(m)}</span>
@@ -101,7 +101,7 @@ export function GroupMemberInput({ members, onAdd, onRemove, disabled }: Readonl
                 type='button'
                 key={u.id}
                 onClick={() => handleSelect(u)}
-                className='flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted'
+                className='flex w-full items-center gap-2 px-3 py-2 text-start transition-colors hover:bg-muted'
               >
                 <div className='flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 font-medium text-primary'>
                   {displayName(u).charAt(0).toUpperCase()}

@@ -25,6 +25,7 @@ import { StreamService } from '../services/stream.service';
 import { PreparePlaybookHandoffDto } from '../dto/prepare-playbook-handoff.dto';
 import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
 import { RateLimit } from '../../rate-limiter';
+import { ConversationAssetQueryDto, ReadConversationAssetDto } from '../dto/conversation-asset.dto';
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
 
 @ApiTags('Conversations')
@@ -61,6 +62,36 @@ export class ConversationController {
     @Query('limit', new DefaultValuePipe(6), ParseIntPipe) limit: number,
   ) {
     return this.artifactService.listRecent(user._id.toString(), Math.min(Math.max(limit, 1), 20));
+  }
+
+  @Get(':id/assets')
+  @UseGuards(ConversationOwnerGuard)
+  listAssets(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Query() query: ConversationAssetQueryDto) {
+    return this.artifactService.listAssets(id, user._id.toString(), query);
+  }
+
+  @Get(':id/assets/:ref')
+  @UseGuards(ConversationOwnerGuard)
+  inspectAsset(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Param('ref') ref: string) {
+    return this.artifactService.inspectAsset(id, user._id.toString(), ref);
+  }
+
+  @Post(':id/assets/:ref/read')
+  @UseGuards(ConversationOwnerGuard)
+  readAsset(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Param('ref') ref: string, @Body() dto: ReadConversationAssetDto) {
+    return this.artifactService.readAsset(id, user._id.toString(), ref, dto.maxChars);
+  }
+
+  @Post(':id/assets/:ref/url')
+  @UseGuards(ConversationOwnerGuard)
+  assetUrl(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Param('ref') ref: string) {
+    return this.artifactService.assetUrl(id, user._id.toString(), ref);
+  }
+
+  @Delete(':id/assets/:ref')
+  @UseGuards(ConversationOwnerGuard)
+  deleteAsset(@CurrentUser() user: { _id: string }, @Param('id') id: string, @Param('ref') ref: string) {
+    return this.artifactService.deleteAsset(id, user._id.toString(), ref);
   }
 
   @Get(':id')

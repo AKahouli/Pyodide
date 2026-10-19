@@ -77,6 +77,35 @@ def test_a_reset_model_gets_a_new_revision_id():
         "v1", fingerprint, ["sha256:abc"], 2, 1)
 
 
+@pytest.mark.asyncio
+async def test_bulk_revision_read_budget_covers_served_and_candidate_assertions():
+    from app.persistence.population_store import (list_revision_assertions, list_revision_entities,
+                                                  list_revision_relationships)
+
+    class Connection:
+        def __init__(self):
+            self.options = []
+
+        async def fetch(self, sql, *params, **options):
+            self.options.append(options)
+            if "assertion_candidates" in sql:
+                return [{"entity_id": "e", "attribute": "name", "value": "other",
+                         "origin": "source", "evidence": {}}]
+            if "semantic_population.assertions" in sql:
+                return [{"entity_id": "e", "attribute": "name", "value": "served",
+                         "origin": "source", "evidence": {}}]
+            return []
+
+    connection = Connection()
+    values = await list_revision_assertions(connection, "dr", timeout=120)
+    assert [value["value"] for value in values] == ["served", "other"]
+    await list_revision_entities(connection, "dr", timeout=120)
+    await list_revision_relationships(connection, "dr", timeout=120)
+    assert connection.options == [{"timeout": 120}] * 4
+    await list_revision_assertions(connection, "dr")
+    assert connection.options[-2:] == [{}, {}]
+
+
 class _PurgeConnection:
     """Records the purge's statements and answers like the runtime database."""
 

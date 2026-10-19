@@ -90,6 +90,10 @@ async def test_metadata_fields_take_the_name_workspace_id_and_document_id_of_the
     assert values["customer_reference"] == SOURCE["workspaceId"]
     assert values["file_name"] == "agreement.pdf"
     assert {item["evidence"]["origin"] for item in result["assertions"]} == {"metadata"}
+    provenance_source = result["entities"][0]["provenance"]["sources"][0]
+    assert provenance_source["assetRef"]["workspaceId"] == SOURCE["workspaceId"]
+    assert provenance_source["assetRef"]["assetId"] == SOURCE["assetId"]
+    assert provenance_source["filename"] == "agreement.pdf"
 
 
 AMENDMENT_CONCEPT = {
@@ -206,7 +210,7 @@ async def test_ai_value_without_a_supplied_reference_is_discarded(
 
 
 @pytest.mark.asyncio
-async def test_ai_value_absent_from_its_cited_block_is_discarded(
+async def test_preview_and_population_accept_generated_value_with_supplied_citation(
         monkeypatch: pytest.MonkeyPatch, index_stubs):
     async def extraction(**_kwargs):
         return {"extractorVersion": "ai-attribute-v1",
@@ -221,9 +225,23 @@ async def test_ai_value_absent_from_its_cited_block_is_discarded(
          "extractionStrategy": "ai"},
     ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
 
-    # The reference is real but the value is not in that block: invented data.
-    assert all(item["attribute"] != "effective_date" for item in result["assertions"])
-    assert {gap["kind"] for gap in result["gaps"]} >= {"ai_extraction_unresolved"}
+    # Generated values are accepted on the model's authority; citations are locators, not truth checks.
+    assertion = next(item for item in result["assertions"] if item["attribute"] == "effective_date")
+    assert assertion["value"] == "1999-01-01"
+    assert assertion["evidence"]["evidenceReferences"] == ["section:7/block:9"]
+    from types import SimpleNamespace
+    from app.api.population_routes import preview_document_fields
+
+    async def resolved(*_args, **_kwargs):
+        return {"current": SOURCE, "assetRef": SOURCE, "capabilities": {"capabilities": {}}, "candidate": {"documentPk": 42}}
+
+    monkeypatch.setattr(document, "resolve_indexed_document", resolved)
+    preview = await preview_document_fields({"actorUserId": "u1", "modelId": "model-1", "entry": ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai"},
+    )}, SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(index_pool=object()))))
+    assert preview["fields"]["effective_date"]["value"] == assertion["value"]
+    assert preview["fields"]["effective_date"]["reason"] == "found"
 
 
 @pytest.mark.asyncio
@@ -545,9 +563,10 @@ async def test_many_records_gives_one_entity_per_item_found(monkeypatch: pytest.
                     {"label": "2", "values": [
                         {"key": "amendment_number", "value": "2", "evidenceReferences": ["section:7/block:9"]},
                         {"key": "effective_date", "value": "2026-02-01", "evidenceReferences": ["section:7/block:9"]}]},
-                    # Not in the block it cites: dropped, as for a single record.
+                    # A generated item with supplied citations is accepted, as for a single record.
                     {"label": "9", "values": [
-                        {"key": "amendment_number", "value": "9", "evidenceReferences": ["section:7/block:9"]}]},
+                        {"key": "amendment_number", "value": "9", "evidenceReferences": ["section:7/block:9"]},
+                        {"key": "effective_date", "value": "2026-03-01", "evidenceReferences": ["section:7/block:9"]}]},
                 ]}
 
     ai_stubs(monkeypatch, extraction)
@@ -567,29 +586,26 @@ async def test_many_records_gives_one_entity_per_item_found(monkeypatch: pytest.
                                               metadata_fetch=metadata, model_id="model-1")
 
     assert asked["multiple"] is True
-    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2"]
+    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2", "9"]
     dates = {a["entityId"]: (a["value"], a["evidence"]["rowNumber"]) for a in result["assertions"]
              if a["attribute"] == "effective_date"}
-    assert sorted(dates.values()) == [("2026-01-01", 1), ("2026-02-01", 2)]
-    assert result["coverage"]["records"] == 2
+    assert sorted(dates.values()) == [("2026-01-01", 1), ("2026-02-01", 2), ("2026-03-01", 3)]
+    assert result["coverage"]["records"] == 3
     assert result["coverage"]["status"] == "processed_complete"
 
 
-def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
+def test_generated_summary_needs_a_supplied_citation_but_no_verbatim_anchor():
     reference = "section:7/block:9"
     by_reference = {reference: (LINES_BLOCK, {"sectionPk": 7, "sectionKey": "s7"})}
     keys = {"quote", "summary", "kind"}
     entry_ = {"mappingVersion": "v1"}
 
-    def ground_with(summaries: set[str], items: list[dict]) -> tuple[dict, dict]:
+    def ground(items: list[dict]) -> tuple[dict, dict]:
         values: dict = {}
         evidence: dict = {}
         document._ground_values(items, keys, by_reference, {}, entry_, {"assetId": "a"}, "v", None,
-                                values, evidence, None, {"kind": ["Amendment", "Renewal"]}, summaries)
+                                values, evidence, None, {"kind": ["Amendment", "Renewal"]})
         return values, evidence
-
-    def ground(items: list[dict]) -> tuple[dict, dict]:
-        return ground_with({"summary"}, items)
 
     def item(key: str, value: str) -> dict:
         return {"key": key, "value": value, "evidenceReferences": [reference]}
@@ -599,16 +615,35 @@ def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
                                item("quote", "Amendment 1 on 2026-01-01")])
     assert values == {"summary": "The contract was amended twice", "kind": "Amendment",
                       "quote": "Amendment 1 on 2026-01-01"}
-    assert evidence["summary"]["rephrased"] is True
-    # A date the text does not write that way is a rewrite too: kept only for a field allowed to rewrite.
+    assert evidence["summary"]["evidenceReferences"] == [reference]
+    # Reformatted values do not need a quoted sibling field, in either record mode.
     keys.add("when")
     values, _ = ground([item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
-    assert values == {"quote": "Amendment 2 on 2026-02-01"}
-    values, _ = ground_with({"summary", "when"}, [item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
     assert values["when"] == "2026-02-01T00:00"
-    # With nothing quoted from the block, a summary is not proof the item is there; an unknown kind is dropped.
+    # A generated summary is accepted alone; enum values still must belong to the configured choices.
     values, _ = ground([item("summary", "The contract was amended twice"), item("kind", "Termination")])
-    assert values == {}
+    assert values == {"summary": "The contract was amended twice"}
+
+
+@pytest.mark.parametrize(('kind', 'value', 'accepted'), [
+    ('text', 'Open the screen; enter the details', True), ('text', ['steps'], False),
+    ('number', 42, True), ('number', '42', False), ('number', True, False),
+    ('number', float('inf'), False), ('boolean', True, True), ('boolean', 'true', False),
+    ('date', '2026-02-01', True), ('date', 2026, False), ('text', '', False),
+])
+def test_generated_values_keep_json_type_and_citation_checks(kind, value, accepted):
+    reference = 'section:7/block:9'
+    values, evidence = {}, {}
+    document._ground_values([
+        {'key': 'field', 'value': value, 'evidenceReferences': [reference, 'section:999/block:999', reference]},
+        {'key': 'unknown', 'value': 'ignored', 'evidenceReferences': [reference]},
+        {'key': 'missing', 'value': 'ignored', 'evidenceReferences': ['section:999/block:999']},
+    ], {'field', 'missing'}, {reference: (LINES_BLOCK, {'sectionPk': 7, 'sectionKey': 's7'})},
+        {}, {'mappingVersion': 'v1'}, {'assetId': 'a'}, 'v', None, values, evidence, None,
+        value_types={'field': kind})
+    assert values == ({'field': value} if accepted else {})
+    if accepted:
+        assert evidence['field']['evidenceReferences'] == [reference]
 
 
 @pytest.mark.asyncio

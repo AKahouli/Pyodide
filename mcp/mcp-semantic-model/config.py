@@ -21,34 +21,47 @@ _load_local_env()
 @dataclass(frozen=True)
 class Settings:
     backend_url: str
-    internal_token: str
     ingress_token: str
     timeout_seconds: float
     port: int
     max_response_bytes: int
+    service_token: str = ""
     auth_mode: str = "Bearer"
     jwt_public_key_file: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = "mcp-semantic-model"
+    environment: str = "development"
 
     @classmethod
     def from_env(cls) -> "Settings":
+        environment = os.getenv("ENVIRONMENT", "development")
+        auth_mode = os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE")
+        if auth_mode is None:
+            if environment == "production":
+                raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be explicitly set to JWT or Bearer in production")
+            auth_mode = "Bearer"
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
-            internal_token=os.getenv("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", ""),
             ingress_token=os.getenv("SEMANTIC_MODEL_MCP_INGRESS_TOKEN", ""),
             timeout_seconds=float(os.getenv("SEMANTIC_MODEL_MCP_TIMEOUT_SECONDS", "120")),
             port=int(os.getenv("MCP_PORT", "8027")),
             max_response_bytes=int(os.getenv("SEMANTIC_MODEL_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
-            auth_mode=os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE", "Bearer"),
+            service_token=os.getenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", ""),
+            auth_mode=auth_mode,
             jwt_public_key_file=os.getenv("SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("SEMANTIC_MODEL_MCP_JWT_ISSUER", ""),
             jwt_audience=os.getenv("SEMANTIC_MODEL_MCP_JWT_AUDIENCE", "mcp-semantic-model"),
+            environment=environment,
         )
 
     def validate(self) -> None:
-        if not self.internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+        if not self.service_token.strip() or self.service_token != self.service_token.strip():
+            # WP07.2: every backend assistant call authenticates the
+            # semantic-model-mcp service principal; without the scoped secret
+            # the backend rejects the server, so fail at startup.
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
+        if self.environment == "production" and len(self.service_token) < 32:
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN must be at least 32 characters in production")
         if self.auth_mode not in ("JWT", "Bearer"):
             raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT or Bearer")
         if self.auth_mode == "JWT":

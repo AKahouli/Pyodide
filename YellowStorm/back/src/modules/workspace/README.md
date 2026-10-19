@@ -2,6 +2,77 @@
 
 The Workspace module provides document management capabilities, allowing users to create workspaces where they can upload, organize, and manage documents. It includes workspace settings (with template support), document upload with real-time progress tracking, and plan-based storage quotas.
 
+### Administrator storage and upload controls
+
+Admin → Workspace stores the global per-file upload limit and new conversation
+workspace quota in the existing workspace upload settings record. Defaults retain
+the configured `WORKSPACE_MAX_FILE_SIZE_MB` (500 MiB) and
+`CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES` (50 MiB). Stored limits take precedence
+at runtime. Changing a default does not resize an existing workspace; regular
+workspace creation continues to use the user's subscription plan.
+
+`GET/PUT /workspaces/:workspaceId/admin-storage` requires `workspaces.*` and supports
+conversation system workspaces. PUT accepts `allocatedStorageMb` and the exact
+previous `expectedAllocatedStorage` in bytes. Its atomic update rejects stale
+allocations and limits below live used storage; it changes only the named workspace
+and records an audit event. Ordinary workspace owner edits cannot change quotas.
+Upload size checks use current settings for both direct and presigned flows; the
+separate small multipart transport threshold is unchanged.
+
+### Upload isolation and concurrency
+
+Workspace guards authorize each request; document reads additionally match both
+document ID and workspace ID before creating a signed download URL. Private
+workspaces require ownership or an explicit share. Read-only/public access does
+not permit uploads. An already-issued signed URL remains a bearer capability until
+its expiry; revoking a share prevents new URLs, not use of an existing URL.
+
+PostgreSQL upload admission locks the workspace row and includes pending upload
+reservations, so overlapping requests cannot each spend the same free capacity.
+Upload confirmation claims a pending document and updates counters atomically;
+duplicate completion cannot count the same bytes twice. Expired pending uploads
+are reclaimed by the existing cleanup job only after their upload URL expiry.
+New uploads use a document-ID-prefixed stored filename to prevent distinct display
+names that sanitize identically from overwriting each other. Display names and
+existing object paths remain intact; consumers must use the stored canonical path.
+
+Coverage: `document/document-isolation.spec.ts`,
+`stores/postgres/workspace-pg-stores.integration.spec.ts`, and
+`document/document-upload-concurrency.integration.spec.ts`. Principal tests and PostgreSQL fixtures do not
+establish isolation inside the external code-interpreter coordinator. Presigned
+completion requires authoritative object metadata whose size exactly matches the
+reservation, and rechecks current file limits. Missing metadata, 403 and transient
+errors fail closed and preserve the pending reservation for retry or expiry.
+Direct uploads hold a document-row lock through PUT and publication; stale
+`UPLOADING` cleanup uses `SKIP LOCKED`, preserving live transfers and reclaiming
+crash-abandoned rows. Converted PDFs use document-ID keys and delete unregistered
+blobs if quota admission fails. Focused integrity and concurrency tests cover these
+boundaries, including independent owners and simultaneous uploads.
+
+### Create-only presigned uploads
+
+Workspace single, conversation-path and bulk upload URLs request `createOnly`.
+S3 signs `If-None-Match: *` into the PUT; clients must send that exact header and
+cannot remove or alter it without invalidating the signature. Azure SAS grants
+only `c`, excluding the `w` permission required to overwrite an existing blob.
+The first successful PUT creates the object; later PUTs through that URL cannot
+replace it, including after confirmation. A lost upload response can therefore
+produce a precondition error on retry; confirmation remains idempotent, and a new
+upload needs a new reservation/key. Existing actual-size checks still apply.
+
+URLs issued before deployment retain their former permissions until their
+original expiry. This change does not revoke bearer URLs already issued. S3
+deployments must support conditional PutObject and allow `If-None-Match` in their
+browser CORS configuration; unsupported storage must fail the upload rather than
+fall back to overwrite permission. Azure enforcement is covered by provider
+contract tests; live Ceph and browser tests validate the configured deployment.
+
+Remaining upload hardening (bounded follow-up):
+
+- Denied workspace routes currently retain the empty workspace controls while
+  showing an access-error toast; the backend denies mutations, but a dedicated
+  access-denied view would make that outcome clearer.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -74,7 +145,7 @@ workspace/
 
 ### Design Decisions
 
-1. **Documents in Separate Collection**: Avoids MongoDB 16MB document limit, enables efficient pagination/search, and document updates don't touch workspace document.
+1. **Documents in a Separate PostgreSQL Table**: Workspace and document stores use the existing Drizzle schema. Document rows support scoped reads, pagination and transactional upload admission independently of workspace metadata.
 
 2. **Presigned URLs for Large Files**: Files >10MB are uploaded directly to Azure Blob Storage using SAS URLs, reducing server load and enabling large file support (up to 500MB default).
 
@@ -86,11 +157,15 @@ workspace/
 
 ```
 # Regular workspace uploads
-/{userId}/{workspaceId}/{documentId}/{filename}
+/{ownerUserId}/{storagePrefix}/{documentId}-{sanitizedFilename}
 
 # Conversation file attachments (system workspaces)
-/{userId}/{conversationId}/{documentId}/{filename}
+/{userId}/{conversationId}/{documentId}-{sanitizedFilename}
 ```
+
+Existing paths are retained. Generated-image staging separately copies the exact
+authorized object to the existing `generated-images/{imageId}.{ext}` mount receipt;
+the display name must never be used to reconstruct either path.
 
 ---
 

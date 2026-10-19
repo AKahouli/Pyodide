@@ -102,6 +102,7 @@ export interface AttachmentIntelligenceSettings {
 }
 
 export interface ConversationSettings {
+  generativeUi?: { htmlMode: 'strict' | 'interactive' };
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
   /** Runtime source of truth for the classic Conversation latency UI. */
@@ -204,6 +205,13 @@ export interface BackendPreAdkBreakdownV1 {
   streamBootstrapMs?: number;
   conversationContextLoadMs?: number;
   workspaceAgentResolutionMs?: number;
+  rootDelegationResolutionMs?: number;
+  /** Starts early and overlaps other preparation stages; do not add to their total. */
+  rootBackgroundReadinessMs?: number;
+  rootExecutionAdmissionMs?: number;
+  rootNativeStateRecordMs?: number;
+  rootSessionSeedMs?: number;
+
   supplementalContextAssemblyMs?: number;
   grpcPayloadPreparationMs?: number;
   grpcTransitToAdkMs?: number;
@@ -340,6 +348,20 @@ export interface ConversationUsageMetrics {
   };
 }
 
+export type OpenUiJson = null | boolean | number | string | OpenUiJson[] | { [key: string]: OpenUiJson };
+export interface OpenUiSubmission {
+  type: 'openui';
+  schemaVersion: 1;
+  sourceMessageId: string;
+  componentId: string;
+  actionType: 'continue_conversation';
+  formName?: string;
+  label?: string;
+  formState: Record<string, OpenUiJson>;
+  params?: Record<string, OpenUiJson>;
+  appTask?: { schemaVersion: 1; programDigest: string; stateRevision: number; documentIds: string[] };
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -347,7 +369,7 @@ export interface Message {
   conversationType: 'user' | 'ai';
   content?: string;
   components?: MessageComponent[];
-  interaction?: ChoiceInteractionMetadata;
+  interaction?: ChoiceInteractionMetadata | OpenUiSubmission;
   interactions?: ChoiceInteractionMetadata[];
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
@@ -358,6 +380,7 @@ export interface Message {
   agentIds?: string[];
   memberIds?: string[];
   webSearchEnabled?: boolean;
+  terminalStatus?: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   questionMessageId?: string;
   answerMessageId?: string;
   feedback?: 'like' | 'dislike';
@@ -542,6 +565,8 @@ export interface PreparedConversationPlaybookHandoffV1 {
 
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
 export interface AgentActivityData extends Record<string, unknown> {
+  /** Explicit provenance supplied by the runtime, never inferred from summary text. */
+  activityKind?: 'reasoning_summary';
   summary: string;
   detail?: string;
   status: 'running' | 'completed';
@@ -577,7 +602,8 @@ export interface ArtifactActivityData extends Record<string, unknown> {
   mimeType?: string;
   sizeBytes?: number;
   producerToolId?: string;
-  availability: 'pending' | 'ready' | 'failed';
+  availability: 'pending' | 'ready' | 'failed' | 'deleted';
+  assetDeletedAt?: string;
 }
 
 export interface RecentConversationArtifact {
@@ -648,6 +674,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SendMessagePayload {
+  openUiSubmission?: OpenUiSubmission;
   rootContinuation?: {
     executionId: string;
     inputResponses: Array<{ inputId: string; inputVersion?: number; response: Record<string, unknown> }>;
@@ -899,4 +926,19 @@ export interface RootExecutionEvidenceLocation {
   producerAgentId: string | null;
   url: string;
   fileName: string;
+}
+
+/** Authorized literal transcript matches; snippets never grant file access. */
+export interface ConversationMessageMatch {
+  messageId: string;
+  questionMessageId?: string;
+  conversationType: 'user' | 'ai';
+  createdAt: string;
+  snippet: string;
+}
+export interface ConversationMessageSearch { matches: ConversationMessageMatch[]; hasMore: boolean }
+export interface ConversationMessagesAround {
+  messages: Message[];
+  branchesByQuestion?: Record<string, Message[]>;
+  pagination: { mode: 'around'; hasOlder: boolean; hasNewer: boolean };
 }

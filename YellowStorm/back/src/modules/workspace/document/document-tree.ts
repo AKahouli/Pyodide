@@ -1,6 +1,7 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { newObjectId } from '@common/postgres';
-import { DocumentStatus, DocumentType } from '../interfaces/document-status.enum';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
@@ -340,6 +341,89 @@ export class WorkspaceDocumentTree {
     }
   }
 
+  /** Conversation deletion retains a private tombstone so retries cannot refund quota twice. */
+  async deleteConversationAsset(workspaceId: string, documentId: string, conversationId?: string): Promise<{
+    deleted: true; alreadyDeleted: boolean; cleanup: { blob: 'done' | 'pending'; index: 'done' | 'pending' };
+  }> {
+    const claimed = await this.documentStore.withWorkspaceTreeLock(workspaceId, async () => {
+      const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
+      if (!document || document.isFolder) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
+      if (document.metadata?.assetDeletedAt) return { document, alreadyDeleted: true };
+      if (await this.workspaceArtifacts.countBySource(workspaceId, documentId) > 0) {
+        throw new ConflictException(ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS, 'Document has linked decision flows');
+      }
+      const metadata: Record<string, string> = { ...document.metadata, assetDeletedAt: new Date().toISOString(), assetBlobCleanup: 'pending', assetIndexCleanup: 'pending' };
+      await this.documentStore.updateById(documentId, { status: DocumentStatus.FAILED, metadata });
+      if (document.status === DocumentStatus.COMPLETED) await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
+      await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
+      return { document: { ...document, metadata }, alreadyDeleted: false };
+    });
+    const cleanup = { blob: claimed.document.metadata?.assetBlobCleanup === 'done' ? 'done' as const : 'pending' as const,
+      index: claimed.document.metadata?.assetIndexCleanup === 'done' ? 'done' as const : 'pending' as const };
+    if (cleanup.blob !== 'done') {
+      try {
+        const paths = new Set<string>(claimed.document.path ? [claimed.document.path] : []);
+        let sourceAlias: string | undefined;
+        if (claimed.document.metadata?.assetSourcePath) {
+          const source = claimed.document.metadata.assetSourcePath;
+          const sourceConversation = conversationId ?? claimed.document.metadata.assetStagingConversationId;
+          if (!sourceConversation || !source.startsWith(`${claimed.document.createdBy}/system_${sourceConversation}/`)
+            || /[\\\x00-\x1f\x7f]/.test(source) || source.split('/').some(p => !p || p === '.' || p === '..')) throw new Error('Invalid source provenance');
+          sourceAlias = source;
+        }
+        const sha256 = claimed.document.metadata?.assetStagedSha256;
+        const stagedConversationId = claimed.document.metadata?.assetStagingConversationId;
+        if (sha256 && stagedConversationId) {
+          const actors: string[] = JSON.parse(claimed.document.metadata?.assetStagedActors ?? '[]');
+          if (!/^[a-f0-9]{64}$/.test(sha256) || !/^[a-zA-Z0-9_-]{1,64}$/.test(stagedConversationId)
+            || !Array.isArray(actors) || actors.length > 32 || actors.some(actor => !/^[a-zA-Z0-9_-]{1,64}$/.test(actor))) throw new Error('Invalid staging provenance');
+          const ref = Buffer.from(JSON.stringify(['document', workspaceId, documentId])).toString('base64url');
+          const identity = createHash('sha256').update(`${ref}\n${sha256}`).digest('hex');
+          const extension = (claimed.document.metadata?.assetDisplayName ?? claimed.document.originalName).match(/\.([a-zA-Z0-9]{1,10})$/)?.[1].toLowerCase() ?? 'bin';
+          for (const actor of actors) paths.add(`${actor}/system_${stagedConversationId}/conversation-assets/${identity}.${extension}`);
+        }
+        const legacyActors: string[] = JSON.parse(claimed.document.metadata?.assetLegacyStagedActors ?? '[]');
+        if (!Array.isArray(legacyActors) || legacyActors.length > 32
+          || legacyActors.some(actor => !/^[a-zA-Z0-9_-]{1,64}$/.test(actor))) throw new Error('Invalid image staging provenance');
+        const imageExtension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[claimed.document.mimeType];
+        const imageConversation = conversationId ?? stagedConversationId;
+        if (imageExtension && imageConversation) for (const actor of legacyActors) {
+          paths.add(`${actor}/system_${imageConversation}/generated-images/${documentId}.${imageExtension}`);
+        }
+        for (const path of paths) await this.documentService.delete(path);
+        if (sourceAlias && await this.documentService.exists(sourceAlias)) {
+          const expected = claimed.document.metadata?.assetContentSha256;
+          if (!expected || !/^[a-f0-9]{64}$/.test(expected)) throw new Error('Missing source content provenance');
+          const stream = await this.documentService.openReadStream(sourceAlias);
+          const hash = createHash('sha256'); let size = 0;
+          const timeout = setTimeout(() => stream.body.destroy(new Error('Source cleanup timed out')), 30_000);
+          try {
+            for await (const chunk of stream.body) {
+              size += chunk.length;
+              if (size > 50 * 1024 * 1024) throw new Error('Source cleanup exceeds size limit');
+              hash.update(chunk);
+            }
+          } finally { clearTimeout(timeout); stream.body.destroy(); }
+          // A coordinator may reuse a filename: a newer run's bytes are a separate output.
+          if (hash.digest('hex') === expected) await this.documentService.delete(sourceAlias);
+        }
+        cleanup.blob = 'done';
+      }
+      catch { this.logger.warn('Conversation asset blob cleanup pending', { documentId, workspaceId }); }
+    }
+    if (cleanup.index !== 'done') {
+      try {
+        const neverIndexed = claimed.document.indexingStatus === IndexingStatus.NONE && claimed.document.metadata?.autoIndexRequested === 'false'
+          && !claimed.document.indexingTaskId && !claimed.document.lastIndexedAt;
+        if (!neverIndexed) await this.indexingService.deleteDocumentIndex(documentId, workspaceId, true);
+        cleanup.index = 'done';
+      }
+      catch { this.logger.warn('Conversation asset index cleanup pending', { documentId, workspaceId }); }
+    }
+    await this.documentStore.mergeMetadata(workspaceId, documentId, { assetBlobCleanup: cleanup.blob, assetIndexCleanup: cleanup.index });
+    return { deleted: true, alreadyDeleted: claimed.alreadyDeleted, cleanup };
+  }
+
   /**
    * Delete a single document
    */
@@ -356,6 +440,10 @@ export class WorkspaceDocumentTree {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+    if (document.metadata?.assetDeletedAt) {
+      await this.deleteConversationAsset(workspaceId, documentId);
+      return;
     }
 
     if (document.isFolder) {

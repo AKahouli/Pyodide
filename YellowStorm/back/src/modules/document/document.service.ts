@@ -319,6 +319,7 @@ export class DocumentService {
     return this.getBackend().signedUrl(objectKey, {
       expirySeconds,
       write: isWrite,
+      ...(isWrite && options.createOnly ? { createOnly: true } : {}),
       ...(options.contentDisposition ? { contentDisposition: options.contentDisposition } : {}),
     });
   }

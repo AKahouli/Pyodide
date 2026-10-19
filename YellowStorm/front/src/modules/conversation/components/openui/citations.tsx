@@ -11,12 +11,21 @@ import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-li
 export interface OpenUiCitationScope {
   conversationId: string;
   messageId: string;
+  /** Saved answer part owning the image and its producer metadata. */
+  componentId?: string;
+}
+
+export interface ScopedImageCache {
+  resolve: (key: string, loader: (signal: AbortSignal) => Promise<{ blob: Blob; generated: boolean }>) => Promise<{ blob: Blob; generated: boolean }>;
+  dispose: () => void;
+  forget: (key: string) => void;
 }
 
 interface OpenUiCitationContextValue {
   /** Citations of the answer keyed by their bare reference ("1" for a `[1]` marker). */
   byReference: ReadonlyMap<string, CitationData>;
   scope?: OpenUiCitationScope;
+  imageCache?: ScopedImageCache;
 }
 
 const EMPTY: OpenUiCitationContextValue = { byReference: new Map() };

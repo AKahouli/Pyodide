@@ -108,7 +108,7 @@ export function ManageSkillsDialog({ open, onOpenChange, skills, loading, select
               placeholder={t('skills.searchPlaceholder') || 'Search skills'}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className='pl-9'
+              className='ps-9'
             />
           </div>
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -139,7 +139,7 @@ export function ManageSkillsDialog({ open, onOpenChange, skills, loading, select
                 : t('skills.noSkills') || 'No skills available'}
             </div>
           ) : (
-            <ScrollArea className='h-[440px] pr-3'>
+            <ScrollArea className='h-[440px] pe-3'>
               <div className='space-y-6'>
                 {groups.map((group) => (
                   <section key={group.key} className='space-y-2'>
@@ -158,7 +158,7 @@ export function ManageSkillsDialog({ open, onOpenChange, skills, loading, select
                             onClick={() => onToggleSkill(skill)}
                             aria-pressed={isSelected}
                             className={cn(
-                              'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent',
+                              'flex items-center gap-3 rounded-lg border p-3 text-start transition-colors hover:bg-accent',
                               isSelected && 'border-primary bg-primary/5',
                             )}>
                             <SkillLogo skill={skill} size={40} />

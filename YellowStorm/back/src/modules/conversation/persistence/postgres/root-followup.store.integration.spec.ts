@@ -1,4 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
 import { agents, catalogAgentTypes, conversations, conversationExecutions, messages, rootBackgroundJobs, rootBackgroundEvents, rootExecutions } from '../../../postgres/schema';
@@ -10,14 +13,17 @@ import type { RegisterEvidenceInput } from '../../root-work/root-work.store';
 import { Test } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
 import { RootDelegateInternalController } from '../../controllers/root-delegate-internal.controller';
 import { RootFollowupService } from '../../root-work/root-followup.service';
+import { RootWorkService } from '../../root-work/root-work.service';
 import { RootConversationReplyService } from '../../root-work/root-conversation-reply.service';
 import { RootBackgroundLifecycleService } from '../../root-work/root-background-lifecycle.service';
 import { RootBackgroundSubmissionService } from '../../root-work/root-background-submission.service';
 import { RootDelegateDefinitionService } from '../../root-work/root-delegate-definition.service';
 import { RootTemporaryDefinitionService } from '../../root-work/root-temporary-definition.service';
 import { RootFanoutService } from '../../root-work/root-fanout.service';
+import { ConversationArtifactService } from '../../services/conversation-artifact.service';
 import { RootBackgroundEventStore } from './root-background-event.store';
 import { RootBackgroundJobStore } from './root-background-job.store';
 import { RootBackgroundDriverService } from '../../root-work/root-background-driver.service';
@@ -31,8 +37,29 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
   const work = new PostgresRootWorkStore(database.db, { setContext: jest.fn() } as never);
   const followups = new RootFollowupStore(database.db);
   const id = () => randomBytes(12).toString('hex');
+  // Real execution-authority boundary fixture: a dedicated RSA signer over the
+  // live root-work/job stores, as production ADK calls are authenticated.
+  const machine = 'root-followup-store-machine-credential-000001';
+  const authorityValues: Record<string, unknown> = { NODE_ENV: 'production',
+    MCP_JWT_ISSUER: 'followup-store-test', ADK_ROOT_RUNTIME_SERVICE_TOKEN: machine };
+  const authorityConfig = { get: (name: string, fallback?: unknown) => authorityValues[name] ?? fallback } as ConfigService;
+  const authorityConversations = { findById: jest.fn() }, authorityMessages = { findById: jest.fn() };
+  const authorityUsers = { findById: jest.fn() };
+  let authorityDirectory: string, signer: McpJwtService, realWork: RootWorkService;
+  let jobs: RootBackgroundJobStore;
   let conversationId: string, actorId: string, rootId: string, childId: string;
   let state: RootNativeState;
+  beforeAll(async () => {
+    authorityDirectory = mkdtempSync(join(tmpdir(), 'ws01-followup-'));
+    const keyPath = join(authorityDirectory, 'ephemeral.pem');
+    writeFileSync(keyPath, generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey
+      .export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    authorityValues.MCP_JWT_PRIVATE_KEY_FILE = keyPath;
+    signer = new McpJwtService(authorityConfig, authorityUsers as never, {} as never, {} as never);
+    jobs = new RootBackgroundJobStore(database.db);
+    realWork = new RootWorkService(work as never, signer, authorityConversations as never,
+      authorityMessages as never, authorityUsers as never, jobs);
+  });
   beforeEach(async () => {
     conversationId = id(); actorId = id(); rootId = id(); childId = id();
     await database.db.insert(conversations).values({ id: conversationId, createdBy: actorId });
@@ -48,13 +75,19 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       nativeState: { ...state, hasBackgroundJobs: undefined,
         rootContext: { ...state.rootContext, selected_agent_id: actorId },
         scope: { ...state.scope, executionId: childId, parentExecutionId: rootId, role: 'library_worker', depth: 1 } } });
+    authorityConversations.findById.mockResolvedValue({ id: conversationId, createdBy: actorId,
+      isGroup: false, isArchived: false, rootWorkEpoch: 0, rootAgentId: actorId, members: [] });
+    authorityUsers.findById.mockResolvedValue({ id: actorId, status: 'active' });
   });
   afterEach(async () => {
     await database.db.delete(conversations).where(eq(conversations.id, conversationId));
     await database.db.delete(agents).where(eq(agents.id, actorId));
     await database.db.delete(catalogAgentTypes).where(eq(catalogAgentTypes.id, actorId));
   });
-  afterAll(async () => { await database.close(); });
+  afterAll(async () => {
+    await database.close();
+    if (authorityDirectory) rmSync(authorityDirectory, { recursive: true, force: true });
+  });
 
   async function seal(childStatus: 'completed' | 'failed' | 'outcome_unknown' = 'completed', evidence: RegisterEvidenceInput[] = []) {
     await work.completeExecution(childId, childStatus, { executionId: childId, producerAgentId: actorId,
@@ -322,6 +355,9 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
   });
 
   it('qualifies the real HTTP guard, DTO and result-reader boundary against isolated PostgreSQL', async () => {
+    // Root identity binding: the same pinned Root agent the authority chain verifies.
+    await database.db.update(conversations).set({ rootAgentId: actorId }).where(eq(conversations.id, conversationId));
+    await database.db.update(rootExecutions).set({ rootAgentId: actorId }).where(eq(rootExecutions.id, rootId));
     const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
     const grant = await nativeClaim(reserved.id);
     const owned = await followups.owned(grant);
@@ -335,16 +371,22 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       },
     } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
     {} as never);
-    const token = id();
     const results = { authorizeBackgroundExecution: async () => ({}) };
     const lifecycle = new RootBackgroundLifecycleService({} as never,
       new RootBackgroundEventStore(database.db, results as never), {} as never, {} as never,
       results as never, work as never, {} as never, service);
+    const definitions = new RootDelegateDefinitionService(realWork, {
+      getConversationDocument: async () => ({ ...(await database.db.select().from(conversations)
+        .where(eq(conversations.id, conversationId)))[0], rootAgentId: actorId }),
+    } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
+    {} as never, {} as never, {} as never, jobs, {} as never);
     const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
-      { provide: ConfigService, useValue: { get: () => token } },
+      { provide: ConfigService, useValue: authorityConfig },
+      { provide: RootWorkService, useValue: realWork },
+      { provide: RootDelegateDefinitionService, useValue: definitions },
       { provide: RootBackgroundLifecycleService, useValue: lifecycle },
-      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService, RootConversationReplyService]
-        .map((provide) => ({ provide, useValue: {} })),
+      ...[RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService, RootConversationReplyService,
+        ConversationArtifactService].map((provide) => ({ provide, useValue: {} })),
     ] }).compile();
     const app = module.createNestApplication({ logger: false });
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
@@ -353,11 +395,17 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       const endpoint = `${await app.getUrl()}/internal/root-work/${reserved.id}/background-synthesis-results/${childId}`;
       const body = { owner: grant.owner, fence: grant.fence, nativeOwner: grant.nativeOwner,
         requestDigest: owned.job.requestDigest, offset: 0 };
-      const post = (value: unknown, secret = token) => fetch(endpoint, { method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-internal-token': secret }, body: JSON.stringify(value) });
+      const authority = await realWork.issueBackgroundAuthority((await jobs.getJob(reserved.id))!);
+      const post = (value: unknown, secret: string | undefined = machine, token: string | null = authority) => fetch(endpoint,
+        { method: 'POST', headers: { 'content-type': 'application/json',
+          'x-yellowstorm-service-principal': 'adk-root-runtime',
+          ...(secret ? { 'x-yellowstorm-service-token': secret } : {}),
+          ...(token ? { 'x-yellowstorm-execution-authority': token } : {}) }, body: JSON.stringify(value) });
       expect((await post(body, 'wrong')).status).toBe(401);
+      expect((await post(body, machine, null)).status).toBe(401);
       expect((await post({ ...body, offset: -1 })).status).toBe(400);
-      expect((await post({ ...body, actorId: 'impersonation' })).status).toBe(400);
+      // The authority chain itself rejects a foreign actor selector before DTO validation.
+      expect((await post({ ...body, actorId: 'impersonation' })).status).toBe(401);
       expect((await post({ ...body, requestDigest: 'f'.repeat(64) })).status).toBe(500);
       const response = await post(body);
       expect(response.status).toBe(201);
@@ -366,8 +414,10 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       const eventBody = { ...body, events: [{ eventId: 'followup_usage', kind: 'usage',
         usage: { inputTokens: 2, outputTokens: 1 } }] };
       delete (eventBody as Partial<typeof body>).offset;
-      const postEvent = (value = eventBody) => fetch(eventEndpoint, { method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-internal-token': token }, body: JSON.stringify(value) });
+      const postEvent = (value = eventBody, token: string | undefined = authority) => fetch(eventEndpoint,
+        { method: 'POST', headers: { 'content-type': 'application/json',
+          'x-yellowstorm-service-principal': 'adk-root-runtime', 'x-yellowstorm-service-token': machine,
+          ...(token ? { 'x-yellowstorm-execution-authority': token } : {}) }, body: JSON.stringify(value) });
       expect((await postEvent({ ...eventBody, nativeOwner: 'wrong' })).status).toBe(500);
       const eventResponse = await postEvent();
       expect(eventResponse.status).toBe(201);
@@ -379,9 +429,9 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       await database.db.update(rootBackgroundJobs).set({ status: 'cancelled', fence: 2 })
         .where(eq(rootBackgroundJobs.executionId, reserved.id));
       const revoked = await post(body);
-      expect(revoked.status).toBe(500);
+      expect(revoked.status).toBe(401);
       expect(await revoked.text()).not.toContain('Child result');
-      expect((await postEvent()).status).toBe(500);
+      expect((await postEvent()).status).toBe(401);
     } finally { await app.close(); }
   });
 
@@ -413,11 +463,19 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     const jobs = new RootBackgroundJobStore(database.db);
     const lifecycle = new RootBackgroundLifecycleService(jobs, new RootBackgroundEventStore(database.db, results as never),
       {} as never, {} as never, results as never, work as never, {} as never, service);
-    const token = id();
+    const definitions = new RootDelegateDefinitionService(realWork, { getConversationDocument: async () => {
+      const [conversation] = await database.db.select().from(conversations).where(eq(conversations.id, conversationId));
+      return conversation;
+    } } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
+    {} as never, {} as never, {} as never, jobs, {} as never);
+    const token = machine;
     const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
-      { provide: ConfigService, useValue: { get: () => token } },
+      { provide: ConfigService, useValue: authorityConfig },
+      { provide: RootWorkService, useValue: realWork },
+      { provide: RootDelegateDefinitionService, useValue: definitions },
       { provide: RootBackgroundLifecycleService, useValue: lifecycle },
-      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService]
+      { provide: ConversationArtifactService, useValue: {} },
+      ...[RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService, RootConversationReplyService]
         .map((provide) => ({ provide, useValue: {} })),
     ] }).compile();
     const app = module.createNestApplication({ logger: false });
@@ -443,7 +501,7 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       const configuration = { get: (name: string, fallback: unknown) => name === 'grpcSecurity.apiKey' ? transport.key
         : name === 'conversation.rootBackgroundEnabled' ? true : name.startsWith('conversation.rootBackgroundMax') ? 1 : fallback };
       driver = new RootBackgroundDriverService(jobs, { rootBackgroundReady: readiness,
-        getChatbotClient: () => transport.client } as never, configuration as ConfigService, service);
+        getChatbotClient: () => transport.client } as never, configuration as ConfigService, service, realWork);
       driver.onModuleInit();
       const deadline = Date.now() + 90000;
       let published: typeof messages.$inferSelect[] = [];

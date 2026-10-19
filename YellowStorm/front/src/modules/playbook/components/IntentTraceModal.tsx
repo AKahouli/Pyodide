@@ -200,7 +200,7 @@ function PaneColumn({
           <div className="flex items-center gap-2">
             {visibleEntry.model && (
               <Badge variant="secondary" className="h-5 px-2 text-[10px] font-normal">
-                {modelLabel}: <span className="ml-1 font-mono">{visibleEntry.model}</span>
+                {modelLabel}: <span className="ms-1 font-mono">{visibleEntry.model}</span>
               </Badge>
             )}
             <Button
@@ -213,7 +213,7 @@ function PaneColumn({
               aria-label={copyButtonLabel}
               title={copyButtonLabel}
             >
-              {isCopied ? <ClipboardCheck className="mr-1 h-3.5 w-3.5" /> : <Clipboard className="mr-1 h-3.5 w-3.5" />}
+              {isCopied ? <ClipboardCheck className="me-1 h-3.5 w-3.5" /> : <Clipboard className="me-1 h-3.5 w-3.5" />}
               {isCopied ? copyLabel : copyButtonLabel}
             </Button>
           </div>

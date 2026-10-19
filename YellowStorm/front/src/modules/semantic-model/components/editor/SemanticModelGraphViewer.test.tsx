@@ -110,6 +110,23 @@ describe('SemanticModelGraphViewer', () => {
     expect(screen.queryByRole('button', { name: 'graphViewer.addNode' })).not.toBeInTheDocument();
   });
 
+  it('shows source_documents metadata read-only in record details', async () => {
+    apiMocks.getGraphOutline.mockResolvedValue(graph);
+    apiMocks.graph.mockResolvedValue(structure);
+    apiMocks.getGraphRecord.mockResolvedValue({ id: 'p1', values: VALUES.p1, sourceFileName: null,
+      source_documents: [{ workspaceId: 'w1', documentId: 'd1', filename: 'a.eml' }] });
+    const user = userEvent.setup();
+    renderViewer({ canEdit: true });
+    await screen.findByRole('button', { name: 'Ana · person' });
+    await showDetails(user, 'Ana');
+    const sources = await screen.findByRole('region', { name: 'sourceDocuments.title' });
+    await waitFor(() => expect(sources).toHaveTextContent('workspaceId'));
+    expect(sources).toHaveTextContent('documentId');
+    expect(sources).toHaveTextContent('a.eml');
+    expect(within(sources).getByRole('button', { name: 'graphViewer.copyValue' })).toBeInTheDocument();
+    expect(within(sources).queryByRole('button', { name: /correction|fix|edit/i })).not.toBeInTheDocument();
+  });
+
   it('opens as a centred window that closes from its backdrop', async () => {
     const onClose = vi.fn();
     renderViewer({ modal: true, onClose });

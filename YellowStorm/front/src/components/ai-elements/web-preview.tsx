@@ -159,7 +159,7 @@ export const WebPreviewConsole = ({ className, logs = [], children, ...props }: 
   return (
     <Collapsible className={cn('border-t bg-muted/50 font-mono text-sm', className)} onOpenChange={setConsoleOpen} open={consoleOpen} {...props}>
       <CollapsibleTrigger asChild>
-        <Button className='flex w-full items-center justify-between p-4 text-left font-medium hover:bg-muted/50' variant='ghost'>
+        <Button className='flex w-full items-center justify-between p-4 text-start font-medium hover:bg-muted/50' variant='ghost'>
           Console
           <ChevronDownIcon className={cn('h-4 w-4 transition-transform duration-200', consoleOpen && 'rotate-180')} />
         </Button>

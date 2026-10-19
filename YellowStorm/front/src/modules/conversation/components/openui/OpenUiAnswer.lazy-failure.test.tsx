@@ -5,7 +5,10 @@ import { OpenUiAnswer } from './OpenUiAnswer';
 const loader = vi.hoisted(() => ({ load: vi.fn() }));
 
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }) }));
-vi.mock('../../store', () => ({ useConversationStore: { getState: () => ({ sendMessage: vi.fn() }) } }));
+vi.mock('../../store', () => ({ useConversationStore: Object.assign(
+  (select: (state: { messages: unknown[] }) => unknown) => select({ messages: [] }),
+  { getState: () => ({ sendMessage: vi.fn() }) },
+) }));
 vi.mock('./preload', () => ({ loadOpenUiRenderer: loader.load }));
 
 const stub = { default: ({ content }: { content: string }) => <div data-testid='openui-stub'>{content}</div> };

@@ -5,6 +5,8 @@ import { useFileViewerStore } from '@/modules/file-viewer/store';
 import OpenUiRenderer from './OpenUiRenderer';
 import { ReportPanelSidebar } from './ReportPanelSidebar';
 import { initialState, reportPanelStore } from './report-panel-store';
+import { getGeneratedImageUrl } from '../../api';
+vi.mock('./ConversationImageActions', () => ({ ConversationImageActions: ({ source }: { source: string }) => <span data-testid='image-actions' data-source={source} /> }));
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: vi.fn(),
@@ -12,7 +14,7 @@ vi.mock('@/modules/file-viewer', () => ({
   getMimeTypeFromFilename: () => undefined,
   useFileViewerDisplayMode: () => 'sidebar',
 }));
-vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn() }));
+vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn(), getGeneratedImageUrl: vi.fn(), fetchSlideExportImage: vi.fn() }));
 
 const CHAT = 'root = Card([t])\nt = TextContent("Short answer.")';
 const reportProgram = (title: string, cell = 'EMEA') => [
@@ -45,6 +47,58 @@ afterEach(() => {
 });
 
 describe('report in an OpenUI answer', () => {
+  it('resolves a generated slide background before showing its preview and releases it on unmount', async () => {
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/image.png', mimeType: 'image/png', fileName: 'image.png' });
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-slide');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const view = mount('root = Presentation({title: "Generated deck"}, [s1])\ns1 = Slide("s1", MinimalTitle("Generated cover", "", "", {imageUrl: "", name: "", role: ""}, "title-top", "generated-image:0123456789abcdef01234567"))', { citationScope: scope });
+    await screen.findByRole('button', { name: /view/i });
+    fireEvent.click(viewButton());
+    await screen.findByTestId('report-panel');
+    await waitFor(() => expect(document.querySelector('[style*="blob:generated-slide"]')).not.toBeNull());
+    expect(getGeneratedImageUrl).toHaveBeenCalledWith('c', 'm', '0123456789abcdef01234567', expect.any(AbortSignal));
+    expect(screen.getAllByTestId('image-actions').some((element) => element.dataset.source === 'generated-image:0123456789abcdef01234567')).toBe(true);
+    expect(screen.getAllByTestId('image-actions').every((element) => element.closest('button') === null)).toBe(true);
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith('blob:generated-slide');
+    create.mockRestore(); revoke.mockRestore(); fetchImage.mockRestore();
+  });
+  it('preserves generated image selectors for report image actions in the preview', async () => {
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/image.png', mimeType: 'image/png', fileName: 'image.png' });
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:report-image');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const view = mount('root = Report({title: "Image report"}, [p])\np = Page("page", ContentPage([Image("generated-image:0123456789abcdef01234567", "Saved chart")]))', { citationScope: scope });
+    fireEvent.click(await screen.findByRole('button', { name: /view/i }));
+    await screen.findByRole('img', { name: 'Saved chart' });
+    expect(screen.getAllByTestId('image-actions').some((element) => element.dataset.source === 'generated-image:0123456789abcdef01234567')).toBe(true);
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith('blob:report-image');
+    create.mockRestore(); revoke.mockRestore(); fetchImage.mockRestore();
+  });
+  it('clears the artifact owner when an open presentation unmounts', async () => {
+    const view = mount('root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", MinimalTitle("Japan"))');
+    await screen.findByRole('button', { name: /view/i });
+    fireEvent.click(viewButton());
+    await screen.findByTestId('report-panel');
+    view.rerender(<ReportPanelSidebar />);
+    await waitFor(() => expect(reportPanelStore.getState().activeDetailedViewId).toBeNull());
+  });
+  it('opens a stock slide deck, navigates thumbnails, and closes the shared preview', async () => {
+    const slides = 'root = Presentation({title: "Japan slides"}, [s1, s2])\ns1 = Slide("s1", MinimalTitle("Visit Japan"))\ns2 = Slide("s2", ContentClassic("Places to explore", ["Tokyo", "Kyoto"]))';
+    mount(`${CHAT}\n\n${slides}`);
+    await screen.findByText('Short answer.');
+    fireEvent.click(viewButton());
+    const panel = await screen.findByTestId('report-panel');
+    expect(within(panel).getByRole('button', { name: 'openui.slides.export.label' })).toBeInTheDocument();
+    const second = await within(panel).findByRole('button', { name: 'Go to slide 2' });
+    fireEvent.click(second);
+    expect(within(panel).getByLabelText('Slide 2 of 2')).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole('button', { name: 'openui.report.close' }));
+    await waitFor(() => expect(screen.queryByTestId('report-panel')).not.toBeInTheDocument());
+  });
+
   it('renders the chat answer and the report chip inline, with the panel closed', async () => {
     mount(answer('Q3 mail report'));
     expect(await screen.findByText('Short answer.')).toBeInTheDocument();
@@ -66,6 +120,7 @@ describe('report in an OpenUI answer', () => {
     fireEvent.click(viewButton());
     const panel = await screen.findByTestId('report-panel');
     await waitFor(() => expect(within(panel).getByText('Highlights')).toBeInTheDocument());
+    expect(within(panel).queryByRole('button', { name: 'openui.slides.export.label' })).not.toBeInTheDocument();
     expect(within(panel).getByText('EMEA')).toBeInTheDocument();
     expect(within(panel).getByText('48,210')).toBeInTheDocument();
 

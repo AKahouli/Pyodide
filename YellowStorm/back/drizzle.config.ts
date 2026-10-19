@@ -11,6 +11,6 @@ export default defineConfig({
   schema: './src/modules/postgres/schema/index.ts',
   out: './drizzle',
   dbCredentials: {
-    url: `postgresql://${user}:${password}@${host}:${port}/${database}`,
+    url: `postgresql://${user}:${password}@${host}:${port}/${database}?options=-c%20lock_timeout%3D5s`,
   },
 });

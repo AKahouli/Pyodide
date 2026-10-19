@@ -48,7 +48,7 @@ export function MultiSelect({ options, value, onValueChange, placeholder = 'Sele
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button ref={triggerRef} variant='outline' role='combobox' aria-expanded={open} className='w-full justify-between h-auto min-h-9 font-normal'>
-          <div className='flex flex-wrap gap-1 flex-1 text-left'>
+          <div className='flex flex-wrap gap-1 flex-1 text-start'>
             {selectedLabels.length > 0 ? (
               selectedLabels.map((option) => (
                 <Badge key={option.value} variant='secondary' className='text-xs font-normal'>
@@ -56,7 +56,7 @@ export function MultiSelect({ options, value, onValueChange, placeholder = 'Sele
                   <span
                     role='button'
                     tabIndex={0}
-                    className='ml-1 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2 hover:bg-muted-foreground/20'
+                    className='ms-1 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2 hover:bg-muted-foreground/20'
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => remove(option.value, e)}
                     onKeyDown={(e) => {
@@ -73,7 +73,7 @@ export function MultiSelect({ options, value, onValueChange, placeholder = 'Sele
               <span className='text-muted-foreground'>{placeholder}</span>
             )}
           </div>
-          <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
+          <ChevronsUpDown className='ms-2 h-4 w-4 shrink-0 opacity-50' />
         </Button>
       </PopoverTrigger>
       <PopoverContent className='p-0' align='start' style={{ width: triggerWidth > 0 ? triggerWidth : undefined }}>
@@ -84,7 +84,7 @@ export function MultiSelect({ options, value, onValueChange, placeholder = 'Sele
             <CommandGroup>
               {options.map((option) => (
                 <CommandItem key={option.value} value={option.label} onSelect={() => toggle(option.value)}>
-                  <div className={cn('mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary', value.includes(option.value) ? 'bg-primary text-primary-foreground' : 'opacity-50')}>{value.includes(option.value) && <Check className='h-3 w-3' />}</div>
+                  <div className={cn('me-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary', value.includes(option.value) ? 'bg-primary text-primary-foreground' : 'opacity-50')}>{value.includes(option.value) && <Check className='h-3 w-3' />}</div>
                   <div className='flex flex-col'>
                     <span className='text-sm'>{option.label}</span>
                     {option.description && <span className='text-xs text-muted-foreground'>{option.description}</span>}

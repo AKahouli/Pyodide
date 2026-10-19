@@ -7,7 +7,7 @@ import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
 import { pickArchiveLimits, type ArchiveReadLimits } from '../domain/semantic-data-connection.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -17,9 +17,8 @@ import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import { derivationsRefreshedWith, type RuntimeDerivation } from '../domain/semantic-derived-source.types';
-import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService, type AiExtractionIdentity, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticGraphSearchService } from './semantic-graph-search.service';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 import { graphExport, graphFieldKey, graphRecordValues, graphWindowOutline, searchGraphValues, type ExportFieldChoice } from '../domain/graph-outline';
 import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
@@ -168,7 +167,6 @@ export class SemanticPopulationRefreshService {
     private readonly documents: WorkspaceDocumentService,
     private readonly specifications: ModelSpecificationService,
     private readonly runtime: SemanticRuntimeClientService,
-    private readonly aiExtractionAgent: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
     private readonly derivedSources?: SemanticDerivedSourceService,
     @Optional() private readonly graphSearch?: SemanticGraphSearchService,
@@ -197,13 +195,12 @@ export class SemanticPopulationRefreshService {
 
   /**
    * Identity of the AI extractor actually used, or null when no mapping needs
-   * it. Resolved from the admin-managed default agent so a model change there
-   * changes the revision identity.
+   * it. Resolved from the runtime so profile changes alter revision identity.
    */
   private async aiExtractionIdentity(
     sources: object[],
     derivations: RuntimeDerivation[] = [],
-  ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
+  ): Promise<AiExtractionIdentity | null> {
     // A derived field read out of a source field's text by AI.
     const usesAi = derivations.some((derivation) => derivation.aiSettings !== undefined)
       || sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
@@ -211,12 +208,7 @@ export class SemanticPopulationRefreshService {
       || Object.values((source as { fieldExtractions?: Record<string, { extractionStrategy?: string }> }).fieldExtractions ?? {})
         .some((field) => field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
     if (!usesAi) return null;
-    const agent = await this.aiExtractionAgent.resolveAgent();
-    return {
-      agentSlug: agent.slug,
-      model: agent.llmModel ?? null,
-      contractVersion: AI_EXTRACTION_CONTRACT_VERSION,
-    };
+    return this.runtime.getAiExtractionIdentity();
   }
 
   async getJob(userId: string, modelId: string, jobId: string) {
@@ -244,6 +236,44 @@ export class SemanticPopulationRefreshService {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const jobs = await this.runtime.listJobs(modelId, userId, Math.min(Math.max(Math.trunc(limit) || 20, 1), 100));
     return Promise.all(jobs.map((job) => this.nameRemovedSources(job)));
+  }
+
+  /** Cross-model queue/history, always restricted to jobs submitted by this actor. */
+  async myJobs(userId: string, query: { modelId?: string; view: 'active' | 'history'; page: number; limit: number }) {
+    const models = await this.models.listJobModels(userId);
+    if (query.modelId && !models.some((model) => model.id === query.modelId)) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    }
+    const scoped = query.modelId ? models.filter((model) => model.id === query.modelId) : models;
+    const page = scoped.length ? await this.runtime.listMyJobs(userId, scoped.map((model) => model.id), {
+      view: query.view, page: query.page, limit: query.limit,
+    }) : { items: [], pagination: { page: query.page, limit: query.limit, total: 0, totalPages: 0 }, activeCount: 0, queuedCount: 0 };
+    const byId = new Map(scoped.map((model) => [model.id, model]));
+    return { ...page,
+      items: page.items.flatMap((job) => {
+        const model = job.modelId ? byId.get(job.modelId) : undefined;
+        if (!model) return [];
+        const conceptId = job.scope?.kind === 'concept' ? job.scope.conceptId : undefined;
+        return [{ ...job, modelName: model.name, canManage: ['owner', 'editor'].includes(model.role),
+          conceptLabel: conceptId ? model.conceptLabels[conceptId] ?? conceptId : null }];
+      }),
+      models: models.map(({ id, name, role }) => ({ id, name, canManage: ['owner', 'editor'].includes(role) })),
+    };
+  }
+
+  async stopMyJob(userId: string, jobId: string, onlyQueued: boolean) {
+    const job = await this.runtime.getJob(jobId, userId);
+    if (!job.modelId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    await this.models.requireRole(userId, job.modelId, ['owner', 'editor']);
+    return this.runtime.cancelJob(jobId, userId, onlyQueued);
+  }
+
+  async removeMyQueuedJobs(userId: string, modelId?: string) {
+    const models = await this.models.listJobModels(userId);
+    if (modelId) await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    const editable = models.filter((model) => ['owner', 'editor'].includes(model.role) && (!modelId || model.id === modelId));
+    if (!editable.length) return { cancelled: 0, skipped: 0 };
+    return this.runtime.cancelMyQueuedJobs(userId, editable.map((model) => model.id));
   }
 
   /** The data update of this model still running for this person, or null. */

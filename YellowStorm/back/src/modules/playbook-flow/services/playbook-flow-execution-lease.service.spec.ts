@@ -19,6 +19,7 @@ describe('PlaybookFlowExecutionLeaseService', () => {
 
     // Mirrors the table: unique (scopeKey, slot) and (executionId, scopeType); an expired slot is taken over.
     leaseRepository = {
+      authorityGeneration: jest.fn(),
       claimSlot: jest.fn(async (slot: ExecutionLeaseSlot) => {
         const holder = leases.find((lease) => lease.scopeKey === slot.scopeKey && lease.slot === slot.slot);
         if (holder && live(holder)) return false;

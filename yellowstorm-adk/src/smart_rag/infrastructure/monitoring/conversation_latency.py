@@ -126,6 +126,11 @@ class ConversationLatencyTrace:
     session_runner_setup: SessionRunnerSetupMilestones = field(default_factory=SessionRunnerSetupMilestones)
     diagnostics: RunnerPreModelDiagnostics = field(default_factory=RunnerPreModelDiagnostics)
     session_lookup_sequence: int = 0
+    # First capacity-gated call only; diagnostics never serialized to protobuf.
+    provider_timing: dict[str, int] = field(default_factory=dict)
+    provider_http_timing: dict[str, int] = field(default_factory=dict)
+    provider_http_metrics: dict[str, float] = field(default_factory=dict)
+    provider_stream_timing: dict[str, int] = field(default_factory=dict)
     # Diagnostic-only correlation for the runner_pre_model log; empty until a
     # run site notes it. Not part of protobuf/UI metrics.
     session_id: str = ""
@@ -151,10 +156,70 @@ class ConversationLatencyTrace:
             self.llm_request_start_perf_ns = time.perf_counter_ns()
             self.llm_request_start_epoch_ms = time.time_ns() / 1_000_000
 
+    def claim_provider_timing(self) -> bool:
+        if self.provider_timing:
+            return False
+        self.provider_timing["acquire_start"] = time.perf_counter_ns()
+        return True
+
+    def mark_provider_timing(self, milestone: str) -> None:
+        self.provider_timing.setdefault(milestone, time.perf_counter_ns())
+
+    def build_provider_timing_breakdown(self) -> dict:
+        """Separate admission from gateway dispatch without redefining provider_ttft.
+
+        First SDK event can precede text/reasoning; upstream time includes SDK,
+        network and gateway time, rather than claiming pure model inference.
+        """
+        stamps = self.provider_timing
+        stages = [
+            ("capacity_acquire_ms", stamps.get("acquire_start"), stamps.get("acquire_end")),
+            ("capacity_running_transition_ms", stamps.get("acquire_end"), stamps.get("dispatch")),
+            ("upstream_first_chunk_ms", stamps.get("dispatch"), stamps.get("first_chunk")),
+            ("upstream_to_adk_response_ms", stamps.get("dispatch"), self.llm_first_delta_perf_ns),
+            ("sdk_first_chunk_to_adk_response_ms", stamps.get("first_chunk"), self.llm_first_delta_perf_ns),
+            ("adapter_to_capacity_ms", self.llm_request_start_perf_ns, stamps.get("acquire_start")),
+        ]
+        return {name: duration for name, start, end in stages
+                if (duration := self._monotonic_ms(start, end)) is not None}
+
+    def build_provider_http_breakdown(self) -> dict:
+        stamps = self.provider_http_timing
+        pairs = [
+            ('connect_tcp_ms', 'connection.connect_tcp.started', 'connection.connect_tcp.complete'),
+            ('tls_ms', 'connection.start_tls.started', 'connection.start_tls.complete'),
+            ('http_headers_ms', 'request_start', 'response_headers'),
+        ]
+        result = {name: duration for name, start, end in pairs
+                  if (duration := self._monotonic_ms(stamps.get(start), stamps.get(end))) is not None}
+        result.update(self.provider_http_metrics)
+        return result
+
+    def build_provider_stream_breakdown(self) -> dict:
+        """Client-observed intervals, never an estimate of remote queue time."""
+        http, stream = self.provider_http_timing, self.provider_stream_timing
+        pairs = [
+            ('dispatch_to_request_sent_ms', self.provider_timing.get('dispatch'), http.get('request_sent')),
+            ('request_sent_to_headers_ms', http.get('request_sent'), http.get('response_headers')),
+            ('headers_to_first_body_ms', http.get('response_headers'), http.get('first_body')),
+            ('first_body_to_native_event_ms', http.get('first_body'), stream.get('first_event')),
+            ('native_to_reasoning_item_ms', stream.get('first_event'), stream.get('reasoning_item')),
+            ('native_to_summary_ms', stream.get('first_event'), stream.get('summary')),
+            ('native_to_text_ms', stream.get('first_event'), stream.get('text')),
+            ('native_to_tool_ms', stream.get('first_event'), stream.get('tool')),
+            ('useful_native_to_adk_ms', stream.get('useful'), self.llm_first_delta_perf_ns),
+            ('native_to_terminal_ms', stream.get('first_event'), stream.get('terminal')),
+        ]
+        return {name: duration for name, start, end in pairs
+                if (duration := self._monotonic_ms(start, end)) is not None}
+
     def mark_llm_first_delta(self) -> None:
         if self.llm_first_delta_perf_ns is None:
             self.llm_first_delta_perf_ns = time.perf_counter_ns()
             self.llm_first_delta_epoch_ms = time.time_ns() / 1_000_000
+            if self.provider_timing:
+                from .latency_diagnostics import emit_provider_timing_log
+                emit_provider_timing_log(self)
 
     def mark_adk_first_delta_forwarded(self) -> None:
         if self.adk_first_delta_forwarded_perf_ns is None:

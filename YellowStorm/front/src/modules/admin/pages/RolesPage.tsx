@@ -267,7 +267,7 @@ export function RolesPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchRoles} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -287,7 +287,7 @@ export function RolesPage() {
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button onClick={openCreateDialog}>
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="me-2 h-4 w-4" />
             {t('roles.actions.create')}
           </Button>
         </div>
@@ -316,7 +316,7 @@ export function RolesPage() {
                   <TableHead className="hidden lg:table-cell">{t('roles.table.columns.priority')}</TableHead>
                   <TableHead className="hidden xl:table-cell">{t('roles.table.columns.created')}</TableHead>
                   <TableHead>{t('roles.table.columns.status')}</TableHead>
-                  <TableHead className="text-right">{t('roles.table.columns.actions')}</TableHead>
+                  <TableHead className="text-end">{t('roles.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -335,7 +335,7 @@ export function RolesPage() {
                             <span className="font-medium">{role.name}</span>
                             {role.isSystem && (
                               <Badge variant="secondary" className="text-xs">
-                                <Lock className="mr-1 h-3 w-3" />
+                                <Lock className="me-1 h-3 w-3" />
                                 System
                               </Badge>
                             )}
@@ -383,7 +383,7 @@ export function RolesPage() {
                           onCheckedChange={() => handleToggleActive(role)}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
@@ -420,8 +420,8 @@ export function RolesPage() {
                 <>
                   {t('roles.form.editTitle')}
                   {editingRole.isSystem && (
-                    <Badge variant="secondary" className="ml-2">
-                      <Lock className="mr-1 h-3 w-3" />
+                    <Badge variant="secondary" className="ms-2">
+                      <Lock className="me-1 h-3 w-3" />
                       {t('roles.table.systemBadge')}
                     </Badge>
                   )}
@@ -519,7 +519,7 @@ export function RolesPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {editingRole ? t('roles.form.saving.update') : t('roles.form.saving.create')}
                 </>
               ) : editingRole ? (
@@ -549,7 +549,7 @@ export function RolesPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t('roles.modals.delete.loading')}
                 </>
               ) : (

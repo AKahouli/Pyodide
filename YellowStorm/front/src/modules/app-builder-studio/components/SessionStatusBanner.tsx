@@ -71,7 +71,7 @@ export function SessionStatusBanner({
             className='shrink-0'
             onClick={onDismissReady}
           >
-            <X className='mr-1 h-3.5 w-3.5' aria-hidden />
+            <X className='me-1 h-3.5 w-3.5' aria-hidden />
             {t('session.templateClone.dismiss')}
           </Button>
         </div>
@@ -91,7 +91,7 @@ export function SessionStatusBanner({
             className='shrink-0'
             onClick={onDismissAppBuilder}
           >
-            <X className='mr-1 h-3.5 w-3.5' aria-hidden />
+            <X className='me-1 h-3.5 w-3.5' aria-hidden />
             {t('session.fromAppBuilder.dismiss')}
           </Button>
         </div>

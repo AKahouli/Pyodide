@@ -189,7 +189,7 @@ def test_derived_source_rules_name_the_derivation_the_reason_and_the_field(overr
     assert run_code(request) == found["code"]
 
 
-def test_chained_derivations_are_reported_on_the_concept_that_feeds_another():
+def test_cyclic_derivations_are_reported_while_an_acyclic_chain_is_allowed():
     spec = derived_spec()
     spec["concepts"].append({"conceptId": "city", "key": "city", "label": "City",
                              "identity": {"namespace": "city", "keyComponents": ["city_id"]},
@@ -197,11 +197,16 @@ def test_chained_derivations_are_reported_on_the_concept_that_feeds_another():
     second = {"derivationId": "d2", "conceptId": "city", "sourceConceptId": "org",
               "fieldMappings": [{"sourceAttribute": "org_id", "targetAttribute": "city_id"}],
               "conflictRule": "most_frequent", "mappingVersion": "v1"}
-    request = plan([contract_sheet()], spec=spec, derivations=[derivation(), second])
+    acyclic = plan([contract_sheet()], spec=spec, derivations=[second, derivation()])
+    assert errors(check_model(acyclic)) == []
+    third = {"derivationId": "d3", "conceptId": "contract", "sourceConceptId": "city",
+             "fieldMappings": [{"sourceAttribute": "city_id", "targetAttribute": "contract_no"}],
+             "conflictRule": "most_frequent", "mappingVersion": "v1"}
+    request = plan([contract_sheet()], spec=spec, derivations=[derivation(), second, third])
     found = errors(check_model(request))
-    assert [item["code"] for item in found] == ["chained_derivation"]
-    assert found[0]["sourceId"] == "d2"
-    assert run_code(request) == "chained_derivation"
+    assert [item["code"] for item in found] == ["cyclic_derivation"] * 3
+    assert {item["sourceId"] for item in found} == {"d1", "d2", "d3"}
+    assert run_code(request) == "cyclic_derivation"
 
 
 def test_every_problem_is_listed_at_once_with_what_it_concerns():

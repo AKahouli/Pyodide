@@ -271,7 +271,7 @@ export function AppearancePage() {
                     onClick={() => void persistAppearance()}
                     disabled={!pageReady || persistBusy || !hasUnsavedTheme}
                     className='sm:w-auto'>
-                    <Globe2 className='mr-2 h-4 w-4' />
+                    <Globe2 className='me-2 h-4 w-4' />
                     {saving ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
                   </Button>
                 </div>
@@ -364,13 +364,13 @@ export function AppearancePage() {
                 variant='outline'
                 onClick={() => emailLogoInputRef.current?.click()}
                 disabled={uploadingEmailLogo || resettingEmailLogo}>
-                <Upload className='mr-2 h-4 w-4' />
+                <Upload className='me-2 h-4 w-4' />
                 {t('appearance.emailLogo.chooseFile')}
               </Button>
               <Button
                 onClick={saveEmailLogo}
                 disabled={!emailLogoFile || uploadingEmailLogo || resettingEmailLogo}>
-                <Save className='mr-2 h-4 w-4' />
+                <Save className='me-2 h-4 w-4' />
                 {uploadingEmailLogo
                   ? t('appearance.emailLogo.actions.saving')
                   : t('appearance.emailLogo.actions.save')}
@@ -380,7 +380,7 @@ export function AppearancePage() {
                   variant='destructive'
                   onClick={resetEmailLogo}
                   disabled={uploadingEmailLogo || resettingEmailLogo}>
-                  <Trash2 className='mr-2 h-4 w-4' />
+                  <Trash2 className='me-2 h-4 w-4' />
                   {resettingEmailLogo
                     ? t('appearance.emailLogo.actions.removing')
                     : t('appearance.emailLogo.actions.remove')}

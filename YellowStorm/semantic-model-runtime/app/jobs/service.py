@@ -7,6 +7,7 @@ from typing import Protocol
 from app.population.run_limits import NON_IDENTITY_LIMIT_KEYS, identity_limits
 
 from .models import Admission, JobCommand
+from .asset_admission import without_asset_authority, admission_candidate
 
 
 # Search index jobs carry how to build (embedding batch size, parallel calls…) under this payload key.
@@ -17,6 +18,7 @@ def _identity_command(dump: dict) -> dict:
     """The command without what only decides how a job is performed (the save and index build
     limits of a run, the build settings of an index job): changing them must not make the same
     job, under the same idempotency key, a different payload."""
+    dump = without_asset_authority(dump)
     payload = dump.get("payload")
     if not isinstance(payload, dict):
         return dump
@@ -65,7 +67,9 @@ class JobService:
         idempotency_key: str,
         task_name: str,
         queue_name: str,
+        asset_admission_key: str | None = None,
     ) -> Admission:
+        admission_candidate(command, asset_admission_key or idempotency_key)
         canonical = {
             "jobType": job_type,
             "command": _identity_command(command.model_dump(by_alias=True, mode="json")),

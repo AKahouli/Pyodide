@@ -51,7 +51,7 @@ function AllAppsItem({
       aria-label={compact ? label : undefined}
       title={label}
       className={cn(
-        'group/nav relative flex w-full min-w-0 items-center rounded-xl text-left text-sm transition-colors duration-150',
+        'group/nav relative flex w-full min-w-0 items-center rounded-xl text-start text-sm transition-colors duration-150',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         compact ? 'justify-center px-1.5 py-2' : 'gap-3 px-2.5 py-2.5',
         active
@@ -132,10 +132,10 @@ function CategoryRow({
         onClick={onSelect}
         aria-current={active ? 'true' : undefined}
         className={cn(
-          'flex min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-sm transition-colors',
+          'flex min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-start text-sm transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
           active ? 'text-foreground' : 'text-foreground/85',
-          isSuperAdmin && 'pr-1',
+          isSuperAdmin && 'pe-1',
         )}
       >
         <span
@@ -294,7 +294,7 @@ export function CategorySidebar({
             onClick={() => setCategoriesOpen((open) => !open)}
             aria-expanded={categoriesOpen}
             className={cn(
-              'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-1 pr-1.5 text-left',
+              'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 ps-1 pe-1.5 text-start',
               'text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground',
               'transition-colors hover:bg-muted/45 hover:text-foreground',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
@@ -309,7 +309,7 @@ export function CategorySidebar({
             />
             <span className='truncate'>{t('categories.heading')}</span>
             {!loading && !error && categoryCount > 0 ? (
-              <span className='ml-auto shrink-0 rounded-full bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground'>
+              <span className='ms-auto shrink-0 rounded-full bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground'>
                 {categoryCount}
               </span>
             ) : null}

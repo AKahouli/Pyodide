@@ -479,5 +479,7 @@
   "folder.dropToRootSuccessDescription": "Moved {{name}} to root",
   "folder.rename": "Rename",
   "folder.delete": "Delete",
-  "folder.deleteConfirm": "Are you sure you want to delete this folder? This will also delete all its contents."
+  "folder.deleteConfirm": "Are you sure you want to delete this folder? This will also delete all its contents.",
+  "store.errors.uploadSettingsFailed": "Upload limits could not be loaded. Please try again.",
+  "uploadDropZone.limits": "Up to {{count}} files, max {{size}} each"
 }

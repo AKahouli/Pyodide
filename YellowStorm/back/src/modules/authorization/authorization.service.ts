@@ -180,16 +180,8 @@ export class AuthorizationService implements OnApplicationBootstrap {
   }
 
   async getUserRoles(userId: string): Promise<RoleResponse[]> {
-    const user = await this.userStore.findByIdWithRoles(userId);
-    if (!user || user.roles.length === 0) {
-      return [];
-    }
-
-    const roles = await this.roleStore.findByIds(user.roles.map((r) => r.id));
-    return user.roles
-      .map((ref) => roles.get(ref.id))
-      .filter((role): role is RoleRecord => Boolean(role) && role!.isActive)
-      .map((role) => this.toRoleResponse(role));
+    const roles = await this.roleStore.findActiveForUser(userId);
+    return roles.map((role) => this.toRoleResponse(role));
   }
 
   // ==================== Permission Resolution ====================

@@ -152,7 +152,7 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
             ) : (
               <div className='flex flex-col p-2'>
                 {attentionItems.slice(0, 8).map((item, index) => (
-                  <button key={`${item.scopeId}-${index}`} type='button' onClick={() => onSelectScope(item.scopeId, item.tab)} className='grid grid-cols-[28px_1fr_auto] gap-3 rounded-xl p-2.5 text-left transition hover:bg-muted/60'>
+                  <button key={`${item.scopeId}-${index}`} type='button' onClick={() => onSelectScope(item.scopeId, item.tab)} className='grid grid-cols-[28px_1fr_auto] gap-3 rounded-xl p-2.5 text-start transition hover:bg-muted/60'>
                     <span className='mt-0.5 grid h-7 w-7 place-items-center rounded-lg bg-red-500/15 text-red-600 dark:text-red-400'><AlertTriangle className='h-4 w-4' /></span>
                     <span className='min-w-0'>
                       <span className='block truncate text-sm font-medium'>{item.label}</span>
@@ -173,7 +173,7 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
 }
 
 function KpiTile({ label, value, children, accent, tone, active, onClick }: Readonly<{ label: string; value: string | number; children?: ReactNode; accent?: boolean; tone?: 'warn'; active?: boolean; onClick?: () => void }>): JSX.Element {
-  const className = cn('rounded-2xl border bg-card p-4 text-left shadow-sm transition', active && 'border-primary ring-2 ring-primary/20', onClick && 'hover:-translate-y-0.5 hover:border-primary/40');
+  const className = cn('rounded-2xl border bg-card p-4 text-start shadow-sm transition', active && 'border-primary ring-2 ring-primary/20', onClick && 'hover:-translate-y-0.5 hover:border-primary/40');
   const content = (
     <>
       <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{label}</p>
@@ -221,7 +221,7 @@ function ScopeCard({ scope, overview, onOpen, onClone, onDelete, isCloning, isDe
   const dryRun = overview?.latestDryRun?.status ? `${dryRunLabel}: ${translateDryRunStatus(overview.latestDryRun.status)}` : noDryRun;
   return (
     <article className='group relative rounded-xl border bg-card transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm'>
-      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 pr-24 text-left sm:pr-20'>
+      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 pe-24 text-start sm:pe-20'>
         <ReadinessRing score={score} />
         <span className='min-w-0'>
           <span className='block truncate font-medium'>{scope.name}</span>

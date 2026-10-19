@@ -235,7 +235,7 @@ export function AppBuilderStudioHeader({
                 <DropdownMenuContent align='end'>
                   {canRename && (
                     <DropdownMenuItem onClick={() => setRenameOpen(true)} className='cursor-pointer'>
-                      <Pencil className='mr-2 size-4' />
+                      <Pencil className='me-2 size-4' />
                       {t('header.actions.rename')}
                     </DropdownMenuItem>
                   )}
@@ -244,7 +244,7 @@ export function AppBuilderStudioHeader({
                       onClick={() => setDeleteOpen(true)}
                       className='cursor-pointer text-destructive focus:text-destructive'
                     >
-                      <Trash2 className='mr-2 size-4' />
+                      <Trash2 className='me-2 size-4' />
                       {t('header.actions.delete')}
                     </DropdownMenuItem>
                   )}

@@ -17,6 +17,8 @@ from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Respo
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.datasource.attribute_extraction import (MAX_EVIDENCE_SECTIONS, AttributeExtractionError, extract_attributes,
+                                                profile_from_env, uses_ai_extraction, validate_identity)
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
                              ManualBatchCommand, ManualCommitCommand,
@@ -35,6 +37,7 @@ from app.population.age_projection import (ProjectionUnavailable, projection_gra
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.population.model_check import check_model
+from app.population.field_discovery import FieldDiscoveryRequest, discover_fields
 from app.workers.celery_app import POPULATION_QUEUES
 
 events = structlog.get_logger(__name__)
@@ -48,6 +51,71 @@ def _engine_key(idempotency_key: str) -> str:
     key = f"{idempotency_key}:{population_engine_version()}"
     return key if len(key) <= 200 else "sha256:" + hashlib.sha256(key.encode()).hexdigest()
 
+
+def _ai_http_error(error: AttributeExtractionError) -> HTTPException:
+    if error.code.endswith("rebuild_required"):
+        code = 409
+    elif error.code == "attribute_extraction_throttled":
+        code = 429
+    elif error.code in ("ai_extraction_not_configured", "ai_extraction_configuration_invalid"):
+        code = 503
+    elif error.code in ("no_evidence", "ai_extraction_identity_missing"):
+        code = 422
+    else:
+        code = 502
+    return HTTPException(status_code=code, detail=error.code)
+
+
+@router.get("/ai-extraction/profile")
+async def extraction_profile() -> dict[str, Any]:
+    """Non-secret runtime-owned profile, protected by the existing service guard."""
+    try:
+        return profile_from_env().identity
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
+
+
+class ExtractionAttribute(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(min_length=1, max_length=80)
+    label: str | None = Field(default=None, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    type: str = Field(default="string", max_length=32)
+
+
+class ExtractionSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sectionPk: str | int
+    blockPk: str | int
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class ExtractionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    modelId: str = Field(min_length=1, max_length=128)
+    conceptId: str = Field(min_length=1, max_length=128)
+    conceptLabel: str = Field(default="", max_length=200)
+    documentId: str = Field(default="", max_length=200)
+    fileName: str = Field(default="", max_length=500)
+    attributes: list[ExtractionAttribute] = Field(min_length=1, max_length=50)
+    sections: list[ExtractionSection] = Field(min_length=1, max_length=MAX_EVIDENCE_SECTIONS)
+    aiExtraction: dict[str, Any] | None = None
+    multiple: bool = False
+
+
+@router.post("/ai-extraction/extract")
+async def extract_evidence(body: ExtractionRequest) -> dict[str, Any]:
+    """Standalone inference from supplied evidence; never fetches backend assets."""
+    try:
+        identity = body.aiExtraction if body.aiExtraction is not None else profile_from_env().identity
+        return await extract_attributes(
+            model_id=body.modelId, concept_id=body.conceptId, concept_label=body.conceptLabel,
+            document_id=body.documentId, file_name=body.fileName,
+            attributes=[item.model_dump() for item in body.attributes],
+            sections=[item.model_dump() for item in body.sections], ai_extraction=identity, multiple=body.multiple)
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
+
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 async def request_run(
     command: PopulationCommand,
@@ -59,12 +127,25 @@ async def request_run(
     service = getattr(request.app.state, "job_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="jobs_unavailable")
+    payload = command.payload.model_dump(by_alias=True, mode="json")
+    if uses_ai_extraction(payload) or command.payload.ai_extraction is not None:
+        try:
+            identity = command.payload.ai_extraction
+            if identity is None:
+                identity = profile_from_env().identity
+                command.payload.ai_extraction = identity
+                if command.payload.population_execution_fingerprint is not None:
+                    raise AttributeExtractionError("ai_extraction_identity_missing")
+            validate_identity(identity)
+        except AttributeExtractionError as exc:
+            raise _ai_http_error(exc) from exc
     try:
         admission = await service.admit(
             job_type="population.run",
             command=command,
             # A changed runtime is a new build, not the same one again.
             idempotency_key=_engine_key(idempotency_key),
+            asset_admission_key=idempotency_key,
             task_name="semantic-model-population.run",
             queue_name=POPULATION_QUEUES[1],
         )
@@ -680,6 +761,9 @@ class CloneDataCommand(BaseModel):
 
     target_model_id: str = Field(alias="targetModelId", min_length=1, max_length=200)
     target_model_version_id: str = Field(alias="targetModelVersionId", min_length=1, max_length=200)
+    # WP04.5: the source-workspace scope the calling back authorized. Required — an
+    # unscoped copy is refused, never assumed to be unlimited.
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=200)
     id_map: CloneDataIdMap = Field(alias="idMap", default_factory=CloneDataIdMap)
     # The clone's own build plan, sent when the source data is current, so the copy reads as current.
     home_workspace_id: str | None = Field(default=None, alias="homeWorkspaceId", max_length=200)
@@ -693,7 +777,8 @@ async def clone_model_data(model_id: str, command: CloneDataCommand,
                            request: Request) -> dict[str, object]:
     """Copy the draft data revision of ``model_id`` into the (empty) clone, project its
     graph and serve it as the clone's draft data. The search index is requested, not copied.
-    Refused (409) while a job of the source runs. Source documents are never copied."""
+    Refused (409) while a job of the source runs or when the revision reads sources outside
+    the authorized workspace scope. Source documents are never copied."""
     from app.persistence import model_clone_store as clone_store
 
     if not model_id or len(model_id) > 200 or command.target_model_id == model_id:
@@ -713,11 +798,14 @@ async def clone_model_data(model_id: str, command: CloneDataCommand,
     try:
         result = await clone_store.clone_model_data(
             pool, source_model_id=model_id, target_model_id=command.target_model_id,
-            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned)
+            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned,
+            allowed_workspace_ids=command.allowed_workspace_ids)
     except store.ModelJobsRunning as exc:
         raise HTTPException(status_code=409, detail="model_jobs_running") from exc
     except clone_store.CloneTargetNotEmpty as exc:
         raise HTTPException(status_code=409, detail="target_has_data") from exc
+    except clone_store.CloneScopeExceeded as exc:
+        raise HTTPException(status_code=409, detail="clone_scope_exceeded") from exc
     if not result["copied"]:
         return result
     try:
@@ -959,6 +1047,18 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         preview.update({"records": records, "recordCount": len(read["records"]),
                         "unevenFields": read.get("unevenFields") or []})
     return preview
+
+
+@router.post("/document-field-suggestions", status_code=status.HTTP_200_OK)
+async def suggest_document_fields(body: FieldDiscoveryRequest, request: Request) -> dict[str, Any]:
+    """Read-only proposals; existing service authentication and per-asset authorization apply."""
+    pool = getattr(request.app.state, "index_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="index_unavailable")
+    try:
+        return await discover_fields(pool, body)
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
 
 
 # How many of a document's records its preview shows.

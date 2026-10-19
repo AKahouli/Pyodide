@@ -23,6 +23,14 @@ The system module provides system-wide configuration and maintenance mode contro
 
 The system module provides:
 
+- **Conversation Generative UI**: existing conversation settings store
+  `generativeUi.htmlMode` (`strict` by default, or administrator-selected
+  `interactive`). Older updates preserve it; unknown persisted values fail closed
+  to strict. The authenticated conversation settings GET exposes the policy to
+  viewers. Strict HtmlView removes generated scripts; interactive permits inline
+  JavaScript with documented self-navigation and resource limits. No state table
+  or execution service is added; private autosave remains ADR-0025 scoped.
+
 - **Maintenance Mode**: Enable/disable maintenance with custom messages and estimated end times
 - **Global Guard**: Automatically blocks requests during maintenance (with bypass options)
 - **Path Whitelisting**: Certain paths always bypass maintenance (health checks, status endpoints)
@@ -30,6 +38,15 @@ The system module provides:
 - **Cached Status**: In-memory caching for high-performance status checks
 - **Appearance**: Global color palettes plus a custom sidebar logo library stored in PostgreSQL (`catalog` schema)
 - **Audit Logging**: All maintenance changes are logged for accountability
+
+### Default-agent bootstrap and semantic extraction
+
+`PlatformCopilotBootstrapService` still seeds the platform copilot when its feature is enabled.
+Semantic extraction no longer seeds or updates a `semantic-field-extraction` default agent or its
+agent type. Existing historical agent rows are left untouched; no deletion or data migration is run.
+The semantic-model services obtain the non-secret AI profile from the existing semantic runtime
+client only for AI-enabled previews and population plans. The runtime owns inference configuration,
+prompts and execution; backend agent-library settings and ADK credentials no longer control extraction.
 
 ---
 

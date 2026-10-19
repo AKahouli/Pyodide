@@ -33,13 +33,13 @@ export function AgentHubBulkActionBar({
           {t('hub.bulkActions.deleting', { done, total })}
         </span>
       )}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onClear} disabled={inFlight}>
-          <X className="mr-1.5 h-3.5 w-3.5" />
+          <X className="me-1.5 h-3.5 w-3.5" />
           {t('hub.select.clear')}
         </Button>
         <Button variant="destructive" size="sm" onClick={onDelete} disabled={inFlight}>
-          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+          <Trash2 className="me-1.5 h-3.5 w-3.5" />
           {t('hub.bulkActions.delete')}
         </Button>
       </div>

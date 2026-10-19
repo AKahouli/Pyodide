@@ -704,3 +704,7 @@ if (!status.connected) {
   console.warn(`LiteLLM disconnected: ${status.error}`);
 }
 ```
+
+### Conversation provider API
+
+Admin model updates accept `conversationApi`: `chat_completions` (default for new and existing models) or `responses`. The catalog column `conversation_api` is constrained to those values by migration `0050_model_conversation_api`. Gateway catalog sync preserves this admin choice. Both conversation agent construction paths pass the selected value as `agent_params.params.conversation_api`; application-managed history, tools and capacity ownership remain with ADK. Non-conversation calls are unchanged.

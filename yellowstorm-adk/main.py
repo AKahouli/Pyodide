@@ -14,7 +14,7 @@ from src.middleware import add_middleware
 #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
 
 from src.logger.setup_logging import setup_logging
 from src.logger.logging import get_logger
@@ -41,7 +41,6 @@ from src.smart_rag.infrastructure.session.manager import (
 from src.routers.evaluation_batch import router as evaluation_batch_router
 from src.routers.response_evaluation import router as response_evaluation_router
 from src.routers.response_correction import router as response_correction_router
-from src.routers.semantic_model import router as semantic_model_router
 from src.routers.vectorstores import router as vectorstores_router
 
 from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
@@ -213,6 +212,8 @@ async def lifespan(app: FastAPI):
 
     # Dispose the shared ADK session service, then its engine exactly once.
     # gRPC is stopped above, so no in-flight request still holds the service.
+    from src.smart_rag.infrastructure.factories.llm_factory import close_shared_gateway_http_client
+    await close_shared_gateway_http_client()
     await dispose_shared_database_session_service()
     await dispose_shared_engine()
 
@@ -234,7 +235,7 @@ app = FastAPI(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.exception("Validation error on request")
     return JSONResponse(
-        status_code=HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=HTTP_422_UNPROCESSABLE_CONTENT,
         content={"detail": exc.errors()},
     )
 
@@ -260,7 +261,6 @@ app.include_router(evaluation_router)
 app.include_router(evaluation_batch_router)
 app.include_router(response_evaluation_router)
 app.include_router(response_correction_router)
-app.include_router(semantic_model_router)
 app.include_router(vectorstores_router)
 app.include_router(a2a_serving_router)
 app.include_router(health_router)

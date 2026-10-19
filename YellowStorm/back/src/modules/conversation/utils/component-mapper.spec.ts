@@ -3,6 +3,12 @@
 import { aggregateTextFromComponents, extractComponentData, getComponentType } from './component-mapper';
 
 describe('component-mapper text extraction', () => {
+  it.each(['reasoning_summary', 'unknown', undefined])('accepts only explicit native summary provenance: %s', (kind) => {
+    const data = extractComponentData({ agent_activity: {
+      summary: 'Inspecting reports', status: 'completed', activity_kind: kind,
+    } }).data;
+    expect(data.activityKind).toBe(kind === 'reasoning_summary' ? kind : undefined);
+  });
   it('retains the actual text producer from chunk metadata', () => {
     expect(extractComponentData({ id: 'answer', text: { content: 'Hello' } }, 'answer-agent').data)
       .toMatchObject({ content: 'Hello', actorId: 'answer-agent' });

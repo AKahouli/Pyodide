@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Any, Awaitable, Callable
 
@@ -23,7 +24,7 @@ from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_compute
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
-DOCUMENT_EXTRACTION_VERSION = "document-v2"  # v2: summaries, choices and ISO dates for AI fields
+DOCUMENT_EXTRACTION_VERSION = "document-v3"  # v3: accept generated values with valid types and supplied citations
 
 EXTRACTOR_VERSION = "label-value-v4"
 MAX_FIELD_VALUE_CHARS = 500
@@ -247,16 +248,6 @@ def _normalize_for_grounding(value: Any) -> str:
     return " ".join(str(value).split()).casefold()
 
 
-def _value_in_block(value: Any, content: Any) -> bool:
-    """True when the value appears in the cited block, ignoring case/spacing."""
-    if value is None or not isinstance(content, str):
-        return False
-    if isinstance(value, (list, tuple, dict)):
-        return False
-    normalized = _normalize_for_grounding(value).strip('"\'')
-    return bool(normalized) and normalized in _normalize_for_grounding(content)
-
-
 def _mapping_labels(mapping: dict[str, Any]) -> list[str]:
     rules = mapping.get("rules") or {}
     return list(rules.get("labels") or []) or [mapping["sourceField"]]
@@ -324,7 +315,7 @@ async def _apply_ai_extraction(
             document_id=str(entry["source"].get("assetId") or ""),
             file_name=str(entry["source"].get("originalName") or ""),
             attributes=attributes, sections=payload, ai_extraction=ai_extraction,
-            multiple=records is not None)
+            multiple=records is not None, allow_generated_values=True)
     except AttributeExtractionError as exc:
         return exc.code, sent
     extractor_version = str(result.get("extractorVersion") or "ai-attribute-v1")
@@ -332,10 +323,9 @@ async def _apply_ai_extraction(
     keys = set(rules_by_key)
     choices = {mapping["targetAttribute"]: allowed for mapping in ai_mappings
                if (allowed := [str(item) for item in mapping.get("allowedValues") or [] if str(item).strip()])}
-    summaries = {mapping["targetAttribute"] for mapping in ai_mappings
-                 if mapping.get("valueType") in (None, "text", "date") and mapping["targetAttribute"] not in choices}
+    value_types = {mapping["targetAttribute"]: mapping.get("valueType") or "text" for mapping in ai_mappings}
     _ground_values(result.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
-                   extractor_version, result.get("model"), values, evidence_by_field, quotes, choices)
+                   extractor_version, result.get("model"), values, evidence_by_field, quotes, choices, value_types)
     if records is not None:
         for item in result.get("records") or []:
             if not isinstance(item, dict):
@@ -343,7 +333,7 @@ async def _apply_ai_extraction(
             own: dict[str, Any] = {}
             own_evidence: dict[str, dict[str, Any]] = {}
             _ground_values(item.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
-                           extractor_version, result.get("model"), own, own_evidence, None, choices, summaries)
+                           extractor_version, result.get("model"), own, own_evidence, None, choices, value_types)
             if own:
                 records.append({"values": own, "evidence": own_evidence})
     # The agent chosen for a field is recorded with its evidence. Only the platform extraction agent
@@ -395,54 +385,51 @@ def _choice(value: Any, allowed: list[str]) -> str | None:
     return next((item for item in allowed if _normalize_for_grounding(item) == wanted), None)
 
 
+def _valid_ai_value(value: Any, kind: str) -> bool:
+    """Check JSON value types without trying to prove a generated answer verbatim."""
+    if kind == "number":
+        return type(value) is int or isinstance(value, float) and math.isfinite(value)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    return kind in ("text", "string", "date", "enum") and isinstance(value, str) and bool(value.strip())
+
+
 def _ground_values(
     items: list[Any], keys: set[str], by_reference: dict[str, tuple[dict[str, Any], dict[str, Any]]],
     rules_by_key: dict[str, Any], entry: dict[str, Any], asset_ref: dict[str, Any],
     extractor_version: str, model: Any, values: dict[str, Any],
     evidence_by_field: dict[str, dict[str, Any]], quotes: dict[str, str] | None,
-    choices: dict[str, list[str]] | None = None, summaries: set[str] | None = None,
+    choices: dict[str, list[str]] | None = None, value_types: dict[str, str] | None = None,
 ) -> None:
-    """Keep each value the agent returned only when it occurs in a block the runtime sent.
+    """Accept generated values with expected types and citations to supplied evidence.
 
-    A field with allowed values keeps the allowed value the agent picked, from a block it really
-    sent. A text or date field in ``summaries`` (one item of a document read for several) may put
-    the cited block in its own words (a date written as ISO, say), but only when another value of the same item is quoted from
-    that block: the item itself is then proven to be in the document.
+    A citation records what the model cited; it is not independent verification of the answer.
+    Preview and population share this path, including multiple-record extraction.
     """
     choices = choices or {}
-    rephrased: list[tuple[str, Any, tuple[dict[str, Any], dict[str, Any]]]] = []
-    quoted_blocks: set[str] = set()
+    value_types = value_types or {}
     for item in items:
         key = item.get("key") if isinstance(item, dict) else None
         if not key or key not in keys or key in values:
             continue
-        grounded = [reference for reference in (item.get("evidenceReferences") or [])
-                    if reference in by_reference]
+        references = item.get("evidenceReferences")
+        if not isinstance(references, list):
+            continue
+        grounded = list(dict.fromkeys(reference for reference in references
+                                     if isinstance(reference, str) and reference in by_reference))
         if not grounded:
             continue
         block, section = by_reference[grounded[0]]
         value = item.get("value")
+        if not _valid_ai_value(value, value_types.get(key, "text")):
+            continue
         if key in choices:
             value = _choice(value, choices[key])
             if value is None:
                 continue
-        # A real reference is not proof of a real value: the value must occur in
-        # the block it cites, otherwise the model invented it.
-        elif not _value_in_block(value, block.get("content")):
-            if summaries and key in summaries and isinstance(value, str) and value.strip():
-                rephrased.append((key, value.strip(), (block, section)))
-            continue
-        else:
-            quoted_blocks.add(grounded[0])
         _keep_value(key, value, block, section, rules_by_key, entry, asset_ref, extractor_version,
                     model, values, evidence_by_field, quotes)
-    for key, value, (block, section) in rephrased:
-        reference = f"section:{section['sectionPk']}/block:{block['blockPk']}"
-        if key in values or reference not in quoted_blocks:
-            continue
-        _keep_value(key, value, block, section, rules_by_key, entry, asset_ref, extractor_version,
-                    model, values, evidence_by_field, quotes)
-        evidence_by_field[key]["rephrased"] = True
+        evidence_by_field[key]["evidenceReferences"] = grounded
 
 
 def _keep_value(
@@ -956,7 +943,9 @@ async def populate_document(
         return ({**computed_evidence, "recipeSources": joined_sources[field]} if field in joined_sources
                 else computed_evidence)
     source_ref = {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
-                  "labelField": entry.get("labelField")}
+                  "labelField": entry.get("labelField"),
+                  **({"filename": current["originalName"]}
+                     if isinstance(current.get("originalName"), str) and current["originalName"] else {})}
 
     if extracted["records"]:
         # Several records: what the document says once (metadata, constants, rules) is shared by

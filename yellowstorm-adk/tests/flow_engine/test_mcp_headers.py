@@ -7,7 +7,7 @@ merge order let that resolved header silently overwrite the gateway secret
 -- the gateway rejected the request with 401 and nothing at binding time
 pointed at why.
 """
-from src.flow_engine.mcp import _build_headers
+from src.mcp import _build_headers
 
 
 def test_static_gateway_secret_wins_over_a_colliding_resolved_header():

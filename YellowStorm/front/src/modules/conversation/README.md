@@ -1,6 +1,75 @@
 # Conversation Module
 
+### Files & artifacts
+
+The header Files shortcut opens the existing context pane. `ConversationFilesPanel`
+adapts OpenUI Workspace's custom slot and authenticated asset projection without a
+second thread provider. Actor/conversation-scoped requests load persisted uploads,
+generated outputs and logical OpenUI text components, including unloaded messages.
+Preview/download use renewable authorized URLs. Logical components open their source
+or load the saved answer with original component identity. Reload does not infer.
+
+`AssetPromptBridge` adds readable removable filename chips at the composer's
+top-left above the text area without submitting,
+staging or changing permissions; exact selectors are serialized only on send and
+the backend rechecks access at use time. Selection is transient, actor/conversation
+scoped, deduplicated and limited to eight refs. Failed sends preserve chips;
+successful sends clear only submitted nonces, preserving later additions. Upload
+confirmation and message/stream updates refresh the list. Errors remain visible
+without removing unrelated rows. Agents can prepare exact refs for the existing
+code interpreter; registered generated outputs return through this same listing
+and renewable download path. Downloads themselves do not register another copy.
+Server-provided delete permission enables a permanent-deletion confirmation.
+Deleted history renders an unavailable placeholder and exports omit its content.
+Pending physical cleanup is a separate retry-only list that survives reload;
+retries never refund quota twice. Linked sources remain managed in their workspace.
+File types use the workspace's readable type-label helper and filename fallback.
+Sent user bubbles render recognized English/French serialized asset selectors as
+filename tags, including history after reload and group conversations. Parsing is
+display-only: stored text and agent, edit and copy payloads retain their exact
+selectors; malformed selector text stays unchanged. Rendering a tag grants no access.
+Search remains in the panel; the type dropdown and instructional paragraph were
+removed to keep narrow layouts focused on files and actions. Use adds a chip.
+Tests: `ConversationFilesPanel.test.tsx`, `AssetPromptBridge.test.tsx`,
+`asset-message-display.test.ts`, `ConversationContent.test.tsx`,
+`assets-api.test.ts`, context-pane/UI-state tests and backend
+`conversation-assets.spec.ts`. The architecture plan records live qualification.
+
+### Typed OpenUI interactions
+
+`OpenUiAnswer` sends bounded `openUiSubmission` JSON with exact form values and
+action parameters, source message/component and form name. Accepted submissions
+reuse the existing message interaction field, hydrate the SDK renderer after
+reload and keep a readable action label in the user bubble. Named forms retain
+SDK validation, show submission progress/errors and allow changed values to be
+submitted again. Failed retries retain their request ID; unchanged accepted or
+pending submissions do not create another turn. Draft values remain local.
+Server source/JSON checks do not turn user-entered values into trusted tool input.
+
+### Saved image version history
+
+`ImageVersionHistory` lazily loads the saved image's authorized family through
+`getGeneratedImageHistory`. Each newly edited document stores its exact parent in
+existing metadata; legacy images without lineage stay separate. The dialog lists
+saved versions and uses the selected source for preview, download, edit and reuse.
+Closing or changing scope aborts requests and revokes preview blobs. Reload loads
+persisted lineage, without a frontend history store. The endpoint validates the
+saved-answer anchor and conversation ownership before workspace enumeration;
+foreign or unrelated selectors are rejected. Families above the bounded 1,000
+image scan fail explicitly. See `ImageVersionHistory.test.tsx` and the backend
+`conversation-image-history.spec.ts`.
+
+Stream recovery checkpoints partial content with the existing lease heartbeat every
+30 seconds. Interrupted answers retain the last checkpoint and show an incomplete
+status after reload; retry creates a new answer. The last uncheckpointed tail may be
+lost on a hard crash. See the backend stream and PostgreSQL cancellation regressions.
+
 The conversation module provides the complete AI chat experience, handling real-time streaming responses, message management, branch navigation, agent mentioning, workspace linking, conversation sharing, and user interactions.
+
+OpenUI generated-file buttons use `{type: "download_artifact", params: {filename: "exact-returned-filename.docx"}}`.
+Only a unique ready artifact persisted on that answer can be downloaded; each click requests a fresh scoped URL
+and uses the same blob transfer as attachment cards. Legacy artifact-relative links remain supported as selectors.
+Keep original/edit captions paired with exact image reuse receipts and their `generated` flag, including PDF pages.
 
 ## Table of Contents
 
@@ -43,6 +112,208 @@ The conversation module is a self-contained feature module that handles:
 ---
 
 ## Architecture
+
+### OpenUI slides
+
+Answer and conversation DOCX, HTML and print/PDF exports project the saved OpenUI
+program with the installed parser, independently of mounted or collapsed views,
+except for HtmlView: its saved preview must be open and ready for a validated
+capture of the current DOM. HTML exports are passive snapshots, not executable apps.
+The shared projection preserves image/caption order, text, native tables and chart
+data as editable tables. Images are embedded through existing answer-scoped
+generated-image, citation and guarded web-image resolvers. Missing assets and
+unsupported dynamic programs fail explicitly instead of producing partial files.
+Regenerated answers are selected before resolving their assets.
+HtmlView exports preserve visible text and tables as editable content and label
+custom visuals as image snapshots. Capture checks actor, source, saved revision
+and typed state; a changed or unavailable preview stops export. Scripts are never
+rerun during capture. For MCP exports, exact captured image bytes are uploaded
+through the existing private workspace upload flow (and count toward its quota),
+then referenced by the returned asset ID rather than a filename or inline base64.
+HTML/PDF image labels are visible captions beneath each image as well as alt text;
+print pagination keeps the image paragraph with its following caption where possible.
+
+The answer Export menu also offers agent-generated DOCX and editable PPTX. These
+send a structured content manifest and citation/page mapping through the existing
+conversation agent; image selectors are prepared with `reuseImage` before the
+configured MCP interpreter is used. This is an asynchronous agent request. A file
+is available only after successful publication, not merely after sandbox creation.
+The slide preview's existing image-based PPTX export remains a distinct format.
+Coverage: `document-export.test.ts`, `openui-export-assets.test.ts`,
+`docx-export.test.ts`, `MessageActions.test.tsx` and `ConversationHeader.test.tsx`.
+
+### Conversation search and saved targets
+
+The outline panel separates server message search from filtering loaded headings.
+Literal queries are bounded to 200 characters and 20 results. Search excludes raw
+OpenUI programs, tool payloads, deleted content and private draft state. Results
+navigate with `?message=<id>`; the existing authenticated around-target route loads
+missing context and selects the exact saved answer before scrolling. It merges
+messages without replacing live replies, draft state or the pagination cursor.
+Actor/conversation/request guards discard late responses; an unavailable anchor
+reports an error. No additional SSE connection or virtualization was introduced.
+
+### Refinement and immutable answer history
+
+Files & artifacts offers Refine for supported ready artifacts. It selects the
+exact asset and appends a localized instruction to the existing unsent draft;
+it never sends automatically. Explicit refinement carries the source answer in
+the existing parentMessageId, validated in the authorized conversation before
+writes. An explicit Reply keeps precedence. Ordinary Use does not create lineage.
+Saved answer versions remain immutable, with a keyboard-accessible history menu
+and reloadable message target. Private draft state and task results are not copied
+between versions. History stays usable during unrelated background generation.
+
+Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
+by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
+`Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,
+comparison, text and chart layouts are included in the generated agent prompt. Image URLs and numerical
+data must come from tool results; optional images are omitted when unavailable.
+
+The View chip opens the existing report panel, now labelled Preview, with stock slide thumbnails,
+navigation and fullscreen controls where the browser supports fullscreen. Presentations and reports
+are parsed separately from chat, including during streaming. Saved presentation-only answers retain
+their renderer if the agent's Generative UI checkbox is later disabled. Panel ownership and cleanup
+remain scoped to the answer; switching conversations or opening the document viewer closes the preview.
+Slide source markers are retained in text and exposed as clickable chips below the artifact.
+This reuses the existing artifact store and installed presentation library.
+
+The preview header's Export menu downloads PDF or PowerPoint files with one 1920×1080 image per
+slide; text and charts in PowerPoint are flattened. Export uses the standalone OpenUI print renderer,
+adapting the saved Presentation root to SlideShow. `html-to-image`, `pdf-lib` and `pptxgenjs` are
+loaded on demand. Public images are fetched directly when browser CORS permits; requests omit credentials
+and referrers. If CORS blocks an HTTPS image, the authenticated message `slides/image` route in the
+existing ConversationArtifactService accepts only exact URLs referenced by that saved AI answer.
+It reuses GuardedUrlDownloaderService with connection-time public DNS validation on each redirect,
+proxy bypass disabled, a 15-second deadline and
+a 20 MiB streamed cap; only PNG/JPEG/WebP/GIF responses are returned as data URLs. Failed images
+stop export with a translated message. Wikimedia thumbnail discovery URLs use the canonical upload
+host with tracking-only parameters removed during export; saved answer URLs remain unchanged.
+Exports allow 1–50 slides,
+20 MiB per image, and a 60-second deadline; closing the preview cancels export and removes its stage.
+No new service or schema is introduced.
+
+Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `render-mode.ts` and
+`scripts/generate-openui-prompt.mjs`; focused coverage is in `ReportPanel.test.tsx` and `report-program.test.ts`.
+
+### Generated images in OpenUI
+
+The existing workspace storage quota also applies to generated/edited images.
+If persistence returns `WORKSPACE_STORAGE_QUOTA_EXCEEDED` (`ERR_1930`, HTTP 403),
+the ADK image tool reports a fixed storage-capacity message instead of suggesting
+a provider retry. Other upstream failures remain sanitized; raw errors and signed
+URLs are not exposed to the agent. The final exact-size upload check remains
+authoritative. No quota is enlarged and no automatic generation retry occurs.
+
+OpenUI images expose an action toolbar in chat, report and slide previews: edit,
+compare saved images, reuse in DOCX/editable PPTX/OpenUI slides, and download.
+Edit/reuse sends an explicit follow-up to the producing agent through the existing
+conversation owner; opening or cancelling a dialog does not run a tool.
+The edit dialog previews the selected authorized blob and its caption. Reuse opens
+the same preview with an explicit format action before submission; cancellation
+sends nothing. Pending submission points to execution progress in the conversation.
+Edits read authorized source dimensions only on submission and pass the existing model's
+landscape/portrait/square aspect class explicitly. Capability checks use the assigned
+image tool and interpreter connector actions. Streaming,
+governed mode and ambiguous producing-agent identity disable generation actions.
+The saved text component identity is retained across report portals and reload.
+Comparison resolves authorized saved sources lazily and releases temporary blob
+URLs on close. Thumbnail/capture views omit interactive controls. PDF actions use
+the cited PDF page (disclosed in the UI), rather than claiming to edit only its crop.
+Coverage: `ImageActionToolbar.test.tsx`, `ConversationImageActions.test.tsx`,
+`document-images.test.tsx`, `OpenUiRenderer.test.tsx` and `ReportPanel.test.tsx`.
+
+In Admin → Tools, create the active native tool `generate_image` with a string `model`
+attribute set to `gpt-image-2.5-flare`, then select it in the agent editor's Tools tab.
+Generative UI controls presentation independently of this tool assignment. The model must
+be active and classified `image_generation` in the catalog. The agent's chat model stays selected
+for reasoning; the tool invokes the image model through the existing LiteLLM connection.
+The internal generation route checks conversation membership and the accessible active agent's
+tool/model configuration before spending. It generates one image, validates bounded raster bytes,
+and stores it in the conversation system workspace without indexing. Governed conversations
+are currently excluded. Cancellation aborts the provider request and prevents publication before upload.
+
+The configured `generate_image` tool returns a persistent `generated-image:<24hex documentId>`
+source. Its optional `sourceImage` argument edits an existing generated image in the same
+conversation via LiteLLM `/v1/images/edits`. The backend loads bounded original bytes from
+the conversation workspace and sends a multipart image; each edit creates a new file and
+reference, preserving the original. Sources may also be public HTTPS raster image URLs or exact
+image/PDF filenames in the conversation's system workspace or its currently accessible selected
+workspaces. Ambiguous names, storage paths and inaccessible files fail closed. Web imports use the
+existing DNS-pinned guarded downloader with MIME/magic checks and a 20 MiB/15-second bound.
+PDF sources use `sourcePage` (1-based, default 1): the authenticated backend supplies bounded
+authorized PDF bytes privately to the native ADK tool, which renders only that page with existing
+PyMuPDF at at most 1400 pixels on its longest edge. A second internal request reauthorizes the
+source and accepts only a bounded PNG; PDF bytes and prepared pixels never enter the model receipt.
+Imported originals are saved without indexing as `generated-import-*` files. Their persistent
+references retain the existing `generated-image:` format for compatibility but resolve with
+`generated:false`; OpenUI shows preview/download without an AI-generated label. Edits are new
+`generated:true` files and receipts also identify the preserved imported original.
+Without `sourceImage`, generation is unchanged. OpenUI image
+fields accept the returned source in images, galleries, cards and slide backgrounds.
+For MCP document creation, the receipt also includes an authoritative `sandboxPath` under
+`/mnt/workspace/generated-images/`. The backend stages a deterministic copy into the existing
+conversation run folder, which MCP exposes at the sandbox workspace root; canonical image storage and OpenUI references remain
+unchanged. The conversation runtime verifies current-turn image paths when creating a sandbox;
+if a reused sandbox has stale mounts, the existing mount guard refreshes it once before execution.
+Use `reuseImage` with an existing image reference to recover its sandbox path after
+reload without calling the image model. It is mutually exclusive with `sourceImage`.
+The code-interpreter skill consumes the returned path directly with `python-docx` or
+`python-pptx`; PPTX text and shapes remain editable while the image is an embedded picture.
+Write downloadable documents under the deployed MCP output contract,
+`/mnt/yellowmind/run/outputs/`, then deliver those exact paths through the existing
+`send_file_to_user` artifact flow. This output directory is separate from the authoritative
+`/mnt/workspace/generated-images/` input paths; neither should be inferred from storage keys.
+Artifact downloads resolve the authenticated message-scoped storage URL, then fetch it without
+credentials or referrer and save a local blob using the artifact filename. This storage-transfer
+exception avoids cross-origin link navigation; HTTP failures use the existing artifact error toast.
+Resolution waits until answer completion, then calls the authenticated message-scoped
+`POST /conversations/:conversationId/messages/:messageId/generated-images/:documentId/url`.
+Only the returned authorized image URL is fetched, without credentials or referrer; a bounded
+20 MiB raster response becomes a temporary browser blob URL. Reload resolves a fresh URL, and
+unmount revokes the blob and cancels pending generated-image requests. Failed access has the
+existing localized retry state. The image is labelled AI generated and keeps its proportions.
+Ordinary Markdown answers also accept `![Description](generated-image:<documentId>)` after
+stream completion. Generated images expose preview in a separate tab and a blob download link.
+PDF/PPTX export resolves stable generated sources through the same authorized endpoint before
+the standalone slide renderer runs; a failed image prevents exporting an incomplete deck.
+
+### OpenUI document images
+
+Agents with Generative UI enabled are instructed to obtain relevant images from their available tools
+and use the stock OpenUI photo cards, grids, carousels and galleries. Web search and image-generation
+results must provide an actual image URL; a web-page URL is insufficient. Generated illustrations
+are labelled as generated. This does not add an image-search or generation tool to an agent:
+its configured tools determine which images it can obtain. Without an image result the answer uses
+text/icon cards, explaining missing pictures when requested. Document figures use the citation path below.
+Travel and destination recommendations request photographs proactively, use a search tool's image-results
+option when available, and reuse relevant returned URLs. The configured Linkup MCP connector supplies
+web photographs directly to the model; stock OpenUI visual cards render those URLs with source chips in
+their supported text. No document citation resolver or additional image proxy is involved for public photos.
+
+When an agent's **Generative UI** checkbox and `VITE_OPENUI_RENDER_ENABLED` are enabled, its
+OpenUI answer can use an attached document citation as an image source: `Image("Original figure", "[1]")`.
+`ImageGallery` and the stock image cards, lists and image options accept the same references.
+Only image source fields are resolved; citation markers in prose keep their usual source chips.
+
+The renderer waits for answer completion, then resolves the citation through the existing
+message citation URL endpoint or the owning root evidence endpoint. Private paths and signed
+URLs are never placed in the stored OpenUI program. Image files are loaded into temporary blob
+URLs; PDF figures are rasterized from the cited page and region with the installed EmbedPDF
+engine. Without region metadata, the preview shows the cited page. Standalone figures retain
+their proportions and have a source chip that opens the existing document viewer.
+
+Reopening the answer resolves access again. Unknown references, non-document citations,
+incomplete evidence identities and inaccessible files show a localized retryable error.
+Temporary image URLs and PDF engines are released when their rendering work ends.
+Standalone document figures keep their intrinsic width within a responsive 48rem container and
+a 24rem height bound. Document galleries share the width bound and show complete figures without cropping.
+The resolver introduces no new endpoint, persistence schema or service.
+
+Sources: [`document-images.tsx`](components/openui/document-images.tsx),
+[`pdf-image.ts`](components/openui/pdf-image.ts), [`library.tsx`](components/openui/library.tsx),
+and [`generate-openui-prompt.mjs`](../../../scripts/generate-openui-prompt.mjs).
+Focused regression coverage is in `document-images.test.tsx` and `pdf-image.test.ts` alongside the renderer.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -701,6 +972,8 @@ interface PublicShareViewResponse {
 Upload files directly in the conversation input:
 
 - **Drag & drop, paste, or file dialog** — attach up to 5 files per message
+- **Clipboard images** — keyboard paste and the composer right-click Paste action upload image-only clipboard content. Plain text takes precedence over Office selection bitmaps; both paths retain attachment limits.
+- **Attachment policy** — upload and message endpoints await refreshed settings before accepting files, avoiding false disabled errors after cache expiry while retaining disabled-policy enforcement.
 - **Immediate upload** — files upload to Azure Blob Storage as soon as they are attached (not on send)
 - **Progress tracking** — each file shows upload progress with spinner overlay
 - **Submit disabled while uploading** — the submit button is disabled until all files finish uploading, but the textarea remains editable so users can type while waiting
@@ -1911,3 +2184,25 @@ Also wires mention-seen observers for group-capable data shape; group-specific U
 ### Group member tagging (input)
 
 In group conversations, the input receives **members** (everyone except the current user) for `@` tagging. When replying to a specific member, **`autoMention`** can prefill a mention—see input and **`EditableUserMessage`** for details.
+
+### Standalone HtmlView downloads
+
+Saved HtmlViews expose **Download interactive HTML**. The handler flushes autosave,
+checks the authenticated saved revision before and after packaging, and exports
+only that HtmlView's typed state. The offline file embeds the existing trusted
+bridge in an opaque sandboxed iframe and preserves the administrator's strict or
+interactive mode. Local controls and generated dashboard logic continue to work;
+agent tasks and private document access are unavailable. Reopening restores the
+exported snapshot; later offline edits are not persisted. Unsupported external or
+application dependencies reject export. Existing answer HTML exports remain
+static snapshots. See `standalone-html-export.test.ts` and `HtmlView.export.test.tsx`.
+
+### OpenUI image loading cache
+
+`OpenUiRenderer` owns a bounded `createScopedImageCache` for each answer scope.
+Repeated sources share pending/settled blobs; views own and revoke their object URLs.
+The cache limits concurrency to four, caps entries at 128 and settled data at 32
+images/64 MiB, and aborts on scope teardown. Failed references render individual
+labeled retry actions; retrying one preserves successful URLs and other failures.
+PDF loading/rendering observes cancellation. Coverage: `document-images.test.tsx`,
+`document-images-cache.test.ts` and `pdf-image.test.ts`.

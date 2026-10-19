@@ -254,8 +254,8 @@ export class WorkspaceDocumentService {
     return this.read.findByMultipleWorkspaces(workspaceIds, params);
   }
 
-  findById(workspaceId: string, documentId: string): Promise<DocumentResponse> {
-    return this.read.findById(workspaceId, documentId);
+  findById(workspaceId: string, documentId: string, includeDeleted = false): Promise<DocumentResponse> {
+    return this.read.findById(workspaceId, documentId, includeDeleted);
   }
 
   getDownloadUrl(workspaceId: string, documentId: string): Promise<DownloadUrlResponse> {
@@ -292,6 +292,10 @@ export class WorkspaceDocumentService {
 
   delete(workspaceId: string, userId: string, documentId: string, cascadeArtifacts = false): Promise<void> {
     return this.tree.delete(workspaceId, userId, documentId, cascadeArtifacts);
+  }
+
+  deleteConversationAsset(workspaceId: string, documentId: string, conversationId: string) {
+    return this.tree.deleteConversationAsset(workspaceId, documentId, conversationId);
   }
 
   bulkDelete(workspaceId: string, userId: string, documentIds: string[]): Promise<BulkDeleteResult> {

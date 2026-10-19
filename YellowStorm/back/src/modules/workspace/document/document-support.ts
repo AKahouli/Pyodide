@@ -49,7 +49,7 @@ export function isUniqueDocumentNameViolation(error: unknown): boolean {
 
 @Injectable()
 export class WorkspaceDocumentSupport {
-  private readonly maxFileSizeMb: number;
+
 
   constructor(
     @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
@@ -62,7 +62,6 @@ export class WorkspaceDocumentSupport {
     @Optional() private readonly featureVisibility?: FeatureVisibilityService,
   ) {
     this.logger.setContext('WorkspaceDocumentSupport');
-    this.maxFileSizeMb = this.configService.get<number>('workspace.maxFileSizeMb', 500);
   }
 
   /**
@@ -76,6 +75,11 @@ export class WorkspaceDocumentSupport {
     return normalized.substring(0, 255);
   }
 
+  /** New uploads have collision-free object names, even when sanitization merges display names. */
+  uploadFilename(documentId: string, filename: string): string {
+    return `${documentId}-${this.sanitizeFilename(filename).slice(-230)}`;
+  }
+
   /**
    * Generate object-key for a workspace upload. Layout:
    * `{ownerUserId}/{storagePrefix}/{filename}`.
@@ -83,8 +87,7 @@ export class WorkspaceDocumentSupport {
    * Collaborator uploads land under the workspace owner's userId, NOT the
    * uploader's — this keeps all of a workspace's files grouped together in
    * Ceph regardless of which collaborator pushed them. Filename uniqueness
-   * within the workspace is enforced via resolveUniqueOriginalName() before
-   * this is called.
+   * within the workspace is enforced by the document ID in uploadFilename().
    */
   generateBlobPath(
     ownerUserId: string,
@@ -187,10 +190,11 @@ export class WorkspaceDocumentSupport {
       );
     }
 
-    const maxSizeBytes = this.maxFileSizeMb * 1024 * 1024;
+    const maxFileSizeMb = (await this.uploadSettingsService.getSettings()).maxFileSizeMb;
+    const maxSizeBytes = maxFileSizeMb * 1024 * 1024;
     if (size > maxSizeBytes) {
       throw new BadRequestException(
-        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${this.maxFileSizeMb}MB`,
+        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${maxFileSizeMb}MB`,
       );
     }
   }

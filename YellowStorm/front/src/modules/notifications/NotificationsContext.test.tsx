@@ -1,8 +1,10 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NotificationsProvider, useNotifications } from './NotificationsContext';
 
+const actor = vi.hoisted(() => ({ id: 'u1', authenticated: true }));
+const pauseMock = vi.hoisted(() => vi.fn());
 const connectMock = vi.hoisted(() => vi.fn());
 const disconnectMock = vi.hoisted(() => vi.fn());
 const subscribeMock = vi.hoisted(() => vi.fn());
@@ -15,12 +17,13 @@ const deleteNotificationMock = vi.hoisted(() => vi.fn());
 vi.mock('sonner', () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 
 vi.mock('@/modules/auth', () => ({
-  useAuth: () => ({ isAuthenticated: true, user: { id: 'u1' } }),
+  useAuth: () => ({ isAuthenticated: actor.authenticated, user: { id: actor.id } }),
 }));
 
 vi.mock('./NotificationsService', () => ({
   notificationsService: {
     connect: connectMock,
+    pause: pauseMock,
     disconnect: disconnectMock,
     subscribe: subscribeMock.mockImplementation((cb: (event: any) => void) => {
       // simulate a connected event on subscribe
@@ -48,6 +51,7 @@ function Consumer() {
   return (
     <div>
       <div>count-{ctx.unreadCount}</div>
+      {ctx.notifications.map(item => <span key={item.id}>{item.title}</span>)}
       <button onClick={() => ctx.markAsRead(['n1'])}>mark-read</button>
       <button onClick={() => ctx.markAllAsRead()}>mark-all</button>
       <button onClick={() => ctx.deleteNotification('n1')}>delete</button>
@@ -56,7 +60,46 @@ function Consumer() {
 }
 
 describe('NotificationsContext', () => {
+  it('closes only notifications when hidden and catches up list and unread count on visibility', async () => {
+    const view = render(<Wrapper><Consumer /></Wrapper>);
+    await screen.findByText('count-1');
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    fireEvent(document, new Event('visibilitychange'));
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+    expect(getNotificationsMock).toHaveBeenCalledTimes(1);
+    getUnreadCountMock.mockResolvedValue({ count: 3 });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('count-3');
+    expect(connectMock).toHaveBeenCalledTimes(2);
+    expect(getNotificationsMock).toHaveBeenCalledTimes(2);
+    view.unmount();
+    fireEvent(document, new Event('visibilitychange'));
+    expect(connectMock).toHaveBeenCalledTimes(2);
+  });
+  it('ignores prior-owner results after an account switch', async () => {
+    let finish!: (value: unknown) => void;
+    getNotificationsMock.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const view = render(<Wrapper><Consumer /></Wrapper>);
+    await waitFor(() => expect(getNotificationsMock).toHaveBeenCalledTimes(1));
+    actor.id = 'u2';
+    getNotificationsMock.mockResolvedValue({ notifications: [{ id: 'second', title: 'Second user' }] });
+    view.rerender(<Wrapper><Consumer /></Wrapper>);
+    await screen.findByText('Second user');
+    await act(async () => finish({ notifications: [{ id: 'private', title: 'First private user' }] }));
+    expect(screen.queryByText('First private user')).toBeNull();
+    actor.authenticated = false;
+    view.rerender(<Wrapper><Consumer /></Wrapper>);
+    expect(screen.queryByText('Second user')).toBeNull();
+    fireEvent(document, new Event('visibilitychange'));
+    expect(connectMock).toHaveBeenCalledTimes(2);
+  });
+
   beforeEach(() => {
+    actor.id = 'u1'; actor.authenticated = true;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    pauseMock.mockReset();
     connectMock.mockReset();
     disconnectMock.mockReset();
     subscribeMock.mockClear();

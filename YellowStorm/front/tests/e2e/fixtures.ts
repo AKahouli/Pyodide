@@ -1,12 +1,12 @@
 /**
  * Shared Playwright fixtures and constants for the Worky smoke suite.
  *
- * Tests run in a single worker (`fullyParallel: false`) and share the
- * authenticated `storageState` produced by `auth.setup.ts`. Each spec
- * creates a fresh Worky stream via the REST API so test data does not
- * leak between specs.
+ * Each CLI run has its own authenticated storageState and artifacts.
+ * Specs within that run use one worker and create their own Worky streams.
  */
+import { randomUUID } from 'node:crypto';
 import { test as base, expect, type APIRequestContext, type APIResponse, type Page } from '@playwright/test';
+import { E2E_RUN_ID } from './run-context';
 
 export const API_BASE_URL = process.env.PLAYWRIGHT_API_BASE_URL ?? 'http://localhost:3000/api/v1';
 export const FRONTEND_BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173';
@@ -98,7 +98,7 @@ export const workyTest = base.extend<{
     await use(session);
   },
   freshStream: async ({ request, authed }, use) => {
-    const stream = await createWorkyStream(request, authed.accessToken, `playwright-${Date.now()}`);
+    const stream = await createWorkyStream(request, authed.accessToken, `playwright-${E2E_RUN_ID}-${randomUUID()}`);
     try {
       await use(stream);
     } finally {

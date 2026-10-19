@@ -184,15 +184,15 @@ export function CreateEditTeamDialog({ open, onOpenChange, team, onSubmit }: Cre
           <Button variant='outline' onClick={() => onOpenChange(false)} disabled={saving}>
             {t('createEdit.actions.cancel')}
           </Button>
-          {!team && mode === 'manual' && step > 0 && <Button variant='ghost' onClick={() => setStep(step - 1)} disabled={saving}><ArrowLeft className='mr-2 size-4' />{t('wizard.back')}</Button>}
-          {!team && mode === 'manual' && step < 2 ? <Button onClick={() => setStep(step + 1)} disabled={!canSubmit || step === 1 && !agentIds.length}>{t('wizard.next')}<ArrowRight className='ml-2 size-4' /></Button> : !team && mode === 'auto' ? (
+          {!team && mode === 'manual' && step > 0 && <Button variant='ghost' onClick={() => setStep(step - 1)} disabled={saving}><ArrowLeft className='me-2 size-4' />{t('wizard.back')}</Button>}
+          {!team && mode === 'manual' && step < 2 ? <Button onClick={() => setStep(step + 1)} disabled={!canSubmit || step === 1 && !agentIds.length}>{t('wizard.next')}<ArrowRight className='ms-2 size-4' /></Button> : !team && mode === 'auto' ? (
             <Button onClick={handleGenerate} disabled={!canGenerate}>
-              <Wand2 className='mr-2 size-4' />
+              <Wand2 className='me-2 size-4' />
               {t('autoBuilder.actions.generate')}
             </Button>
           ) : (
             <Button onClick={handleSubmit} disabled={!canSubmit}>
-              {saving && <Loader2 className='mr-2 size-4 animate-spin' />}
+              {saving && <Loader2 className='me-2 size-4 animate-spin' />}
               {team ? t('createEdit.actions.save') : t('createEdit.actions.create')}
             </Button>
           )}

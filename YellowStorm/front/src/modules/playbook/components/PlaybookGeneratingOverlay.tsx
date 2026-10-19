@@ -151,7 +151,7 @@ export function PlaybookGeneratingOverlay({ title, subtitle }: Props = {}) {
             </span>
             <span className="text-sm text-muted-foreground flex items-center gap-1">
               {displaySubtitle}
-              <span className="inline-flex items-center gap-0.5 ml-0.5">
+              <span className="inline-flex items-center gap-0.5 ms-0.5">
                 {[0, 0.2, 0.4].map((delay, i) => (
                   <span
                     key={i}

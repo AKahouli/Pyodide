@@ -69,6 +69,18 @@ const metrics: ConversationLatencyMetricsV1 = {
 };
 
 describe('buildTimingClipboardText', () => {
+  it('exports root stages and marks overlapping readiness', () => {
+    const text = buildTimingClipboardText({ latencyMetrics: { ...metrics, backendPreAdkBreakdown: {
+      rootDelegationResolutionMs: 146, rootBackgroundReadinessMs: 113,
+      rootExecutionAdmissionMs: 131, rootNativeStateRecordMs: 132, rootSessionSeedMs: 255,
+    } }, translate: (key) => key === 'latency.backendBreakdown.rootBackgroundReadiness'
+      ? 'Background readiness (overlaps other stages)' : t(key) });
+    expect(text).toContain('  Background readiness (overlaps other stages): 113 ms');
+    for (const [key, value] of [['rootDelegationResolution', 146], ['rootExecutionAdmission', 131], ['rootNativeStateRecord', 132], ['rootSessionSeed', 255]]) {
+      expect(text).toContain(`  latency.backendBreakdown.${key}: ${value} ms`);
+    }
+  });
+
   it('copies the visible hierarchy with nesting, quality, timing and usage', () => {
     const text = buildTimingClipboardText({
       latencyMetrics: metrics,

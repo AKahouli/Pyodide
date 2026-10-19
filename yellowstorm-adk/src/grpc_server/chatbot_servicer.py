@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grpc
+from src.root_runtime.delegate_resolver import with_root_authority
 import asyncio
 import json
 import uuid
@@ -89,6 +90,8 @@ def _grpc_in_log_message(label: str, payload: Dict[str, Any]) -> str:
         "has_agent": bool(payload.get("agent")),
         "attached_file_count": len(payload.get("attached_files") or []),
     }
+    if "query_length" in payload:
+        summary = {key: payload[key] for key in summary}
     return f"[gRPC IN] {label} request_summary={_json_log_payload(summary)}"
 
 
@@ -170,6 +173,7 @@ class ChatbotServicer(
                 session_id=request.session_id,
                 idempotency_key=request.idempotency_key,
                 history=history,
+                source_session_id=request.source_session_id,
             )
             return chatbot_pb2.SeedConversationSessionResponse(
                 session_id=request.session_id,
@@ -350,14 +354,20 @@ class ChatbotServicer(
     def _serialize_run_agent_team_request(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
-        """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        payload = _message_to_dict(request)
-        replay_context = payload.get("correction_replay_context")
-        if isinstance(replay_context, dict):
+        """Read bounded request shape without copying protobuf document payloads."""
+        payload = {
+            "query_length": len(request.query),
+            "workspace_count": len(request.workspace_context),
+            "agent_count": len(getattr(request, "agents", [])),
+            "has_agent": request.HasField("agent") if "agent" in request.DESCRIPTOR.fields_by_name else False,
+            "attached_file_count": len(request.attached_files),
+        }
+        if request.HasField("correction_replay_context"):
+            replay = request.correction_replay_context
             payload["correction_replay_context"] = {
                 "present": True,
-                "attempt_number": replay_context.get("attempt_number", 0),
-                "finding_count": len(replay_context.get("findings", [])),
+                "attempt_number": replay.attempt_number,
+                "finding_count": len(replay.findings),
             }
         return payload
 
@@ -429,6 +439,7 @@ class ChatbotServicer(
         if trace_pb is not None:
             chunk_pb.latency_trace.CopyFrom(trace_pb)
 
+    @with_root_authority
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -535,35 +546,9 @@ class ChatbotServicer(
                 if bg_task in done:
                     # Check for exception
                     exception = bg_task.exception()
-                    if exception:
-                        logger.error(
-                            f"[gRPC] Background task crashed - conversation_id: {request.conversation_id}, "
-                            f"error: {str(exception)}"
-                        )
-                        get_task.cancel()  # Cancel the pending queue.get()
-
-                        # Send error component instead of aborting stream
-                        error_chunk_pb = self._dict_to_stream_chunk(
-                            self._agent_stream_error_component(
-                                request.conversation_id,
-                                "Exception",
-                                "The model couldn't finish your answer due to an unexpected error.",
-                            )
-                        )
-                        yield error_chunk_pb
-
-                        logger.info(
-                            f"[gRPC] Sent error component for exception - conversation_id: {request.conversation_id}"
-                        )
-
-                        # End stream gracefully
-                        return
-                    else:
-                        # Background task completed successfully but queue still has items
-                        # Let the get_task continue to drain remaining items
-                        logger.debug(
-                            f"[gRPC] Background task completed, draining remaining queue items"
-                        )
+                    if exception and not get_task.done() and queue.empty():
+                        await self._cancel_stream_tasks(get_task, None)
+                        raise exception
 
                 # Get the chunk from the completed get_task
                 chunk_dict = await get_task
@@ -577,6 +562,9 @@ class ChatbotServicer(
                     # Wait for background task to complete
                     await bg_task
                     break
+
+                if bg_task.done() and not bg_task.cancelled() and bg_task.exception() and chunk_dict.get("action") == "end":
+                    await bg_task
 
                 if chunk_dict.get("content_type") == "File":
                     logger.warning("[gRPC] Dropped unsupported legacy File chunk")
@@ -643,23 +631,23 @@ class ChatbotServicer(
             return
 
         except Exception as e:
-            logger.error(f"[gRPC] Error in RunAgentTeam: {str(e)}", exc_info=True)
-
-            # Send error component to client instead of aborting stream
-            error_chunk_pb = self._dict_to_stream_chunk(
+            code = "VALIDATION_ERROR" if isinstance(e, ValueError) else "EXECUTION_FAILED"
+            logger.error(
+                "[gRPC] Agent execution failed",
+                conversation_id=request.conversation_id,
+                error_type=type(e).__name__,
+                public_code=code,
+            )
+            await self._cancel_stream_tasks(get_task, bg_task)
+            yield self._dict_to_stream_chunk(
                 self._agent_stream_error_component(
-                    request.conversation_id,
-                    "Validation Error" if isinstance(e, ValueError) else "Error",
-                    str(e),
+                    request.conversation_id, "Error", "The agent could not finish your answer.",
                 )
             )
-            yield error_chunk_pb
-
-            logger.info(
-                f"[gRPC] Sent error component for validation error - conversation_id: {request.conversation_id}"
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT if code == "VALIDATION_ERROR" else grpc.StatusCode.INTERNAL,
+                code,
             )
-
-            # End stream gracefully
             return
         finally:
             # Clear the request-scoped latency trace before the user context
@@ -670,6 +658,7 @@ class ChatbotServicer(
                 user_ctx.reset(user_token)
             except Exception:
                 pass  # Token may already be reset or invalid
+    @with_root_authority
     async def RunSingleAgent(
         self,
         request: "chatbot_pb2.RunSingleAgentRequest",
@@ -686,18 +675,11 @@ class ChatbotServicer(
         abort_watcher: Optional[asyncio.Task] = None
         root_handle = None
         try:
-            request_payload = _message_to_dict(request)
+            request_payload = self._serialize_run_agent_team_request(request)
         except BaseException:
             self._reset_latency_trace(latency_trace_token)
             raise
         _mark_latency_stage("mark_request_payload_ready")
-        replay_context = request_payload.get("correction_replay_context")
-        if isinstance(replay_context, dict):
-            request_payload["correction_replay_context"] = {
-                "present": True,
-                "attempt_number": replay_context.get("attempt_number", 0),
-                "finding_count": len(replay_context.get("findings", [])),
-            }
         logger.info(
             _grpc_in_log_message("RunSingleAgent request received", request_payload),
             request_id=request.latency_trace_context.request_id,
@@ -790,20 +772,9 @@ class ChatbotServicer(
 
                 if bg_task in done:
                     exception = bg_task.exception()
-                    if exception:
-                        logger.error(
-                            f"[gRPC] Background task crashed - conversation_id: {request.conversation_id}, "
-                            f"error: {str(exception)}"
-                        )
-                        get_task.cancel()
-                        yield self._dict_to_stream_chunk(
-                            self._agent_stream_error_component(
-                                request.conversation_id,
-                                "Exception",
-                                "The model couldn't finish your answer due to an unexpected error.",
-                            )
-                        )
-                        return
+                    if exception and not get_task.done() and queue.empty():
+                        await self._cancel_stream_tasks(get_task, None)
+                        raise exception
 
                 chunk_dict = await get_task
                 get_task = None
@@ -814,6 +785,9 @@ class ChatbotServicer(
                     )
                     await bg_task
                     break
+
+                if bg_task.done() and not bg_task.cancelled() and bg_task.exception() and chunk_dict.get("action") == "end":
+                    await bg_task
 
                 if chunk_dict.get("content_type") == "File":
                     logger.warning("[gRPC] Dropped unsupported legacy File chunk")
@@ -845,13 +819,22 @@ class ChatbotServicer(
             return
 
         except Exception as e:
-            logger.error(f"[gRPC] Error in RunSingleAgent: {str(e)}", exc_info=True)
+            code = "VALIDATION_ERROR" if isinstance(e, ValueError) else "EXECUTION_FAILED"
+            logger.error(
+                "[gRPC] Agent execution failed",
+                conversation_id=request.conversation_id,
+                error_type=type(e).__name__,
+                public_code=code,
+            )
+            await self._cancel_stream_tasks(get_task, bg_task)
             yield self._dict_to_stream_chunk(
                 self._agent_stream_error_component(
-                    request.conversation_id,
-                    "Validation Error" if isinstance(e, ValueError) else "Error",
-                    str(e),
+                    request.conversation_id, "Error", "The agent could not finish your answer.",
                 )
+            )
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT if code == "VALIDATION_ERROR" else grpc.StatusCode.INTERNAL,
+                code,
             )
             return
         finally:
@@ -911,7 +894,7 @@ class ChatbotServicer(
             except asyncio.CancelledError:
                 logger.debug("[gRPC] Queue get task cancelled successfully")
             except Exception as cleanup_error:
-                logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
+                logger.warning("[gRPC] Queue get cleanup failed", error_type=type(cleanup_error).__name__)
 
         if bg_task is not None and not bg_task.done():
             bg_task.cancel()
@@ -920,7 +903,7 @@ class ChatbotServicer(
             except asyncio.CancelledError:
                 logger.debug("[gRPC] Background task cancelled successfully")
             except Exception as cleanup_error:
-                logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
+                logger.warning("[gRPC] Background cleanup failed", error_type=type(cleanup_error).__name__)
 
     @staticmethod
     def _build_stream_heartbeat_chunk(message_id: str) -> "chatbot_pb2.StreamChunk":
@@ -2178,6 +2161,8 @@ class ChatbotServicer(
                 value = component_data.get(field)
                 if value is not None and value != "":
                     setattr(agent_activity, field, value)
+            if component_data.get('activity_kind') == 'reasoning_summary':
+                agent_activity.activity_kind = 'reasoning_summary'
             component_kwargs["agent_activity"] = agent_activity
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects

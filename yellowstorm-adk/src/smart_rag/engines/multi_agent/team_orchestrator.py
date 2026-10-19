@@ -717,7 +717,8 @@ Do not render charts for single values or non-numeric content.
                                 abort_signal: Optional[asyncio.Event] = None,
                                 native_input_responses=None,
                                 temporary_worker_tool=None, fanout_tool=None, session_service=None,
-                                background_task_tool=None, conversation_reply_tool=None) -> Optional[str]:
+                                background_task_tool=None, conversation_reply_tool=None,
+                                visible_user_message: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -735,6 +736,7 @@ Do not render charts for single values or non-numeric content.
         Returns:
             Optional[str]: The agent's final response text, if any.
         """
+        native_client = None
         try:
             from src.root_runtime.background_sessions import FencedBackgroundSessionService, validate_background_request
             if isinstance(session_service, FencedBackgroundSessionService):
@@ -802,6 +804,31 @@ Do not render charts for single values or non-numeric content.
                 install_background_action_guard(agent, session_service)
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            # Keep the factory's volatile timestamp behind all stable capability
+            # instructions so those instructions remain a reusable prompt prefix.
+            timestamp_suffix = "\n\n the current timestamp is {time}. \n"
+            move_timestamp = (not worker_role and isinstance(agent.instruction, str)
+                              and agent.instruction.endswith(timestamp_suffix))
+            if move_timestamp:
+                agent.instruction = agent.instruction[:-len(timestamp_suffix)]
+            if not worker_role:
+                from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
+                original_model = agent.model
+                response_params = agent_config.get('agent_params', {})
+                agent.model = LLMFactory.for_conversation(
+                    original_model,
+                    response_params.get('conversation_api', 'chat_completions'),
+                    responses_history_mode=response_params.get('responses_history_mode', 'application'),
+                    reasoning_history=response_params.get('reasoning_history', 'auto'),
+                    reasoning_summary=response_params.get('reasoning_summary', 'off'),
+                )
+                from src.smart_rag.infrastructure.monitoring.responses_history import install_history_callbacks
+                install_history_callbacks(agent, response_params.get('conversation_api', 'chat_completions'),
+                                          str(agent_config.get('id') or agent_name),
+                                          user_message=(user_prompt, visible_user_message)
+                                          if visible_user_message is not None else None)
+                if agent.model is not original_model:
+                    native_client = agent.model.client
             if await stopped_during_bootstrap():
                 return None
             _mark_first_model_agent_ready()
@@ -845,6 +872,12 @@ Do not render charts for single values or non-numeric content.
                 )
             if delegation_instruction:
                 agent.instruction += '\n' + delegation_instruction
+
+            if not worker_role:
+                from src.smart_rag.tools.utilities.connector_tools import install_deferred_connector_tools
+                install_deferred_connector_tools(agent)
+            if move_timestamp:
+                agent.instruction += timestamp_suffix
 
             # Start MCP connect + tools/list now so it overlaps session and runner
             # setup instead of running lazily at the first model request.
@@ -920,6 +953,10 @@ Do not render charts for single values or non-numeric content.
                 await q.put(error_component)
                 await q.put(None)
             return None
+
+        finally:
+            if native_client is not None:
+                await native_client.close()
 
     async def _create_agent_team(self, team_config, session_id):
         """Create an agent team from configuration."""

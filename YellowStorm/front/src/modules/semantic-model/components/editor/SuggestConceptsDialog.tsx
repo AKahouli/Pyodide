@@ -183,7 +183,7 @@ export function SuggestConceptsDialog({ modelId, open, onOpenChange, source: ini
             <Input className={`${INPUT} max-w-xs flex-1`} value={concept.label} disabled={!concept.include} onChange={(event) => editConcept(concept.sheet, { label: event.target.value })} aria-label={t('suggest.rename', { sheet: concept.sheet })} />
             <span className='text-xs text-muted-foreground'>{t('suggest.fromSheet', { sheet: concept.sheet })}</span>
           </div>
-          {concept.include && <div className='space-y-3 pl-6'>
+          {concept.include && <div className='space-y-3 ps-6'>
             <div className='flex flex-wrap gap-1.5'>{concept.fields.map((field) => {
               const excluded = concept.excluded.includes(field.column);
               return <button key={field.column} type='button' aria-pressed={!excluded}
@@ -221,7 +221,7 @@ export function SuggestConceptsDialog({ modelId, open, onOpenChange, source: ini
       <DialogFooter>
         <Button variant='outline' disabled={applying} onClick={() => onOpenChange(false)}>{t('action.cancel')}</Button>
         <Button disabled={applying || !concepts.some((concept) => concept.include && concept.label.trim())} onClick={() => void apply()}>
-          {applying && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('suggest.apply')}
+          {applying && <Loader2 className='me-2 h-4 w-4 animate-spin' />}{t('suggest.apply')}
         </Button>
       </DialogFooter>
     </DialogContent>

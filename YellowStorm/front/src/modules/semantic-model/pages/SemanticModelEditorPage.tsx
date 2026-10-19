@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestConceptsDialog, type SuggestionSource } from '../components/editor/SuggestConceptsDialog';
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListOrdered,
+import {
+  ListOrdered,
   AlertTriangle,
   ArrowLeft,
   Box,
@@ -10,7 +11,6 @@ import { ListOrdered,
   History,
   LayoutDashboard,
   HeartPulse,
-  ListChecks,
   Loader2,
   Network,
   PanelRightOpen,
@@ -72,11 +72,12 @@ import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView
 import { SemanticDataPreview, type DataPreviewFocus } from '../components/preview/SemanticDataPreview';
 import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { CanvasPalette } from '../components/editor/CanvasPalette';
-import { ModelHealthView } from '../components/health/ModelHealthView';
+import { ModelHealthView, type TrustCenterSection } from '../components/health/ModelHealthView';
 import { ModelSetupChecks } from '../components/health/ModelSetupChecks';
 import { conceptsRefreshedWith } from '../components/population/runScope';
 import { PopulationStartedPanel, populationServing, runCanStop, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
+import { MyJobsButton } from '../components/population/MyJobsDrawer';
 import { SearchIndexPanel } from '../components/population/SearchIndexPanel';
 import { useAfterDelay } from '../hooks/use-after-delay';
 import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip';
@@ -85,7 +86,7 @@ import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowle
 import { useAssistantSync } from "../hooks/use-assistant-sync";
 import { isIndexBuilding, useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, useModelCheck, usePopulationFreshness, useSearchIndexStatus, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useModelHealth, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
-import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
+import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore, waitForGraphSave } from "../store";
 import type { ConceptSourceMapping, HealthAction, ModelCheckIssue, ReviewQueueItem } from "../types";
 import { checkBlockReason, checkTarget } from "../utils/model-check";
 import type { DesignerSource } from "../utils/designer-flow";
@@ -223,13 +224,14 @@ export function SemanticModelEditorPage() {
   const closeRunPanel = () => { setPopulation(null); setIndexPanelOpen(false); };
   const [stoppingRun, setStoppingRun] = useState(false);
   // What the person is asked to confirm stopping: the data update, or the build of the search index.
-  const [confirmStop, setConfirmStop] = useState<'run' | 'index' | null>(null);
+  const [confirmStop, setConfirmStop] = useState<'run' | 'queued' | 'index' | null>(null);
   const [stoppingIndex, setStoppingIndex] = useState(false);
   const [restartingIndex, setRestartingIndex] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   // The review item being fixed, and the records to show for a missing value.
   const [reviewFocus, setReviewFocus] = useState<ReviewQueueItem | null>(null);
   const [dataFocus, setDataFocus] = useState<DataPreviewFocus | null>(null);
+  const [healthSection, setHealthSection] = useState<TrustCenterSection>('overview');
   const [choosingFor, setChoosingFor] = useState<SourceSuggestion | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const sourceSuggestions = useSourceSuggestions(modelId);
@@ -247,7 +249,13 @@ export function SemanticModelEditorPage() {
     retry: false,
   });
   useEffect(() => {
-    if (!populationJob.data || !POPULATION_TERMINAL_STATES.has(populationJob.data.state)) return;
+    if (!populationJob.data || populationJob.data.jobId !== populationJobId) return;
+    if (!POPULATION_TERMINAL_STATES.has(populationJob.data.state)) {
+      const live = populationJob.data;
+      setPopulation((current) => current?.jobId === live.jobId && current.status !== live.state
+        ? { ...current, status: live.state } : current);
+      return;
+    }
     if (['completed', 'completed_with_gaps'].includes(populationJob.data.state)) {
       setBoundDataRevisionId(undefined);
       // Drop, not just invalidate: cached data would re-pin the replaced revision.
@@ -262,8 +270,10 @@ export function SemanticModelEditorPage() {
     const finalProgress = populationJob.data.progress;
     const finalServing = populationServing(populationJob.data.result);
     const finalError = populationJob.data.errorCode;
+    const finalErrorDetails = populationJob.data.errorDetails;
     const finished = (current: PopulationOutcome | null) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current;
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving,
+        errorCode: finalError ?? current.errorCode, errorDetails: finalErrorDetails ?? current.errorDetails } : current;
     setPopulation(finished);
     setLastRun(finished);
     setPopulationJobId(undefined);
@@ -271,9 +281,48 @@ export function SemanticModelEditorPage() {
   useEffect(() => { if (population) { setLastRun(population); setIndexPanelOpen(false); } }, [population]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
+  const [pendingInspector, setPendingInspector] = useState<{ kind: 'derived'; target: DerivedSourceTarget } | { kind: 'relation'; relationId: string } | { kind: 'concept'; conceptId: string; details: boolean } | null>(null);
+  const consumedPendingInspectorRef = useRef<typeof pendingInspector>(null);
   // The mapping drawers share the right edge with the manual table: opening one closes the other.
   useEffect(() => { if (mappingTarget || derivedTarget) setManualConceptId(null); }, [mappingTarget, derivedTarget]);
-  const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); if (knowledgeOpen) closeKnowledge(); setDerivedTarget(target); };
+  const applyInspectorSelection = (selection: NonNullable<typeof pendingInspector>) => {
+    setPendingInspector(null);
+    setMappingTarget(null);
+    if (selection.kind === 'derived') {
+      select(null);
+      if (knowledgeOpen) closeKnowledge();
+      setDerivedTarget(selection.target);
+    } else {
+      setDerivedTarget(null);
+      if (selection.kind === 'relation') select(selection.relationId, { details: true });
+      else select(selection.conceptId, { details: selection.details });
+    }
+  };
+  const openDerived = (target: DerivedSourceTarget) => {
+    if (derivedTarget) {
+      if (derivedTarget.conceptId === target.conceptId && derivedTarget.derived?.id === target.derived?.id
+        && derivedTarget.initialSourceConceptId === target.initialSourceConceptId) return;
+      setPendingInspector({ kind: 'derived', target });
+      return;
+    }
+    applyInspectorSelection({ kind: 'derived', target });
+  };
+  const selectRelation = (relationId: string) => {
+    if (derivedTarget) { setPendingInspector({ kind: 'relation', relationId }); return; }
+    setMappingTarget(null);
+    select(relationId, { details: true });
+  };
+  const selectConcept = (conceptId: string, details: boolean) => {
+    if (derivedTarget) { setPendingInspector({ kind: 'concept', conceptId, details }); return; }
+    setMappingTarget(null);
+    select(conceptId, { details });
+  };
+  const closeDerived = useCallback(() => setDerivedTarget(null), []);
+  useEffect(() => {
+    if (derivedTarget || !pendingInspector || consumedPendingInspectorRef.current === pendingInspector) return;
+    consumedPendingInspectorRef.current = pendingInspector;
+    applyInspectorSelection(pendingInspector);
+  }, [derivedTarget, pendingInspector]);
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
   const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
   // Removing a source happens at once, without asking: Undo puts it back with the same settings.
@@ -357,7 +406,7 @@ export function SemanticModelEditorPage() {
     setPopulationJobId(activeRun.jobId);
     setSuggestionsOpen(false);
     setPopulation((current) => current?.jobId === activeRun.jobId ? current : { jobId: activeRun.jobId, status: activeRun.state, skipped: [], reused: false });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRun?.jobId]);
   // A source saved for a concept answers its suggestion.
   useEffect(() => {
@@ -384,7 +433,10 @@ export function SemanticModelEditorPage() {
   const stopPending = populationJobId ? runStopRequested : stoppingIndex;
   const stopSlow = useAfterDelay(Boolean(stopPending), STOP_SLOW_MS);
   // What the status button opens: the update being followed, else the index being built, else the last update seen.
-  const statusTarget: 'run' | 'index' | 'last' | null = populationJobId ? 'run' : indexBuilding ? 'index' : lastRun || population || indexPanelOpen ? 'last' : null;
+  const indexFailed = indexStatus.data?.index.state === 'failed' && indexStatus.data.index.lastErrorCode !== 'cancelled';
+  const indexNeedsAttention = indexFailed || indexStatus.data?.index.state === 'missing' || indexStatus.data?.index.state === 'unavailable' || indexStatus.isError;
+  // A missing/unreadable index still needs a reachable status and recovery panel.
+  const statusTarget: 'run' | 'index' | 'last' = populationJobId ? 'run' : indexBuilding || indexNeedsAttention || indexPanelOpen ? 'index' : lastRun || population ? 'last' : 'index';
   const busy = Boolean(populationJobId) || indexBuilding;
   // The worker building the index stopped answering: Restart sits next to Stop.
   const indexStalled = !populationJobId && indexBuilding && Boolean(indexStatus.data?.index.stalled);
@@ -392,7 +444,7 @@ export function SemanticModelEditorPage() {
     setSuggestionsOpen(false); setVersionsOpen(false); setRunHistoryOpen(false); setMappingTarget(null);
     if (populationJobId) {
       setPopulation((current) => current ?? { jobId: populationJobId, status: populationJob.data?.state ?? 'running', skipped: [], reused: false, progress: populationJob.data?.progress });
-    } else if (indexBuilding || !lastRun) {
+    } else if (statusTarget === 'index') {
       setIndexPanelOpen(true);
     } else {
       setPopulation(lastRun);
@@ -423,22 +475,23 @@ export function SemanticModelEditorPage() {
     setSuggestionsOpen(false);
     setVersionsOpen(false);
     setMappingTarget(null);
+    setDerivedTarget(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
     // An open records table follows the concept being looked at.
     if (recordsConceptId && graph?.nodes.some((node) => node.id === selectedId && !node.systemKey)) setRecordsConceptId(selectedId);
-  // Every click counts, including one on what is already selected, so the panel never stays on an earlier choice.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Every click counts, including one on what is already selected, so the panel never stays on an earlier choice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest, selectedId, selectionTick]);
 
   // A concept's properties open on the right; the app's left navigation folds away to leave the canvas room.
   const appSidebar = useOptionalSidebar();
   const setAppSidebarOpen = appSidebar?.setOpen;
-  const conceptDetailsShown = detailsOpen && Boolean(selectedId && graph?.nodes.some((node) => node.id === selectedId));
+  const conceptDetailsShown = detailsOpen && Boolean((selectedId && graph?.nodes.some((node) => node.id === selectedId)) || (selectedId && graph?.relations.some((relation) => relation.id === selectedId)));
   useEffect(() => {
     if (conceptDetailsShown) { setAppSidebarOpen?.(false); appSidebar?.setOpenMobile(false); }
-  // Only opening a concept folds it; the user can unfold it again while the panel stays open.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only opening a concept folds it; the user can unfold it again while the panel stays open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conceptDetailsShown, selectedId, selectionTick]);
 
   useEffect(() => {
@@ -452,9 +505,9 @@ export function SemanticModelEditorPage() {
       const batch = selectPendingOperations(state.pending);
       const revision = state.graph?.revision;
       const versionId = state.graph?.versionId;
-      const savedGroups = state.pending.slice(0,batch.groupCount);
+      const savedGroups = state.pending.slice(0, batch.groupCount);
       if (!batch.operations.length || revision === undefined || !versionId) return;
-      const saveIsCurrent = () => isPendingSaveCurrent(useSemanticModelEditorStore.getState(),versionId,savedGroups);
+      const saveIsCurrent = () => isPendingSaveCurrent(useSemanticModelEditorStore.getState(), versionId, savedGroups);
       savingRef.current = true;
       markSaving();
       try {
@@ -561,23 +614,24 @@ export function SemanticModelEditorPage() {
     }));
   };
   const browseRecords = useCallback((conceptId: string) => setRecordsConceptId(conceptId), []);
-  const openKnowledge = (targetId:string|null=null) => {
-    if (Date.now()-knowledgeClosedAtRef.current<700) return;
+  const openKnowledge = (targetId: string | null = null) => {
+    if (Date.now() - knowledgeClosedAtRef.current < 700) return;
     setKnowledgeTargetId(targetId);
     setKnowledgeOpen(true);
     // The concept being fed is the one highlighted, so clicking another one moves on from it.
     if (targetId) select(targetId);
   };
   const closeKnowledge = () => {
-    knowledgeClosedAtRef.current=Date.now();
+    knowledgeClosedAtRef.current = Date.now();
     setKnowledgeOpen(false);
     setKnowledgeTargetId(null);
   };
-  const stopRun = async () => {
+  const stopRun = async (onlyQueued = false) => {
     if (!modelId || !population) return;
     setStoppingRun(true);
     try {
-      const job = await semanticModelApi.stopPopulationJob(modelId, population.jobId);
+      const job = onlyQueued ? await semanticModelApi.stopMyJob(population.jobId, true)
+        : await semanticModelApi.stopPopulationJob(modelId, population.jobId);
       setPopulation((current) => current && current.jobId === job.jobId ? { ...current, status: job.state } : current);
       void populationJob.refetch();
     } catch (error) {
@@ -615,6 +669,7 @@ export function SemanticModelEditorPage() {
     const kind = confirmStop;
     setConfirmStop(null);
     if (kind === 'run') void stopRun();
+    else if (kind === 'queued') void stopRun(true);
     else if (kind === 'index') void stopIndex();
   };
   const openSuggestions = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(true); };
@@ -652,7 +707,7 @@ export function SemanticModelEditorPage() {
     setGraphRecord(wantedRecord);
     setGraphViewerOpen(true);
     setSearchParams((params) => { params.delete('record'); return params; }, { replace: true });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantedRecord]);
   const onGraphRecord = useCallback((found: boolean) => {
     setGraphRecord(null);
@@ -680,7 +735,7 @@ export function SemanticModelEditorPage() {
     // A choice made in a conversation is gone after a reload: choose again here.
     else if (browse || searchParams.get('choice') === '1') browseForSuggestion(suggestion);
     else useSuggestion(suggestion, option);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphReady, wantedSuggestion, wantsSuggestions, sourceSuggestions.data, sourceSuggestions.isError]);
 
   if (model.isLoading || graphQuery.isLoading || !graph)
@@ -717,7 +772,7 @@ export function SemanticModelEditorPage() {
   const published = Boolean(model.data?.currentPublishedVersionId);
   const repairMapping = (mappingId: string, bulkEdit?: boolean) => {
     const mapping = sourceMappings.data?.find((candidate) => candidate.id === mappingId);
-    if (!mapping) { setMode('mappings'); return; }
+    if (!mapping) { setHealthSection('sources'); setMode('health'); return; }
     void openMappingTarget({ ...mappingTarget_(mapping), ...(bulkEdit ? { bulkEdit } : {}) });
   };
   // The editors open over the canvas, not over the health screen.
@@ -808,7 +863,7 @@ export function SemanticModelEditorPage() {
     setMappingTarget(next);
   };
   const closeSidePanels = () => { setVersionsOpen(false); closeRunPanel(); setSuggestionsOpen(false); setRunHistoryOpen(false); };
-  const openReview = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setMode('health'); };
+  const openReview = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setHealthSection('overview'); setMode('health'); };
   const openRunHistory = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
   const fieldKey = (conceptId: string, label: unknown) => {
@@ -829,12 +884,12 @@ export function SemanticModelEditorPage() {
       case 'choose_unique_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       case 'set_up_link': setMode('structure'); focus(action.relationId, 'matching'); break;
       // Links that found nothing are looked at in the records: which ones, and the value they looked for.
-      case 'check_links': setMode('records'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
-      case 'review_rows': setMode('records'); setDataFocus({ conceptId: action.conceptId, rows: true, at: Date.now() }); break;
+      case 'check_links': setHealthSection('records'); setMode('health'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
+      case 'review_rows': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, rows: true, at: Date.now() }); break;
       case 'add_source':
-      case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
-      case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
-      case 'view_data': setMode('records'); setDataFocus(null); break;
+      case 'open_sources': setHealthSection('sources'); setMode('health'); break;
+      case 'fix_values': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
+      case 'view_data': setHealthSection('records'); setMode('health'); setDataFocus(null); break;
       case 'open_run_history': openRunHistory(); break;
       case 'choose_label_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       default: break;
@@ -847,10 +902,10 @@ export function SemanticModelEditorPage() {
         setMode('structure');
         if (action.suggestedFields?.length) suggestIdentity(action.conceptId, action.suggestedFields); else focus(action.conceptId, 'identity');
         break;
-      case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
-      case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute, at: Date.now() }); break;
-      case 'check_links': setMode('records'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
-      case 'view_records': setMode('records'); setDataFocus({ conceptId: action.conceptId, at: Date.now() }); break;
+      case 'open_sources': setHealthSection('sources'); setMode('health'); break;
+      case 'fix_values': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute, at: Date.now() }); break;
+      case 'check_links': setHealthSection('records'); setMode('health'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
+      case 'view_records': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, at: Date.now() }); break;
       // The limits are the admins' to change, in the settings for every model.
       case 'raise_ai_limit':
       case 'open_run_limits': navigate('/admin/semantic-model-settings'); break;
@@ -873,11 +928,13 @@ export function SemanticModelEditorPage() {
   };
   const palette: Array<{ key: string; icon: typeof Plus; label: string; hint: string; onClick: () => void }> = [
     { key: 'source', icon: Sheet, label: t('designer.palette.source'), hint: t('designer.palette.sourceHint'), onClick: () => { closeSidePanels(); openKnowledge(); } },
-    { key: 'typed', icon: Table2, label: t('designer.palette.typed'), hint: t('designer.palette.typedHint'), onClick: () => {
-      // A selected concept that can hold rows is the table to open; otherwise ask which concept.
-      const selectedConcept = graph.nodes.find((node) => node.id === selectedId && !node.systemKey && node.recordPolicy !== 'none');
-      if (selectedConcept) openManualTable(selectedConcept.id); else setManualPickOpen(true);
-    } },
+    {
+      key: 'typed', icon: Table2, label: t('designer.palette.typed'), hint: t('designer.palette.typedHint'), onClick: () => {
+        // A selected concept that can hold rows is the table to open; otherwise ask which concept.
+        const selectedConcept = graph.nodes.find((node) => node.id === selectedId && !node.systemKey && node.recordPolicy !== 'none');
+        if (selectedConcept) openManualTable(selectedConcept.id); else setManualPickOpen(true);
+      }
+    },
     { key: 'concept', icon: Box, label: t('designer.palette.concept'), hint: t('designer.palette.conceptHint'), onClick: () => setConceptOpen(true) },
     { key: 'relation', icon: Spline, label: t('designer.palette.relation'), hint: t('designer.palette.relationHint'), onClick: () => setRelationOpen(true) },
     { key: 'suggest', icon: Sparkles, label: t('designer.palette.suggest'), hint: t('designer.palette.suggestHint'), onClick: () => setSuggestSource('pick') },
@@ -895,9 +952,12 @@ export function SemanticModelEditorPage() {
   };
   const toggleKey = (conceptId: string, field: string) => {
     if (!modelId) return;
-    const fields = identityRules.data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [];
+    const concept = useSemanticModelEditorStore.getState().graph?.nodes.find((node) => node.id === conceptId);
+    if (!concept) return;
+    const fields = (identityRules.data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [])
+      .filter((key) => concept.attributes.some((attribute) => attribute.key === key));
     const next = fields.includes(field) ? fields.filter((item) => item !== field) : [...fields, field];
-    semanticModelApi.saveIdentityRule(modelId, conceptId, next).then(() => Promise.all([
+    waitForGraphSave().then(() => semanticModelApi.saveIdentityRule(modelId, conceptId, next)).then(() => Promise.all([
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
@@ -916,7 +976,7 @@ export function SemanticModelEditorPage() {
         <Button size="icon" variant="ghost" asChild aria-label={t("editor.back")}>
           <Link to="/semantic-models"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
-        <div className="mr-1 min-w-0">
+        <div className="me-1 min-w-0">
           <h1 className="max-w-48 truncate text-sm font-semibold sm:max-w-80">{model.data?.name}</h1>
           <p className="hidden text-[11px] text-muted-foreground sm:block">
             {t(model.data?.kind === "workspace_default" ? "editor.automaticModel" : "editor.designedModel")}
@@ -926,7 +986,7 @@ export function SemanticModelEditorPage() {
           <Save className={`h-3.5 w-3.5 ${saveStatus === "saving" ? "animate-pulse text-primary" : saveStatus === "conflict" || saveStatus === "error" ? "text-destructive" : "text-muted-foreground"}`} />
           <span className="hidden md:inline">{statusLabel}</span>
           {(saveStatus === "error" || saveStatus === "offline") && (
-            <button type="button" className="ml-1 font-semibold text-primary underline-offset-2 hover:underline" onClick={retrySave}>{t("action.retry")}</button>
+            <button type="button" className="ms-1 font-semibold text-primary underline-offset-2 hover:underline" onClick={retrySave}>{t("action.retry")}</button>
           )}
         </div>
         {canEdit && onCanvas && <div className='hidden items-center sm:flex'>
@@ -942,39 +1002,35 @@ export function SemanticModelEditorPage() {
           {freshnessState && freshnessState !== 'not_runnable' && <> · <span title={t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint')}
             className={freshnessState === 'outdated' ? 'font-medium text-amber-700 dark:text-amber-400' : freshnessState === 'current' ? 'text-emerald-700 dark:text-emerald-400' : undefined}>
             <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
-            <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
+            <span className='ms-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
         </p>
         {modelId && <GraphStatusTooltip modelId={modelId} />}
         <div className="flex shrink-0 items-center gap-1.5">
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
-          {onCanvas && <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost' aria-label={t('designer.data')} title={t('designer.data')}><Table2 className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('designer.data')}</span><ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
-            <DropdownMenuContent align='end' onCloseAutoFocus={(event) => event.preventDefault()}>
-              <DropdownMenuItem onSelect={() => setMode('records')}><Table2 className='h-4 w-4' />{t('mode.records')}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={openGraphViewer}><Network className='h-4 w-4' />{t('dataWorkflow.dataGraph')}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setMode('mappings')}><ListChecks className='h-4 w-4' />{t('designer.sourceList')}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>}
+          {onCanvas && <Button size='sm' variant='ghost' aria-label={t('dataWorkflow.dataGraph')} title={t('dataWorkflow.dataGraph')} onClick={openGraphViewer}>
+            <Network className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('dataWorkflow.dataGraph')}</span>
+          </Button>}
           {suggestionList.length > 0 && <Button variant='ghost' size='sm' onClick={() => (suggestionsOpen ? setSuggestionsOpen(false) : openSuggestions())}>
             {t('assistantSources.toolbar')}
-            {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
+            {pendingSuggestions > 0 && <span className='ms-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
           </Button>}
           <Button variant='ghost' size='sm' className={mode === 'health' ? 'bg-muted' : undefined} aria-pressed={mode === 'health'} title={t('health.button')} onClick={() => (mode === 'health' ? setMode('structure') : openReview())}>
             <HeartPulse className='h-4 w-4 lg:hidden' /><span className='hidden lg:inline'>{t('health.button')}</span>
-            {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('health.badge', { count: reviewCount })}>{reviewCount}</span>}
+            {reviewCount > 0 && <span className='ms-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('health.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
           <Button variant='ghost' size='sm' className={runHistoryOpen ? 'bg-muted' : undefined} aria-pressed={runHistoryOpen} onClick={() => (runHistoryOpen ? setRunHistoryOpen(false) : openRunHistory())} aria-label={t('runHistory.title')} title={t('runHistory.title')}><ListOrdered className='h-4 w-4' /></Button>
+          <MyJobsButton modelId={modelId} />
           {model.data && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-primary' onClick={() => setCloneModelOpen(true)} aria-label={t('clone.button')} title={t('clone.button')}><Copy className='h-4 w-4' /></Button>}
           {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
           {/* Always the way back to the run's side panel: while an update or the search index build runs, and after the last update ended. */}
           {canEdit && statusTarget && <Button variant='outline' size='sm' aria-pressed={runPanelOpen}
-            className={cn(runPanelOpen && 'bg-muted', busy && 'border-primary/50 text-primary')}
+            className={cn(runPanelOpen && 'bg-muted', busy && 'border-primary/50 text-primary', statusTarget === 'index' && indexFailed && 'border-destructive/50 text-destructive')}
             aria-label={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
-            title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
+            title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'index' && indexFailed ? 'searchIndexRetry.openHint' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
             onClick={() => (runPanelOpen ? closeRunPanel() : openRunStatus())}>
-            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:mr-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:mr-1.5' />}
-            <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? 'runStatus.index' : 'runStatus.last')}</span>
+            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:me-1.5' /> : statusTarget === 'index' && indexFailed ? <AlertTriangle className='h-4 w-4 lg:me-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:me-1.5' />}
+            <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? indexFailed ? 'searchIndexRetry.open' : 'runStatus.index' : 'runStatus.last')}</span>
           </Button>}
           {/* While the model is busy (a data update in any phase, or its search index being built) the button is Stop, not Run. */}
           {canEdit && (populationJobId || indexBuilding) && <div className='flex items-center gap-1'>
@@ -983,7 +1039,7 @@ export function SemanticModelEditorPage() {
                 <Button variant='outline' size='sm' aria-label={t('runStop.stop')}
                   disabled={populationJobId ? runStopRequested || !runStoppable : stoppingIndex}
                   onClick={() => setConfirmStop(populationJobId ? 'run' : 'index')}>
-                  {(populationJobId ? runStopRequested : stoppingIndex) ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+                  {(populationJobId ? runStopRequested : stoppingIndex) ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='me-1.5 h-4 w-4' />}
                   {(populationJobId ? runStopRequested : stoppingIndex) ? t('runStop.stopping') : t('runStop.stop')}
                 </Button>
               </span></TooltipTrigger>
@@ -993,7 +1049,7 @@ export function SemanticModelEditorPage() {
             {indexStalled && <TooltipProvider><Tooltip>
               <TooltipTrigger asChild><span>
                 <Button variant='outline' size='sm' aria-label={t('runStop.restart')} disabled={restartingIndex} onClick={() => void restartIndex()}>
-                  {restartingIndex ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <RotateCcw className='mr-1.5 h-4 w-4' />}
+                  {restartingIndex ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <RotateCcw className='me-1.5 h-4 w-4' />}
                   {restartingIndex ? t('runStop.restarting') : t('runStop.restart')}
                 </Button>
               </span></TooltipTrigger>
@@ -1005,9 +1061,9 @@ export function SemanticModelEditorPage() {
             title={checkBlock ?? (freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined)}
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
             className={freshnessState === 'outdated' || freshnessState === 'never_run' ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
-            <Play className='mr-1.5 h-4 w-4' />
+            <Play className='me-1.5 h-4 w-4' />
             {/* The status line is hidden on narrower screens; the dot keeps telling whether the data is current. */}
-            {freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first mr-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
+            {freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first me-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
             {freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
           </Button>}
           {canEdit && <Button size='sm' className='relative' onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())}
@@ -1020,38 +1076,46 @@ export function SemanticModelEditorPage() {
       <main className="relative flex min-h-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
           {reviewFocus && mode !== 'health' && <ReviewFocusBar item={reviewFocus} items={modelHealth.data?.setup ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
-          {onCanvas && <div className='relative min-h-0 flex-1'>
-            {canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
+          {/* Preserve the canvas viewport while hiding the entire subtree: ReactFlow nodes override inherited visibility. */}
+          {(onCanvas || mode === 'health') && <div aria-hidden={!onCanvas} {...(!onCanvas ? { inert: '' } : {})} className={cn('relative min-h-0 flex-1', mode === 'health' && 'pointer-events-none absolute inset-0 opacity-0')}>
+            {onCanvas && canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
             <SemanticModelCanvas
-            sourceMappings={sourceMappings.data}
-            derivedSources={derivedSources.data}
-            onOpenDerived={canEdit ? (derived) => openDerived({ conceptId: derived.conceptId, derived }) : undefined}
-            identityRules={identityRules.data}
-            recordCounts={conceptRecordCounts}
-            mappingHealth={mappingHealth.data?.items}
-            canEdit={canEdit}
-            knowledge={knowledge}
-            onOpenKnowledge={(nodeId) => openKnowledge(nodeId)}
-            onConnectRequest={(connection) => {
-              setRelationConnection(connection);
-              setRelationOpen(true);
-            }}
-            onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
-            onOpenSource={openSource}
-            onPaneDrop={dropOnCanvas}
-            onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); setManualConceptId(null); }}
-            onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
-            onSwitchSource={canEdit ? startSwitch : undefined}
-            onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
-            onToggleKey={canEdit ? toggleKey : undefined}
-            sourcePositions={sourcePositions}
-            onMoveSource={canEdit ? moveSource : undefined}
-            onBrowseRecords={browseRecords}
-            onOpenManualTable={canEdit ? openManualTable : undefined}
-            refreshingConcepts={populationJobId ? refreshingConcepts : undefined}
-            checkIssues={checkResult?.issues}
-            onOpenCheckIssue={openCheckIssue}
-          />
+              sourceMappings={sourceMappings.data}
+              derivedSources={derivedSources.data}
+              onOpenDerived={canEdit ? (derived) => openDerived({ conceptId: derived.conceptId, derived }) : undefined}
+              identityRules={identityRules.data}
+              recordCounts={conceptRecordCounts}
+              mappingHealth={mappingHealth.data?.items}
+              canEdit={canEdit}
+              knowledge={knowledge}
+              onOpenKnowledge={(nodeId) => openKnowledge(nodeId)}
+              onConnectRequest={(connection) => {
+                setRelationConnection(connection);
+                setRelationOpen(true);
+              }}
+              onDataConnectRequest={({ sourceId, targetId }) => openDerived({
+                conceptId: targetId,
+                initialSourceConceptId: sourceId,
+                derived: derivedSources.data?.find((source) => source.sourceConceptId === sourceId && source.conceptId === targetId),
+              })}
+              onSelectRelation={selectRelation}
+              onSelectConcept={selectConcept}
+              onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
+              onOpenSource={openSource}
+              onPaneDrop={dropOnCanvas}
+              onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); setManualConceptId(null); }}
+              onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
+              onSwitchSource={canEdit ? startSwitch : undefined}
+              onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
+              onToggleKey={canEdit ? toggleKey : undefined}
+              sourcePositions={sourcePositions}
+              onMoveSource={canEdit ? moveSource : undefined}
+              onBrowseRecords={browseRecords}
+              onOpenManualTable={canEdit ? openManualTable : undefined}
+              refreshingConcepts={populationJobId ? refreshingConcepts : undefined}
+              checkIssues={checkResult?.issues}
+              onOpenCheckIssue={openCheckIssue}
+            />
           </div>}
           {onCanvas && modelId && recordsConceptId && graph.nodes.some((node) => node.id === recordsConceptId) && <ConceptRecordsPanel
             modelId={modelId}
@@ -1061,14 +1125,16 @@ export function SemanticModelEditorPage() {
             onRefresh={canEdit ? () => setRefreshConceptId(recordsConceptId) : undefined}
             refreshing={Boolean(populationJobId)}
           />}
-          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
-            onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
-          {mode === 'health' && modelId && <ModelHealthView modelId={modelId} canEdit={canEdit} onAction={openHealthAction}
+          {mode === 'health' && modelId && <ModelHealthView modelId={modelId} canEdit={canEdit} onAction={openHealthAction} section={healthSection} onSectionChange={setHealthSection}
+            records={<SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
+              onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
+            sources={<SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
+              onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })}
+              onRepairDerived={(derived) => openDerived({ conceptId: derived.conceptId, derived })} />}
             setup={<ModelSetupChecks modelId={modelId} canEdit={canEdit && pending.length === 0} items={modelHealth.data?.setup ?? []} activeKey={reviewFocus?.key}
               modelCheck={checkResult} modelCheckFailed={modelCheck.isError && !checkResult} checkMappings={sourceMappings.data} checkDerivedSources={derivedSources.data}
               onOpenCheckIssue={openCheckIssue} onOpenIssue={openIssue} validation={validation} onOpenValidationIssue={(id) => { setMode('structure'); focus(id); }}
               canRunCheck={canValidate} checking={checking} onRunCheck={() => void validate()} />} />}
-          {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
           {onCanvas && conceptCount === 0 && !hasSources && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
               {/* Like the first step of a scenario: one big +, and the choices it opens. */}
@@ -1098,7 +1164,8 @@ export function SemanticModelEditorPage() {
           conceptLabels={conceptLabels}
           onClose={() => closeRunPanel()}
           onOpenHealth={() => { closeRunPanel(); setMode('health'); }}
-          onStop={canEdit ? () => setConfirmStop('run') : undefined}
+          onStop={canEdit ? () => setConfirmStop(['queued', 'waiting_dependencies'].includes(population.status) ? 'queued' : 'run') : undefined}
+          jobsAction={<MyJobsButton modelId={modelId} queueLabel />}
           stopping={runStopRequested}
           stoppingSlow={stopSlow}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
@@ -1141,7 +1208,8 @@ export function SemanticModelEditorPage() {
         />}
         {(knowledgeOpen || (onCanvas && detailsOpen)) && !runPanelOpen && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
         <ManualTableEditor conceptId={manualConceptId} canEdit={canEdit} onClose={() => setManualConceptId(null)} />
-        {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
+        {modelId && derivedTarget && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} pendingSwitch={Boolean(pendingInspector)}
+          onCancelPendingSwitch={() => setPendingInspector(null)} onClose={closeDerived} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={mappingClosed} onSaved={mappingSaved} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />
@@ -1252,13 +1320,13 @@ export function SemanticModelEditorPage() {
       <AlertDialog open={confirmStop !== null} onOpenChange={(open) => { if (!open) setConfirmStop(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirmStop === 'index' ? t('runStop.indexConfirmTitle') : t('runStop.confirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmStop === 'index' ? t('runStop.indexConfirmDescription') : t('runStop.confirmDescription')}</AlertDialogDescription>
+            <AlertDialogTitle>{confirmStop === 'index' ? t('runStop.indexConfirmTitle') : confirmStop === 'queued' ? t('myJobs.queuedRemoveTitle') : t('runStop.confirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmStop === 'index' ? t('runStop.indexConfirmDescription') : confirmStop === 'queued' ? t('myJobs.queuedRemoveHint') : t('runStop.confirmDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('runStop.keepGoing')}</AlertDialogCancel>
             <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={confirmedStop}>
-              {confirmStop === 'index' ? t('runStop.indexConfirmAction') : t('runStop.confirmAction')}
+              {confirmStop === 'index' ? t('runStop.indexConfirmAction') : confirmStop === 'queued' ? t('myJobs.removeQueued') : t('runStop.confirmAction')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

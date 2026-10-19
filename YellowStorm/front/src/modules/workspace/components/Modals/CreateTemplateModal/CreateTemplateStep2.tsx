@@ -252,13 +252,13 @@ export function CreateTemplateStep2({ onBack, onSubmit }: CreateTemplateStep2Pro
 
         <div className='flex justify-between pt-4'>
           <Button type='button' variant='outline' onClick={onBack}>
-            <ChevronLeft className='mr-2 h-4 w-4' />
+            <ChevronLeft className='me-2 h-4 w-4' />
             {t(key('actions.back'))}
           </Button>
           <Button type='submit' disabled={isCreating}>
             {isCreating ? (
               <>
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 className='me-2 h-4 w-4 animate-spin' />
                 {t(key('actions.creating'))}
               </>
             ) : (

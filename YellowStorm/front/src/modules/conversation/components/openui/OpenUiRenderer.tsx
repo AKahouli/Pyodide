@@ -1,5 +1,5 @@
 import './devtools-off';
-import { useContext, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Renderer, type ActionEvent, type ParseResult } from '@openuidev/react-lang';
 import { CardSourceProvider, ThemeProvider } from '@openuidev/react-ui';
 import '@openuidev/react-ui/styles/index.css';
@@ -11,6 +11,7 @@ import { openUiLibrary } from './library';
 import { ReportBlock } from './ReportBlock';
 import { splitReportProgram } from './report-program';
 import { OPENUI_COMPACT_THEME } from './theme';
+import { createScopedImageCache } from './document-images';
 
 export interface OpenUiRendererProps {
   content: string;
@@ -25,6 +26,8 @@ export interface OpenUiRendererProps {
   fallback?: ReactNode | ((text: string) => ReactNode);
   /** Tags the scope with the stored text component it renders (see plain-text.ts). */
   partId?: string;
+  initialState?: Record<string, unknown>;
+  onStateUpdate?: (state: Record<string, unknown>) => void;
 }
 
 /** Scope for the `--openui-*` theme tokens, so ThemeProvider does not write onto <body>. */
@@ -40,7 +43,7 @@ export function resolveOpenUiMode(theme: string): 'light' | 'dark' {
  * Loaded lazily (see OpenUiAnswer): this is the only module that imports the
  * OpenUI runtime, component library and its stylesheet.
  */
-export default function OpenUiRenderer({ content, isStreaming, onAction, citations, citationScope, fallback, partId }: Readonly<OpenUiRendererProps>) {
+export default function OpenUiRenderer({ content, isStreaming, onAction, citations, citationScope, fallback, partId, initialState, onStateUpdate }: Readonly<OpenUiRendererProps>) {
   const { theme } = useContext(ThemeProviderContext);
   const mode = resolveOpenUiMode(theme);
   const [parsed, setParsed] = useState<ParseResult | null>(null);
@@ -48,7 +51,9 @@ export default function OpenUiRenderer({ content, isStreaming, onAction, citatio
   const { chat, report } = useMemo(() => splitReportProgram(content), [content]);
   const { byReference, trailing } = useMemo(() => splitCitations(citations, content, citationScope), [citations, content, citationScope]);
   const stockSources = useMemo(() => toStockSources(byReference), [byReference]);
-  const citationValue = useMemo(() => ({ byReference, scope: citationScope }), [byReference, citationScope]);
+  const imageCache = useMemo(() => createScopedImageCache(), [citationScope?.conversationId, citationScope?.messageId, citationScope?.componentId, partId]);
+  useEffect(() => () => imageCache.dispose(), [imageCache]);
+  const citationValue = useMemo(() => ({ byReference, scope: citationScope, imageCache }), [byReference, citationScope, imageCache]);
   const reportCitations = useMemo(() => Array.from(byReference).filter(([reference]) => report?.includes(`[${reference}]`) && !chat.includes(`[${reference}]`)).map(([, citation]) => citation), [byReference, report, chat]);
   const hasChat = chat.trim() !== '';
   // While streaming, partial or invalid text must never swap the view: only a
@@ -67,7 +72,7 @@ export default function OpenUiRenderer({ content, isStreaming, onAction, citatio
               <>
                 {hasChat && (chatFallback
                   ? renderFallback(chat)
-                  : <Renderer response={chat} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} />)}
+                  : <Renderer response={chat} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} initialState={initialState} onStateUpdate={onStateUpdate} />)}
                 {report !== null && (
                   <ReportBlock program={report} isStreaming={isStreaming} panelId={`${citationScope?.messageId ?? 'message'}:${partId ?? 'part'}`} citations={reportCitations} citationScope={citationScope} onParseResult={setReportParsed} />
                 )}

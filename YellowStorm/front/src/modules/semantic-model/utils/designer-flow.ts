@@ -41,6 +41,22 @@ export const typedSourceId = (conceptId: string) => `typed:${conceptId}`;
 export const feedId = (mappingId: string) => `feed:${mappingId}`;
 export const isDesignerSourceId = (id: string) => id.startsWith('source:') || id.startsWith('typed:');
 
+/** Whether adding source -> target would close a path already leading from target back to source. */
+export function closesDerivationCycle(derivations: Pick<DerivedSource, 'sourceConceptId'|'conceptId'>[], sourceId: string, targetId: string): boolean {
+  const next = new Map<string,string[]>();
+  for (const derivation of derivations) next.set(derivation.sourceConceptId, [...(next.get(derivation.sourceConceptId) ?? []), derivation.conceptId]);
+  const pending = [targetId];
+  const seen = new Set<string>();
+  while (pending.length) {
+    const conceptId = pending.pop()!;
+    if (conceptId===sourceId) return true;
+    if (seen.has(conceptId)) continue;
+    seen.add(conceptId);
+    pending.push(...(next.get(conceptId) ?? []));
+  }
+  return false;
+}
+
 function mappingTone(mapping: ConceptSourceMapping, health: MappingHealthItem | undefined): DesignerFeed['tone'] {
   if (!health) return mapping.status === 'ready' ? 'idle' : 'warn';
   if (health.state === 'checking') return 'idle';

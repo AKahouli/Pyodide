@@ -282,7 +282,7 @@ ref,
     hasContent: boolean,
   ) => (
     <Collapsible key={key} defaultOpen={false} className="rounded-lg border bg-background p-4">
-      <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-left">
+      <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-start">
         <span className="font-medium">{title}</span>
         <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
       </CollapsibleTrigger>
@@ -316,7 +316,7 @@ ref,
             {replayLoadFailed ? t('baselineBadge.replayLoadFailed') : t('baselineBadge.missingReplay')}
           </div>
         ) : (
-          <ScrollArea className="max-h-[70vh] pr-4">
+          <ScrollArea className="max-h-[70vh] pe-4">
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'overview' | 'rules' | 'history' | 'technical')} className="space-y-4">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="overview">{t('baselineBadge.tabs.overview')}</TabsTrigger>
@@ -677,7 +677,7 @@ ref,
             onClick={() => void handleRemove()}
             disabled={isBusy || !activeReplayId || !canEditReplay}
           >
-            {isRemoving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+            {isRemoving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Trash2 className="me-2 h-4 w-4" />}
             {t('baselineBadge.remove')}
           </Button>
           <div className="flex items-center gap-2">

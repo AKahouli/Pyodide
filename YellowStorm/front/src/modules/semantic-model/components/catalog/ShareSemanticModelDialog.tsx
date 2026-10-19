@@ -151,7 +151,7 @@ export function ShareSemanticModelDialog({
                 onChange={(e) => setEmailInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPending(emailInput.trim()); } }}
                 placeholder="Email de l'utilisateur…"
-                className={`${INPUT} pr-8`}
+                className={`${INPUT} pe-8`}
                 autoComplete='off'
               />
               {searching && <Loader2 className='absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground' />}
@@ -163,14 +163,14 @@ export function ShareSemanticModelDialog({
                       key={u.id}
                       type='button'
                       onClick={() => addPending(u.email)}
-                      className='flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted'
+                      className='flex w-full items-center gap-2 px-3 py-2 text-start text-sm hover:bg-muted'
                     >
                       <div className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary'>
                         {u.firstName ? u.firstName.charAt(0).toUpperCase() : u.email.charAt(0).toUpperCase()}
                       </div>
                       <div>
                         <span className='font-medium'>{[u.firstName, u.lastName].filter(Boolean).join(' ') || u.email}</span>
-                        {(u.firstName ?? u.lastName) && <span className='ml-1.5 text-xs text-muted-foreground'>{u.email}</span>}
+                        {(u.firstName ?? u.lastName) && <span className='ms-1.5 text-xs text-muted-foreground'>{u.email}</span>}
                       </div>
                     </button>
                   ))}
@@ -196,7 +196,7 @@ export function ShareSemanticModelDialog({
             <div className='space-y-2'>
               <ul className={ROW_LIST}>
                 {pending.map((entry) => (
-                  <li key={entry.id} className='flex items-center gap-2 py-1.5 pl-3 pr-1'>
+                  <li key={entry.id} className='flex items-center gap-2 py-1.5 ps-3 pe-1'>
                     <div className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary'>
                       {entry.email.charAt(0).toUpperCase()}
                     </div>
@@ -218,7 +218,7 @@ export function ShareSemanticModelDialog({
               </ul>
               <div className='flex justify-end'>
                 <Button size='sm' onClick={() => void handleSend()} disabled={saving}>
-                  {saving ? <Loader2 className='mr-2 h-3.5 w-3.5 animate-spin' /> : <Check className='mr-2 h-3.5 w-3.5' />}
+                  {saving ? <Loader2 className='me-2 h-3.5 w-3.5 animate-spin' /> : <Check className='me-2 h-3.5 w-3.5' />}
                   Envoyer {pending.length} invitation{pending.length > 1 ? 's' : ''}
                 </Button>
               </div>
@@ -231,14 +231,14 @@ export function ShareSemanticModelDialog({
           <SectionHeader title='Accès actuels' count={loading ? undefined : members.length || undefined} />
           {loading ? (
             <div className='flex items-center justify-center py-6 text-muted-foreground'>
-              <Loader2 className='mr-2 h-4 w-4 animate-spin' />Chargement…
+              <Loader2 className='me-2 h-4 w-4 animate-spin' />Chargement…
             </div>
           ) : members.length === 0 ? (
             <p className='text-xs text-muted-foreground'>Aucun collaborateur pour l'instant.</p>
           ) : (
             <ul className={`${ROW_LIST} max-h-52 overflow-y-auto`}>
               {members.map((member) => (
-                <li key={member.userId} className='flex items-center gap-2.5 py-1.5 pl-3 pr-1'>
+                <li key={member.userId} className='flex items-center gap-2.5 py-1.5 ps-3 pe-1'>
                   <div className='flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground'>
                     {initials(member)}
                   </div>

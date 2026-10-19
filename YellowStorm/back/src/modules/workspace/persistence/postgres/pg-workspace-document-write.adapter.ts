@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -50,6 +50,7 @@ export class PgWorkspaceDocumentWriteAdapter {
       set.metadata = patch.metadata ?? null;
     }
     if (Object.keys(set).length === 1) return; // only updatedAt — nothing to write
-    await this.q.update(DOCUMENTS).set(set).where(eq(DOCUMENTS.id, id));
+    // A worker may finish with a pre-deletion metadata snapshot; it cannot resurrect the source.
+    await this.q.update(DOCUMENTS).set(set).where(and(eq(DOCUMENTS.id, id), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`));
   }
 }

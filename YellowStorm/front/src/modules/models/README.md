@@ -2,6 +2,14 @@
 
 The models module provides AI model data management for the frontend, enabling model selection in conversations and displaying available providers.
 
+Admin > Models exposes a per-model **Conversation API** choice. Chat Completions
+is the default for existing/new models; Responses opts the single-agent conversation
+parent into the native ADK adapter through the LiteLLM gateway. The persisted
+`conversationApi` is independent of the model name. The gateway must support the
+selected API; there is no automatic fallback. Leaf workers and manager/team paths
+retain their existing adapters. Apply backend migration `0050_model_conversation_api.sql`
+before deploying the updated backend.
+
 ## Table of Contents
 
 - [Overview](#overview)

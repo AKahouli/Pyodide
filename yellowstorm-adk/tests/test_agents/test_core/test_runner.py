@@ -423,8 +423,9 @@ class TestAgentRunner:
         (False, "start", False, []),
         (False, "Inspect the selected file.", True, []),
     ])
+    @pytest.mark.parametrize("activity_kind", [None, "reasoning_summary", "unknown"])
     async def test_run_standard_agent_with_function_call(
-        self, narration_partial, narration, narration_on_tool, expected_narration,
+        self, narration_partial, narration, narration_on_tool, expected_narration, activity_kind,
     ):
         """Test running standard agent with function calls."""
         mock_event_extractor = MagicMock()
@@ -507,6 +508,7 @@ class TestAgentRunner:
                 delta = MagicMock()
                 delta.content.parts = [thought]
                 delta.partial = True
+                delta.custom_metadata = {"activity_kind": activity_kind}
                 delta.is_final_response.return_value = False
                 yield delta
                 if index == 1:
@@ -518,6 +520,7 @@ class TestAgentRunner:
             snapshot = MagicMock()
             snapshot.content.parts = [types.Part(text="Private chain of thought", thought=True)]
             snapshot.partial = False
+            snapshot.custom_metadata = {"activity_kind": activity_kind}
             snapshot.is_final_response.return_value = False
             yield snapshot
             yield function_event
@@ -595,6 +598,10 @@ class TestAgentRunner:
                 *(["add"] if expected_narration else []),
             ]
             thought_events = activity_events[:4]
+            assert all(event['component_data'].get('activity_kind') == (
+                'reasoning_summary' if activity_kind == 'reasoning_summary' else None
+            ) for event in thought_events)
+            assert all('activity_kind' not in event['component_data'] for event in activity_events[4:])
             assert len({event["component_id"] for event in thought_events}) == 1
             assert thought_events[-1]["component_data"]["detail"] == "Private chain of thought"
             assert len({event["component_data"]["started_at"] for event in thought_events}) == 1
@@ -1587,3 +1594,27 @@ class TestAgentRunner:
         assert result[0] is None
         assert result[1] == []
         assert isinstance(result[2], dict)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('resuming', [False, True])
+async def test_bootstrap_reads_only_metadata_unless_resuming(resuming):
+    from types import SimpleNamespace
+    session = SimpleNamespace(events=[SimpleNamespace(invocation_id='invocation', content=None)], state={'citations': 'kept'})
+    storage = MagicMock()
+    storage.get_session = AsyncMock(return_value=session)
+    agent = MagicMock()
+    agent.name = 'TestAgent'
+    runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+    scope = SimpleNamespace(resume_intent='resume', native_session_id='target', native_invocation_id='invocation') if resuming else None
+    with patch('src.root_runtime.invocation.native_run_options', return_value={}), \
+         patch.object(runner, '_run_standard_agent', new_callable=AsyncMock, return_value=('Answer', [], {}, [])) as run:
+        await runner.run_agent_tool(agent=agent, message='Question', session_helper=storage,
+                                    user_id='owner', session_id='target', execution_scope=scope)
+    kwargs = storage.get_session.await_args.kwargs
+    assert kwargs['user_id'] == 'owner' and kwargs['session_id'] == 'target'
+    if resuming:
+        assert 'config' not in kwargs
+    else:
+        assert kwargs['config'].num_recent_events == 0
+    assert run.await_args.args[12] is session

@@ -147,7 +147,7 @@ export function RolePermissionsEditor({
                 <Label htmlFor={`group-${group.namespace}`} className="flex-1 cursor-pointer font-medium">{t(group.labelKey)}</Label>
                 {selectedCount > 0 && <Badge variant="secondary" className="text-xs">{selectedCount}</Badge>}
               </div>
-              <CollapsibleContent className="space-y-1 pl-10 pt-1">
+              <CollapsibleContent className="space-y-1 ps-10 pt-1">
                 {group.permissions.map((permission) => (
                   <div key={permission.value} className="flex items-start gap-2 py-1">
                     <Checkbox id={`perm-${permission.value}`} checked={permissions.includes(permission.value)} onCheckedChange={() => onTogglePermission(permission.value)} />
@@ -191,8 +191,8 @@ export function RolePermissionsEditor({
           const hasChildren = branchPermissions.length > 1;
 
           return (
-            <div key={node.id} className="border-b py-3 pr-3 last:border-b-0">
-              <div className="flex items-center gap-3" style={{ marginLeft: `${depth * 24 + 12}px` }}>
+            <div key={node.id} className="border-b py-3 pe-3 last:border-b-0">
+              <div className="flex items-center gap-3" style={{ marginInlineStart: `${depth * 24 + 12}px` }}>
                 <Checkbox
                   id={`role-menu-${node.id}`}
                   checked={someSelected ? 'indeterminate' : allSelected}

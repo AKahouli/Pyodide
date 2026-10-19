@@ -16,6 +16,10 @@
   "isDefault": true,
   "isConversationV2Default": false,
   "omitTemperature": false,
+  "conversationApi": "chat_completions",
+  "responsesHistoryMode": "application",
+  "reasoningHistory": "auto",
+  "reasoningSummary": "off",
   "inputModalities": [
     "text",
     "image"

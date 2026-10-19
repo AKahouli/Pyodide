@@ -89,7 +89,7 @@ export function PlaybookExecutionListPage() {
           <div className="flex items-center gap-2">
             {compareMode && selectedIds.size === 2 && (
               <Button size="sm" onClick={handleCompare}>
-                <GitCompareArrows className="h-4 w-4 mr-1.5" />
+                <GitCompareArrows className="h-4 w-4 me-1.5" />
                 {t('compare.compare')}
               </Button>
             )}
@@ -98,7 +98,7 @@ export function PlaybookExecutionListPage() {
               size="sm"
               onClick={handleToggleCompareMode}
             >
-              <GitCompareArrows className="h-4 w-4 mr-1.5" />
+              <GitCompareArrows className="h-4 w-4 me-1.5" />
               {t(compareMode ? 'common.cancel' : 'compare.compare')}
             </Button>
           </div>
@@ -127,7 +127,7 @@ export function PlaybookExecutionListPage() {
               return (
                 <button
                   key={exec.id}
-                  className={`w-full flex items-center justify-between p-4 border rounded-lg hover:bg-secondary/50 transition-colors text-left ${
+                  className={`w-full flex items-center justify-between p-4 border rounded-lg hover:bg-secondary/50 transition-colors text-start ${
                     isSelected ? 'border-primary ring-1 ring-primary/30' : ''
                   }`}
                   onClick={() => {

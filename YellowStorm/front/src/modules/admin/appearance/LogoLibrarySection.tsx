@@ -87,7 +87,7 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
             setEditing(null);
             setDialogOpen(true);
           }}>
-          <Plus className='mr-2 h-4 w-4' />
+          <Plus className='me-2 h-4 w-4' />
           {t('appearance.logo.upload')}
         </Button>
       </div>
@@ -109,7 +109,7 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
                 aria-label={logo.name}
                 disabled={assigning}
                 onClick={() => onSelectLogo(logo.id)}
-                className='flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+                className='flex min-w-0 flex-1 items-center gap-3 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
                 <div className='flex h-12 w-56 shrink-0 items-center overflow-hidden rounded-md border bg-sidebar px-2'>
                   <LogoMark logo={logo} className='max-h-10 max-w-full' />
                 </div>

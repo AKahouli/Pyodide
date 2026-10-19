@@ -67,6 +67,36 @@ describe('conversation-v2 per-user stream pipe', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps unused classic tabs disconnected, including token refresh', () => {
+    const { unmount } = renderHook(() => useAppBuilderStudioStreamConnection(false));
+    appBuilderStudioStreamService.reconnectWithNewToken();
+    expect(MockEventSource.instances).toHaveLength(0);
+    unmount();
+  });
+
+  it('keeps current v2 work connected outside its route and closes when the work completes', () => {
+    useAppBuilderStudioStore.setState({ streaming: true });
+    const { unmount } = renderHook(() => useAppBuilderStudioStreamConnection(false));
+    expect(MockEventSource.instances).toHaveLength(1);
+    const pipe = MockEventSource.instances[0];
+    act(() => useAppBuilderStudioStore.setState({ streaming: false }));
+    expect(pipe.closed).toBe(true);
+    appBuilderStudioStreamService.reconnectWithNewToken();
+    expect(MockEventSource.instances).toHaveLength(1);
+    unmount();
+  });
+
+  it('keeps cached background work connected after navigation away from v2', () => {
+    const { rerender, unmount } = renderHook(({ enabled }) => useAppBuilderStudioStreamConnection(enabled), { initialProps: { enabled: true } });
+    const pipe = MockEventSource.instances[0];
+    act(() => useAppBuilderStudioStore.setState({ streamingStateCache: new Map([['background', { streaming: true } as never]]) }));
+    rerender({ enabled: false });
+    expect(pipe.closed).toBe(false);
+    act(() => useAppBuilderStudioStore.setState({ streamingStateCache: new Map() }));
+    expect(pipe.closed).toBe(true);
+    unmount();
+  });
+
   it('opens ONE EventSource to the per-user pipe (not per conversation)', () => {
     mountConnection();
     expect(MockEventSource.instances).toHaveLength(1);

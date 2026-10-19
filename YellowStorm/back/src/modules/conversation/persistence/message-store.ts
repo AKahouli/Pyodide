@@ -54,6 +54,7 @@ export interface MessageRecord {
   editedAt?: Date;
   isStreaming: boolean;
   isComplete: boolean;
+  terminalStatus?: 'starting' | 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
   streamExecutionLeaseId?: string;
   streamExecutionLeaseExpiresAt?: Date;
   inputTokens?: number;
@@ -86,7 +87,31 @@ export interface MessageCursorInput extends Omit<MessagePageInput, 'page'> {
   cursor?: string;
 }
 
+export interface OpenUiAppStateKey {
+  actorId: string;
+  conversationId: string;
+  sourceMessageId: string;
+  componentId: string;
+  programDigest: string;
+}
+
+export interface OpenUiAppStateRecord {
+  stateRevision: number;
+  state: Record<string, unknown>;
+  updatedAt: Date;
+}
+
 export interface MessageStore {
+  hasOtherLiveAssetPath(conversationId: string, messageId: string, componentId: string, path: string): Promise<boolean>;
+  listPendingAssetCleanup(conversationId: string): Promise<MessageRecord[]>;
+  recordAssetStaging(conversationId: string, messageId: string, component: MessageComponent, metadata: Record<string, string>): Promise<boolean>;
+  getAssetRevocationState(conversationId: string): Promise<{ epoch: string | null; cleanupPending: boolean }>;
+  setAssetCleanup(conversationId: string, messageId: string, componentId: string, blobCleanup: 'done' | 'pending'): Promise<void>;
+  markAssetUnavailable(conversationId: string, messageId: string, component: MessageComponent): Promise<boolean>;
+  markDocumentArtifactsUnavailable(conversationId: string, documentId: string): Promise<void>;
+  canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean>;
+  getOpenUiAppState(key: OpenUiAppStateKey): Promise<OpenUiAppStateRecord | null>;
+  putOpenUiAppState(key: OpenUiAppStateKey, expectedRevision: number, state: Record<string, unknown>): Promise<OpenUiAppStateRecord | null>;
   createUser(input: CreateUserMessageData): Promise<MessageRecord>;
   createAiPlaceholder(input: CreateAIPlaceholderData): Promise<MessageRecord>;
   /**
@@ -99,6 +124,7 @@ export interface MessageStore {
   recordConversationUsageEvents(events: ConversationUsageEventInput[]): Promise<void>;
   getConversationUsage(conversationId: string): Promise<ConversationUsageMetrics>;
   findById(id: string): Promise<MessageRecord | null>;
+  findByIdInConversation(conversationId: string, id: string): Promise<MessageRecord | null>;
   listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }>;
   listCursor(input: MessageCursorInput): Promise<{
     records: MessageRecord[];
@@ -107,10 +133,10 @@ export interface MessageStore {
   }>;
   listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]>;
   findTurnByRequestId(conversationId: string, senderId: string, requestId: string): Promise<{ user: MessageRecord; aiId?: string } | null>;
-  updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date): Promise<MessageRecord | null>;
+  updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date, conversationId?: string): Promise<MessageRecord | null>;
   updateReliability(id: string, evaluation: ReliabilityEvaluation): Promise<MessageRecord | null>;
   claimStream(id: string, leaseId: string, now: Date, expiresAt: Date): Promise<boolean>;
-  renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean>;
+  renewStream(id: string, leaseId: string, expiresAt: Date, components?: MessageComponent[]): Promise<boolean>;
   releaseStream(id: string, leaseId: string): Promise<void>;
   claimReliability(conversationId: string, id: string, manual: boolean, requestedAt: string): Promise<MessageRecord | null>;
   updateCorrectionWorkflow(id: string, workflow: ResponseCorrectionWorkflow, correctionRunId?: string): Promise<MessageRecord | null>;
@@ -145,9 +171,9 @@ export interface MessageStore {
    */
   updateFrontendLatency(messageId: string, requestId: string, patch: FrontendLatencyPatch): Promise<MessageRecord | null>;
   cleanupStaleStreams(cutoff: Date): Promise<number>;
-  updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null>;
+  updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }, scope?: { conversationId: string; senderId: string }): Promise<MessageRecord | null>;
   deleteByConversation(conversationId: string): Promise<number>;
-  findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]>;
+  findBranchesByQuestion(questionMessageId: string, conversationId?: string): Promise<MessageRecord[]>;
   findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>>;
   findAiComponents(conversationId: string, messageId: string): Promise<AiMessageComponentsRecord | null>;
   listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]>;

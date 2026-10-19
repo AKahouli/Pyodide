@@ -62,7 +62,7 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
       }}
       aria-label={`${info.functionLabel} — ${statusLabel}`}
       className={cn(
-        'group/tool not-prose my-1 inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-left transition-colors hover:bg-accent/40',
+        'group/tool not-prose my-1 inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-start transition-colors hover:bg-accent/40',
         isActive && 'border-primary/60 bg-accent/30',
       )}
     >
@@ -75,7 +75,7 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
       )}
       <span
         className={cn(
-          'ml-0.5 inline-flex items-center gap-1 border-l pl-1.5 text-[11px] font-medium',
+          'ms-0.5 inline-flex items-center gap-1 border-l ps-1.5 text-[11px] font-medium',
           ACTIVITY_TONE_CLASS[activity],
         )}
       >

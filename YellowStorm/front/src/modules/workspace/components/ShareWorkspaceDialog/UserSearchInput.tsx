@@ -105,7 +105,7 @@ export function UserSearchInput({
         )}
       >
         <Search className='absolute left-3 top-3 h-4 w-4 text-muted-foreground' />
-        <div className='flex flex-wrap items-center gap-2 pl-8 pr-8'>
+        <div className='flex flex-wrap items-center gap-2 ps-8 pe-8'>
           {pendingShares.map((share) => (
             <div
               key={share.id}

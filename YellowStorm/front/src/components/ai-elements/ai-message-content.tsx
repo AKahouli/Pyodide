@@ -6,8 +6,8 @@ import { openRecordCitation, type RecordCitationTarget } from '@/modules/semanti
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
-import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
-import ReactMarkdown from 'react-markdown';
+import { useFileViewerDisplayMode, useOnCitationOpen, useShouldAutoOpenPreview } from './message-context';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -43,6 +43,8 @@ import { formatLabel } from './format-label';
 // Charts are a lazy boundary: recharts (~heavy) must not load with the
 // conversation route, only when a chart part actually renders (Phase 7).
 const ChartPartRenderer = lazy(() => import('./chart-part-renderer').then((m) => ({ default: m.ChartPartRenderer })));
+const GeneratedImage = lazy(() => import('@/modules/conversation/components/openui/document-images').then((m) => ({ default: m.GeneratedImage })));
+const isGeneratedImage = (source: string) => /^generated-image:[a-f\d]{24}$/.test(source);
 
 // ============================================================================
 // Message Content Part Types
@@ -341,7 +343,7 @@ const AIMessagePart = memo(
         // Anchor ids must be globally unique across messages: scope them by the
         // owning message id plus the part index.
         const outlineKey = onOutlineHeadings ? `${citationScope?.messageId ?? 'msg'}-${partIndex}`.replace(/[^a-zA-Z0-9_-]/g, '-') : undefined;
-        return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
+        return <TextPartRenderer content={part.content} showCursor={part.showCursor} isStreaming={isStreaming} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
       }
       case 'code':
         return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} isStreaming={isStreaming} />;
@@ -421,10 +423,10 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     return <p className='my-0 leading-relaxed'>{children}</p>;
   },
   ul({ children }) {
-    return <ul className='my-2 list-disc pl-5 space-y-1'>{children}</ul>;
+    return <ul className='my-2 list-disc ps-5 space-y-1'>{children}</ul>;
   },
   ol({ children }) {
-    return <ol className='my-2 list-decimal pl-5 space-y-1'>{children}</ol>;
+    return <ol className='my-2 list-decimal ps-5 space-y-1'>{children}</ol>;
   },
   li({ children }) {
     return <li className='my-0 leading-relaxed'>{children}</li>;
@@ -442,7 +444,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
   },
   blockquote({ children }) {
-    return <blockquote className='border-l-4 border-muted-foreground/30 pl-4 italic my-4'>{children}</blockquote>;
+    return <blockquote className='border-l-4 border-muted-foreground/30 ps-4 italic my-4'>{children}</blockquote>;
   },
   table({ children }) {
     return (
@@ -452,7 +454,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     );
   },
   th({ children }) {
-    return <th className='border border-border bg-muted px-3 py-2 text-left font-semibold'>{children}</th>;
+    return <th className='border border-border bg-muted px-3 py-2 text-start font-semibold'>{children}</th>;
   },
   td({ children }) {
     return <td className='border border-border px-3 py-2'>{children}</td>;
@@ -715,7 +717,7 @@ const MarkdownSegment = memo(
       onSegmentHeadings?.(slot, collectedRef.current);
     }, [content, outlineKey, onSegmentHeadings, slot]);
     return (
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeMathCitationPlugins : rehypeMathPlugins} components={componentsForRender}>
+      <ReactMarkdown urlTransform={(url, key) => key === 'src' && isGeneratedImage(url) ? url : defaultUrlTransform(url)} remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeMathCitationPlugins : rehypeMathPlugins} components={componentsForRender}>
         {content}
       </ReactMarkdown>
     );
@@ -730,7 +732,7 @@ const MarkdownSegment = memo(
     prev.onSegmentHeadings === next.onSegmentHeadings,
 );
 
-const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
+const TextPartRenderer = ({ content, showCursor, isStreaming = false, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; isStreaming?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // Owned unused evidence stays in the conversation's Sources menu rather than
@@ -767,9 +769,11 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 
   // Build components with cite handler for inline citations
   const componentsWithCite = useMemo(() => {
-    if (!hasInline) return markdownComponents;
     return {
       ...markdownComponents,
+      img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => typeof src === 'string' && isGeneratedImage(src)
+        ? <Suspense fallback={null}><GeneratedImage source={src} alt={alt ?? ''} scope={citationScope} streaming={isStreaming} /></Suspense>
+        : <img {...props} src={src} alt={alt} />,
       cite: ({ node, ...props }: any) => {
         const ref = props['data-citation-ref'] as string | undefined;
         if (ref == null) return null;
@@ -778,7 +782,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
         return <SingleInlineCitation citation={c} citationScope={citationScopeRef.current} />;
       },
     };
-  }, [hasInline]);
+  }, [hasInline, citationScope?.conversationId, citationScope?.messageId, isStreaming]);
 
   // Hot-tail split: the stable prefix re-parses only when a block boundary
   // completes; the tail re-parses per drain tick but stays bounded by the
@@ -807,7 +811,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 
   const hasStable = stable.length > 0;
   return (
-    <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
+    <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ms-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
       {hasStable && (
         <MarkdownSegment content={stable} components={componentsWithCite} hasInline={hasInline} outlineKey={outlineKey} seqBase={0} slot='stable' onSegmentHeadings={outlineKey ? handleSegmentHeadings : undefined} />
       )}
@@ -820,8 +824,10 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 export const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
+  const onCitationOpen = useOnCitationOpen();
 
   const handleClick = useCallback(async () => {
+    onCitationOpen?.();
     try {
       await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
     } catch {
@@ -829,7 +835,7 @@ export const SingleInlineCitation = ({ citation: c, citationScope }: { citation:
         description: tCommon('ai.errors.openFileDescription'),
       });
     }
-  }, [c, citationScope, fileViewerDisplayMode, tCommon]);
+  }, [c, citationScope, fileViewerDisplayMode, tCommon, onCitationOpen]);
 
   return (
     <InlineCitation>
@@ -875,8 +881,10 @@ const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
 export const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
+  const onCitationOpen = useOnCitationOpen();
 
   const handleCitationClick = async (citation: CitationData) => {
+    onCitationOpen?.();
     try {
       await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
     } catch {
@@ -887,7 +895,7 @@ export const CitationsInline = ({ citations, citationScope }: { citations: Citat
   };
 
   return (
-    <span className='inline-flex flex-wrap gap-0 ml-1'>
+    <span className='inline-flex flex-wrap gap-0 ms-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
@@ -946,7 +954,7 @@ const AgentActivityPartRenderer = ({ part, isStreaming }: { part: AgentActivityP
       ? <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />
       : <Circle className='size-3 fill-primary/15 text-primary' aria-hidden='true' />}
     <span>{part.summary}</span>
-    {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+    {part.durationMs !== undefined && <span className='ms-auto tabular-nums'>{part.durationMs} ms</span>}
   </div>
 );
 
@@ -1079,7 +1087,7 @@ const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPar
       {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-green-500' aria-hidden='true' />}
       <span className='font-medium text-foreground'>{label}</span>
       {part.summary && <span className='truncate'>- {part.summary}</span>}
-      {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+      {part.durationMs !== undefined && <span className='ms-auto tabular-nums'>{part.durationMs} ms</span>}
     </div>
   );
 };
@@ -1225,7 +1233,7 @@ const SandboxPartRenderer = ({ code, output, error, outputAvailable }: { code: s
                   <Button
                     variant='ghost'
                     size='sm'
-                    className='h-8 w-8 p-0 mr-2'
+                    className='h-8 w-8 p-0 me-2'
                     onClick={() =>
                       downloadCode({
                         content: code,

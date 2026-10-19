@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
@@ -22,7 +22,7 @@ export class GovernanceWorkspaceBindingController {
   @Patch(':bindingId') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')
   update(@CurrentUser() user: AuthUser, @Param('programId') programId: string, @Param('bindingId') bindingId: string, @Body() dto: UpdateGovernanceWorkspaceBindingDto) { return this.bindings.update(user._id.toString(), programId, bindingId, dto, user.email); }
   @Delete(':bindingId') @HttpCode(HttpStatus.NO_CONTENT) @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')
-  remove(@CurrentUser() user: AuthUser, @Param('programId') programId: string, @Param('bindingId') bindingId: string) { return this.bindings.delete(user._id.toString(), programId, bindingId, user.email); }
+  remove(@CurrentUser() user: AuthUser, @Param('programId') programId: string, @Param('bindingId') bindingId: string, @Query('scopeId') scopeId?: string) { return this.bindings.delete(user._id.toString(), programId, bindingId, user.email, scopeId); }
   @Post(':bindingId/reconcile') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')
   async reconcile(@CurrentUser() user: AuthUser, @Param('programId') programId: string, @Param('bindingId') bindingId: string, @Body() body: { dryRun?: boolean }) { await this.bindings.assertAccessible(user._id.toString(), programId, bindingId); return this.reconciliation.reconcileBinding(bindingId, body.dryRun !== false); }
   @Post(':bindingId/reconciliation-runs') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')

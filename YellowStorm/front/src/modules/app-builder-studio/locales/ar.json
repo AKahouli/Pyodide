@@ -1,0 +1,343 @@
+{
+  "page": {
+    "eyebrow": "App Builder Studio",
+    "title": "أنشئ التطبيقات بمساعدة وكيلك",
+    "newChat": "مشروع جديد",
+    "emptyState": "صِف ما تريد إنشاءه. يفتح Studio معاينة حية بجوار الدردشة حتى تحسّن العمل تدريجيًا حتى يصبح جاهزًا للنشر.",
+    "backToMarket": "العودة إلى App Market",
+    "highlights": {
+      "agent": "بإشراف الوكيل",
+      "preview": "معاينة حية",
+      "deploy": "نشر بنقرة واحدة"
+    }
+  },
+  "session": {
+    "loading": "جارٍ تحميل Studio…",
+    "notFound": "المشروع غير موجود.",
+    "notFoundHint": "ربما حُذف هذا المشروع، أو ليس لديك حق الوصول إليه.",
+    "back": "العودة",
+    "conversationError": "واجه Studio خطأً غير متوقع.",
+    "previewError": "واجهت لوحة المعاينة خطأً غير متوقع.",
+    "errorTitle": "خطأ في الاتصال",
+    "waitingForPreview": {
+      "title": "بانتظار المعاينة الحية",
+      "body": "يبدأ الوكيل بعد انتهاء المعاينة من تثبيت الاعتماديات وجهوزية Vite."
+    },
+    "templateClone": {
+      "waitingTitle": "جارٍ تجهيز معاينة تطبيقك",
+      "waitingBody": "يُرجى الانتظار أثناء إعداد معاينة حية للقالب المستنسخ. زر الإرسال معطل حتى تصبح المعاينة جاهزة.",
+      "waitingBodyDraft": "بدأت المعاينة الحية في اللوحة الجانبية. يمكنك كتابة رسالة الآن — يُفعَّل الإرسال عند جاهزية المعاينة، ثم يفتح Studio بهذا القالب.",
+      "readyTitle": "المعاينة جاهزة",
+      "readyBody": "حُمّل قالبك في المعاينة الحية. أرسل رسالة عندما تكون جاهزًا لبدء التعديل والتخصيص.",
+      "dismiss": "فهمت"
+    },
+    "previewBootFailed": "تعذر بدء المعاينة الحية. أعد تحميل الصفحة ثم أرسل رسالتك مجددًا.",
+    "previewBootTimeout": "استغرقت المعاينة الحية وقتًا طويلًا حتى جهزت. أعد تحميل الصفحة ثم حاول مجددًا.",
+    "fromAppBuilder": {
+      "title": "مرحبًا بك في Studio",
+      "body": "أُرسل طلبك إلى الوكيل. تابع التحسين هنا — تُفتح المعاينة الحية في اللوحة الجانبية عند جهوزية إصدار. يمكنك العودة إلى App Market في أي وقت من الترويسة.",
+      "dismiss": "فهمت"
+    }
+  },
+  "composer": {
+    "placeholder": "صِف تغييرًا — مثلًا “أضف مفتاح تبديل للوضع الداكن إلى صفحة الإعدادات”…",
+    "send": "إرسال",
+    "connectors": "الموصلات",
+    "noConnectors": "لا توجد موصلات متاحة",
+    "modelSelector": {
+      "unset": "النموذج الافتراضي",
+      "search": "البحث في النماذج…",
+      "empty": "لا توجد نماذج."
+    }
+  },
+  "agentComposer": {
+    "placeholder": "صِف التطبيق الذي تريد إنشاءه…"
+  },
+  "questionChoices": {
+    "fallbackTitle": "اختر خيارًا للمتابعة"
+  },
+  "conversation": {
+    "emptyTitle": "أخبر Studio بما تريد إنشاءه",
+    "emptyDescription": "اطلب شاشات أو تدفقات أو إصلاحات. يعدّل الوكيل تطبيقك وتتحدث المعاينة الحية بجوارك.",
+    "thinking": "يفكر",
+    "assistantName": "YellowStorm",
+    "fileOpenFailed": "تعذر فتح الملف"
+  },
+  "tool": {
+    "running": "قيد التنفيذ",
+    "success": "مكتمل",
+    "pending": "معلق",
+    "error": "فاشل",
+    "openDetails": "فتح تفاصيل الأداة"
+  },
+  "rightPanel": {
+    "title": "مساحة عمل Studio",
+    "subtitle": "الوكيل يستخدم",
+    "close": "إغلاق اللوحة",
+    "empty": "حدد أداة لفحصها.",
+    "jumpToLive": "الانتقال إلى النسخة الحية",
+    "tabCode": "الكود",
+    "tabPreview": "المعاينة",
+    "tabData": "البيانات",
+    "resizeHandle": "اسحب لتغيير حجم المعاينة"
+  },
+  "appData": {
+    "loading": "جارٍ تحميل بيانات التطبيق…",
+    "disabled": "بيانات التطبيق غير مفعّلة لمساحة العمل هذه.",
+    "loadError": "تعذر تحميل بيانات التطبيق.",
+    "refresh": "تحديث البيانات",
+    "schemaVersion": "إصدار المخطط",
+    "noTables": "لا توجد جداول بعد.",
+    "envDev": "DEV",
+    "envProd": "PROD",
+    "seed": "بيانات أولية",
+    "seedApply": "إدراج صفوف أولية",
+    "seeding": "جارٍ إدراج البيانات الأولية…",
+    "seedPlaceholder": "الصق بيان JSON، مثل { \"<table>\": [ { \"col\": \"value\" } ] }",
+    "seedInvalidJson": "JSON غير صالح — استخدم { \"<table>\": [ { \"col\": \"value\" } ] }.",
+    "seedDone": "أُدرجت البيانات الأولية: {{inserted}} أُدرجت، و{{skipped}} تُخطيت.",
+    "seedError": "فشل إدراج البيانات الأولية."
+  },
+  "nodepod": {
+    "inBrowser": "معاينة حية",
+    "previewTitle": "معاينة التطبيق",
+    "toolbarLabel": "شريط أدوات المعاينة",
+    "addressLocal": "localhost · معاينة",
+    "addressDeployed": "تطبيق منشور",
+    "fileCount": "{{count}} ملفات",
+    "files": "الملفات",
+    "noFiles": "لا توجد ملفات بعد — ستظهر أثناء توليد التطبيق.",
+    "selectFile": "اختر ملفًا لفحصه",
+    "binaryFile": "لا يمكن معاينة هذا الملف ({{size}})",
+    "readOnly": "للقراءة فقط",
+    "tabPreview": "المعاينة",
+    "tabSource": "الكود",
+    "layoutPreviewOnly": "المعاينة",
+    "layoutPreviewOnlyHint": "عرض التطبيق الحي بعرض كامل",
+    "layoutSplit": "الملفات",
+    "layoutSplitHint": "تصفح ملفات المشروع بجوار المعاينة",
+    "explorer": "الملفات",
+    "explorerHint": "تصفح الملفات المولَّدة. اطلب من الوكيل في الدردشة تعديلها.",
+    "searchFiles": "البحث في الملفات…",
+    "clearSearch": "مسح البحث",
+    "expandAll": "توسيع جميع المجلدات",
+    "collapseAll": "طي جميع المجلدات",
+    "noSearchResults": "لا ملفات تطابق بحثك.",
+    "lines": "أسطر",
+    "showFiles": "إظهار شجرة الملفات",
+    "hideFiles": "إخفاء شجرة الملفات",
+    "statusReady": "مباشر",
+    "statusLoading": "جارٍ التجهيز",
+    "statusInstalling": "جارٍ التثبيت",
+    "statusStarting": "جارٍ البدء",
+    "statusError": "غير متاح",
+    "statusWaiting": "بانتظار",
+    "phase": {
+      "connecting": "بدء مساحة العمل الخاصة بك",
+      "registering": "تجهيز بيئة التشغيل",
+      "hydrating": "استعادة ملفات تطبيقك",
+      "installing": "تثبيت الاعتماديات",
+      "starting": "تشغيل تطبيقك"
+    },
+    "hint": {
+      "connecting": "فتح بيئة تشغيل آمنة لهذه الجلسة.",
+      "registering": "تسليم الجلسة إلى بيئة التشغيل.",
+      "hydrating": "سحب ملفات المشروع من التخزين.",
+      "installing": "قد يستغرق هذا بعض الوقت في التشغيل الأول.",
+      "starting": "ستظهر معاينتك بعد قليل."
+    },
+    "bootHint": "يعمل YellowMind على تجهيز معاينة حية لتطبيقك. يستغرق هذا عادةً بضع لحظات.",
+    "waitingHint": "صِف ما تريد في المحادثة — ستظهر معاينتك هنا.",
+    "loading": "جارٍ تجهيز معاينة تطبيقك…",
+    "installing": "جارٍ إعداد بيئة المعاينة…",
+    "starting": "اكتمل تقريبًا…",
+    "waitingSources": "بانتظار توليد تطبيقك…",
+    "error": "تعذر بدء المعاينة",
+    "errorDetail": "حدث خطأ أثناء بدء المعاينة. يمكنك المحاولة مجددًا.",
+    "retry": "حاول مجددًا",
+    "openInNewTab": "فتح المعاينة في علامة تبويب جديدة",
+    "buildPhase": {
+      "generation_started": "بدء التوليد",
+      "creating_files": "إنشاء الملفات",
+      "coding_complete": "الكود جاهز",
+      "installing_dependencies": "تثبيت الحزم",
+      "building_project": "بناء التطبيق",
+      "waiting_for_build": "إنهاء البناء",
+      "validating_preview": "فحص المعاينة",
+      "fetching_app_code": "تحميل تطبيقك",
+      "fetching_app_preview": "فتح المعاينة",
+      "ready": "جاهز"
+    }
+  },
+  "vnc": {
+    "unavailable": "لا توجد آلة افتراضية مرتبطة بهذه الجلسة",
+    "connecting": "جارٍ الاتصال…",
+    "connected": "متصل",
+    "error": "فشل الاتصال",
+    "takeOver": "تولَّ التحكم",
+    "release": "حرّر التحكم"
+  },
+  "tools": {
+    "browser": {
+      "title": "المتصفح",
+      "openInNewTab": "فتح في علامة تبويب جديدة"
+    },
+    "shell": {
+      "title": "الطرفية",
+      "copy": "نسخ الناتج",
+      "exitCode": "رمز الخروج {{code}}"
+    },
+    "file": {
+      "title": "ملف",
+      "operation": "العملية"
+    },
+    "search": {
+      "title": "بحث",
+      "noResults": "لا نتائج"
+    },
+    "mcp": {
+      "title": "MCP"
+    },
+    "generic": {
+      "title": "أداة"
+    }
+  },
+  "plan": {
+    "title": "تقدم المهام",
+    "completed": "اكتملت المهمة",
+    "collapse": "طي الخطة"
+  },
+  "controls": {
+    "stop": "إيقاف",
+    "pause": "إيقاف مؤقت",
+    "resume": "استئناف"
+  },
+  "files": {
+    "title": "ملفات المشروع",
+    "button": "الملفات",
+    "unavailable": "لا توجد مساحة عمل مرتبطة بهذا المشروع.",
+    "loading": "جارٍ تحميل الملفات…",
+    "empty": "لا توجد ملفات بعد.",
+    "view": {
+      "list": "عرض القائمة",
+      "grid": "عرض الشبكة"
+    }
+  },
+  "header": {
+    "back": "العودة إلى App Market",
+    "backToMarket": "App Market",
+    "readOnly": "للقراءة فقط",
+    "streaming": "قيد البناء",
+    "streamError": "مشكلة في الاتصال",
+    "tooltips": {
+      "workspaces": "إدارة مساحات العمل",
+      "files": "ملفات المشروع"
+    },
+    "actions": {
+      "rename": "إعادة تسمية المشروع",
+      "delete": "حذف المشروع",
+      "more": "إجراءات أخرى"
+    }
+  },
+  "versionHistory": {
+    "title": "الإصدارات",
+    "subtitle": "اختر إصدارًا نهائيًا للمعاينة أو النشر",
+    "open": "الإصدارات النهائية",
+    "version": "الإصدار {{number}}",
+    "draft": "مسودة",
+    "building": "إصدار قيد البناء…",
+    "finalized": "نهائي",
+    "latest": "الأحدث",
+    "preview": "معاينة هذا الإصدار",
+    "deploy": "نشر هذا الإصدار",
+    "active": "نشط",
+    "empty": "لا توجد إصدارات نهائية بعد",
+    "loading": "جارٍ تحميل الإصدارات…"
+  },
+  "deploy": {
+    "publish": "نشر",
+    "error": "فشل النشر — حاول مجددًا.",
+    "publishing": "جارٍ النشر…",
+    "update": "تحديث",
+    "liveUrl": "عنوان URL الحي",
+    "liveBadge": "مباشر",
+    "publishedApp": "تطبيقك المنشور",
+    "copy": "نسخ الرابط",
+    "open": "فتح في علامة تبويب جديدة",
+    "viewUrl": "عرض عنوان URL المنشور",
+    "menu": "خيارات النشر",
+    "modeSwitch": "عرض المعاينة أو النسخة المنشورة",
+    "modePreview": "المعاينة",
+    "modeDeploy": "المنشور",
+    "embedUnavailable": "لا يمكن عرض هذا التطبيق هنا",
+    "embedUnavailableHint": "افتحه في علامة تبويب جديدة للمتابعة."
+  },
+  "share": {
+    "title": "مشاركة التطبيق",
+    "searchPlaceholder": "ابحث أو أدخل عنوان بريد إلكتروني…",
+    "searching": "جارٍ البحث…",
+    "noResults": "أدخل عنوان بريد إلكتروني صالحًا",
+    "addEmail": "إضافة",
+    "remove": "إزالة",
+    "cancel": "إلغاء",
+    "send": "إرسال"
+  },
+  "dialogs": {
+    "rename": {
+      "title": "إعادة تسمية المشروع",
+      "placeholder": "عنوان المشروع",
+      "saving": "جارٍ الحفظ..."
+    },
+    "delete": {
+      "title": "حذف المشروع؟",
+      "description": "سيؤدي هذا إلى حذف مشروع Studio هذا نهائيًا.",
+      "descriptionWithName": {
+        "before": "سيؤدي هذا إلى حذف ",
+        "after": "."
+      },
+      "warning": "لا يمكن التراجع عن هذا الإجراء.",
+      "deleting": "جارٍ الحذف..."
+    }
+  },
+  "workspace": {
+    "sheet": {
+      "title": "مساحات العمل",
+      "description": "مساحات العمل المرتبطة بهذا المشروع.",
+      "loadingWorkspaces": "جارٍ تحميل مساحات العمل...",
+      "noSelection": "لا توجد مساحات عمل مرتبطة بهذا المشروع.",
+      "noDocuments": "لم يُعثر على مستندات في مساحات العمل المرتبطة.",
+      "documentsLabel": "المستندات",
+      "selectedCount": "{{count}} مساحة عمل مرتبطة",
+      "selectedCount_plural": "{{count}} مساحات عمل مرتبطة",
+      "table": {
+        "name": "الاسم",
+        "size": "الحجم",
+        "type": "النوع",
+        "workspace": "مساحة العمل"
+      },
+      "paginationLabel": "صفحة {{page}} من {{total}}"
+    }
+  },
+  "toasts": {
+    "rename": {
+      "error": "فشلت إعادة تسمية المشروع"
+    },
+    "delete": {
+      "error": "فشل حذف المشروع"
+    },
+    "workspaces": {
+      "loadListError": "فشل تحميل مساحات العمل",
+      "loadDocumentsError": "فشل تحميل المستندات"
+    },
+    "deploy": {
+      "success": "تم نشر التطبيق",
+      "error": "فشل النشر",
+      "copied": "تم نسخ الرابط",
+      "copyError": "فشل نسخ الرابط"
+    },
+    "share": {
+      "success": "تمت مشاركة التطبيق بالبريد الإلكتروني",
+      "error": "فشلت مشاركة التطبيق"
+    }
+  }
+}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, Clock, Download, Eye, FileText, Loader2, MessageCircle } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { useAgentStore } from '@/modules/agent/store';
@@ -7,9 +9,9 @@ import type { Agent } from '@/modules/agent/types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
-import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { getMimeTypeFromFilename, isViewableFile, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
-import { getArtifactDownloadUrl } from '../../api';
+import { downloadArtifactFile, getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
 import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
@@ -23,6 +25,14 @@ import { OpenUiAnswer } from '../openui/OpenUiAnswer';
 import { preloadOpenUiForAgent } from '../openui/preload';
 import { isOpenUiRenderEnabled, resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
 
+/** Ephemeral reading preferences shared across the live-to-saved bubble handoff. */
+export interface ActivityPaneState {
+  interacted?: boolean;
+  collapsed?: boolean;
+  follow?: boolean;
+  scrollTop?: number;
+}
+
 interface NarrativeProps {
   conversationId: string;
   messageId: string;
@@ -32,6 +42,7 @@ interface NarrativeProps {
   showWorking?: boolean;
   /** True right after this message's stream completed: the pane starts open, then animates closed. */
   justCompleted?: boolean;
+  activityPaneState?: ActivityPaneState;
   requestInputState?: 'waiting' | 'sending' | 'continuing';
   workActivity?: ReactNode;
   workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown' | 'cancellation_requested';
@@ -121,9 +132,14 @@ function stripReasoningReplayPrefix(component: MessageComponent, reasoningTexts:
 }
 
 function projectActivityComponents(components: MessageComponent[], redactSensitiveText: boolean): MessageComponent[] {
+  const hasUsefulActivity = components.some((component) => component.type === 'toolActivity'
+    || (component.type === 'agentActivity' && [component.data.summary, component.data.detail]
+      .some((value) => typeof value === 'string' && value.trim())));
   return components.flatMap((component, index) => {
     if (component.type !== 'agentActivity') return [component];
     const data = component.data as AgentActivityData;
+    if (hasUsefulActivity && data.status === 'completed'
+      && !data.summary?.trim() && !data.detail?.trim()) return [];
     const previous = components[index - 1];
     // Historical streams may have persisted the full thought snapshot as a second row.
     // Compare full payloads before truncation, and never cross a tool/actor boundary.
@@ -172,22 +188,32 @@ function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: 
   const active = isStreaming && data.status === 'running';
   const thinking = awaiting && !preview;
   const thinkingSeconds = useElapsedSeconds(thinking);
-  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
+  const nativeSummary = data.activityKind === 'reasoning_summary';
+  const summary = (nativeSummary ? t('stream.activity.reasoningSummary') : preview) || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
-  const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || summary;
+  const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || (nativeSummary ? preview : summary);
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
-          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{summary}</span>
+          <span className='min-w-0 flex-1'>
+            <span data-agent-summary className='block truncate font-medium leading-4 text-foreground'>
+              <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{summary}</ReactMarkdown>
+            </span>
+            {nativeSummary && preview && <span data-reasoning-summary-preview className='mt-1 line-clamp-2 text-xs font-normal leading-5 text-muted-foreground'>
+              <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{preview}</ReactMarkdown>
+            </span>}
+          </span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
           <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>
         <div data-agent-detail-card className='rounded-lg border border-border/70 bg-background/55 p-3 shadow-xs'>
-          <p className='whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground'>{detail}</p>
+          <div className='break-words text-sm leading-7 text-foreground [&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:font-semibold [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_code]:text-xs [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:pl-3'>
+            <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} disallowedElements={['img']}>{detail}</ReactMarkdown>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -253,11 +279,14 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
   const view = async () => {
     if (!enabled || loadingAction) return;
     setLoadingAction('view');
+    const mimeType = data.mimeType && isViewableFile(data.mimeType)
+      ? data.mimeType
+      : getMimeTypeFromFilename(filename) || data.mimeType || 'application/octet-stream';
     try {
       await openFileViewerFromUrlLoader(
         JSON.stringify([conversationId, messageId, data.artifactId]),
         filename,
-        data.mimeType || 'application/octet-stream',
+        mimeType,
         async () => {
           const { viewUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
           return { url: viewUrl };
@@ -274,24 +303,19 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
     setLoadingAction('download');
     try {
       const { downloadUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
-      const anchor = document.createElement('a');
-      anchor.href = downloadUrl;
-      anchor.download = filename;
-      anchor.rel = 'noopener';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      await downloadArtifactFile(downloadUrl, filename);
     } catch {
       showError(t('stream.activity.artifactError'));
     } finally {
       setLoadingAction(null);
     }
   };
-  const disabled = !enabled || Boolean(loadingAction) || data.availability !== 'ready';
+  const deleted = Boolean(data.assetDeletedAt) || data.availability === 'deleted';
+  const disabled = !enabled || Boolean(loadingAction) || data.availability !== 'ready' || deleted;
   return (
     <div className='flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm'>
       <FileText className='size-4 text-primary' aria-hidden='true' />
-      <span className='min-w-0 flex-1 truncate'>{filename}</span>
+      <span className='min-w-0 flex-1'><span className='block truncate'>{filename}</span>{deleted && <span className='block text-xs text-muted-foreground'>{t('assets.unavailable')}</span>}</span>
       <button type='button' disabled={disabled} onClick={view} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
         {loadingAction === 'view' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
         {t('stream.activity.viewArtifact')}
@@ -332,7 +356,7 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
 
   return (
     <Collapsible open={open} className='md:hidden'>
-      <button type='button' aria-expanded={open} aria-controls={contentId} aria-label={t('stream.activity.mobileDetailsAria', { status: statusLabel })} onClick={() => setOpen((value) => !value)} className='flex min-h-11 w-full items-center gap-2 rounded-md px-1 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+      <button type='button' aria-expanded={open} aria-controls={contentId} aria-label={t('stream.activity.mobileDetailsAria', { status: statusLabel })} onClick={() => setOpen((value) => !value)} className='flex min-h-11 w-full items-center gap-2 rounded-md px-1 text-start text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
         <span aria-hidden='true'>{statusIcon(status, current.type === 'toolActivity' ? true : isStreaming)}</span>
         <span className='min-w-0 flex-1 truncate text-muted-foreground'>{label}</span>
         <span className='shrink-0 text-xs tabular-nums text-muted-foreground'>{t('stream.activity.stepProgress', { current: currentIndex + 1, total: components.length })}</span>
@@ -401,19 +425,35 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     navigate(resolved ? `/agents?edit=${resolved.id}` : '/agents');
   }, [navigate]);
 
-  // The activity pane stays open while the agent works, then collapses once
-  // the final answer is complete — live via `justCompleted`, which mounts the
-  // completed bubble open and animates it shut, and statically for historical
-  // messages, which render collapsed from the start.
-  const [paneCollapsed, setPaneCollapsed] = useState(!props.isStreaming && props.justCompleted !== true);
+  // Untouched activity collapses after completion; an active reader keeps control.
+  // The parent retains these preferences when the saved bubble replaces the live one.
+  const localPaneState = useRef<ActivityPaneState>({});
+  const paneState = props.activityPaneState ?? localPaneState.current;
+  const [paneCollapsed, setPaneCollapsed] = useState(paneState.collapsed ?? (!props.isStreaming && props.justCompleted !== true));
+  const markActivityInteraction = () => {
+    paneState.interacted = true;
+    paneState.collapsed = paneCollapsed;
+  };
+  const toggleActivityPane = () => {
+    paneState.interacted = true;
+    paneState.collapsed = !paneCollapsed;
+    setPaneCollapsed(!paneCollapsed);
+  };
   useEffect(() => {
-    if (props.requestInputState === 'waiting') setPaneCollapsed(true);
-  }, [props.requestInputState]);
+    if (props.requestInputState === 'waiting' && !paneState.interacted) {
+      paneState.collapsed = true;
+      setPaneCollapsed(true);
+    }
+  }, [props.requestInputState, paneState]);
   useEffect(() => {
     if (props.justCompleted !== true) return;
-    const timer = setTimeout(() => setPaneCollapsed(true), PANE_COLLAPSE_DELAY_MS);
+    const timer = setTimeout(() => {
+      if (paneState.interacted) return;
+      paneState.collapsed = true;
+      setPaneCollapsed(true);
+    }, PANE_COLLAPSE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [props.justCompleted]);
+  }, [props.justCompleted, paneState]);
 
   // Document outline: merge headings reported by each rendered answer chunk and
   // publish them keyed by message id; clear on unmount or message swap. The set
@@ -486,6 +526,14 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     (name) => t('stream.activity.delegateTo', { name }),
   )), questionCount, t('stream.activity.clarificationQuestions', { count: questionCount })), redactSensitiveText);
   const activityCount = activityComponents.length;
+  const summaryCount = activityComponents.filter((component) => component.type === 'agentActivity' && component.data.activityKind === 'reasoning_summary').length;
+  const toolCount = activityComponents.filter((component) => component.type === 'toolActivity').length;
+  const otherActivityCount = activityCount - summaryCount - toolCount;
+  const activityCountLabel = summaryCount > 0 || toolCount > 0
+    ? [summaryCount > 0 ? t(summaryCount === 1 ? 'stream.activity.summaryCount_one' : 'stream.activity.summaryCount_other', { count: summaryCount }) : undefined,
+      toolCount > 0 ? t(toolCount === 1 ? 'stream.activity.toolCount_one' : 'stream.activity.toolCount_other', { count: toolCount }) : undefined,
+      otherActivityCount > 0 ? t(otherActivityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: otherActivityCount }) : undefined].filter(Boolean).join(' · ')
+    : t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount });
   const activityDuration = resolveActivityDuration(activityComponents);
   const activityPaneCollapsed = props.restrictActivityDetails ? false : paneCollapsed;
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
@@ -498,8 +546,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   useEffect(() => {
     if (paneCollapsed) return;
     const pane = activityPaneRef.current;
-    if (pane) pane.scrollTop = pane.scrollHeight;
-  }, [activityCount, paneCollapsed]);
+    if (pane) pane.scrollTop = paneState.follow === false ? paneState.scrollTop ?? 0 : pane.scrollHeight;
+  }, [source, paneCollapsed, paneState]);
   let answerBatch: MessageComponent[] = [];
   const partsCacheRef = useRef(new Map<number, MessageContentPart>());
   const flush = () => {
@@ -523,7 +571,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     const segments: AnswerSegment[] = isOpenUiRenderEnabled() ? segmentAnswerParts(parts, renderMode) : [{ kind: 'parts', parts }];
     segments.forEach((segment) => {
       if (segment.kind === 'openui') {
-        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} partId={segment.componentId} />);
+        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} artifacts={source.filter((component) => component.type === 'artifact').map((component) => component.data as ArtifactActivityData)} partId={segment.componentId} />);
         return;
       }
       if (!segment.parts.length) return;
@@ -534,6 +582,11 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     answerBatch = [];
   };
   source.forEach((component) => {
+    if (component.type === 'text' && component.data.assetDeletedAt) {
+      flush();
+      answerNodes.push(<p key={`deleted-${component.id}`} className='text-sm text-muted-foreground'>{t('assets.unavailable')}</p>);
+      return;
+    }
     if (['agentActivity', 'toolActivity', 'artifact'].includes(component.type)) return;
     const projected = stripReasoningReplayPrefix(component, reasoningTexts);
     if (projected) answerBatch.push(projected);
@@ -612,7 +665,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
                 aria-expanded={!paneCollapsed}
                 aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
                 title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
-                onClick={() => setPaneCollapsed((value) => !value)}
+                onClick={toggleActivityPane}
                 className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
               >
                 <ChevronDown className={cn('size-4 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
@@ -626,8 +679,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               aria-expanded={!paneCollapsed}
               aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
-              onClick={() => setPaneCollapsed((value) => !value)}
-              className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
+              onClick={toggleActivityPane}
+              className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-start text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
             >
               <span className='flex size-8 shrink-0 items-center justify-center' aria-hidden='true'><Bot className='size-4' /></span>
               <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
@@ -645,7 +698,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
                 : !answerNodes.length ? t('rootInput.requestActivity')
                 : activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
               <span aria-hidden='true'>·</span>
-              <span className='shrink-0 text-xs tabular-nums'>{t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount })}</span>
+              <span className='shrink-0 text-xs tabular-nums'>{activityCountLabel}</span>
               <span className='shrink-0 text-xs font-medium text-foreground'>{t('stream.activity.viewProcess')}</span>
               <ChevronDown className={cn('size-4 shrink-0 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
             </button>
@@ -679,6 +732,17 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       {activityNodes.length > 0 && (
         <div
           data-activity-pane-shell
+          onScrollCapture={(event) => {
+            const pane = activityPaneRef.current;
+            if (!pane || event.target !== pane) return;
+            paneState.scrollTop = pane.scrollTop;
+            paneState.follow = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
+            if (!paneState.follow) markActivityInteraction();
+          }}
+          onPointerDownCapture={markActivityInteraction}
+          onKeyDownCapture={markActivityInteraction}
+          onFocusCapture={markActivityInteraction}
+          onWheelCapture={markActivityInteraction}
           data-collapsed={activityPaneCollapsed || undefined}
           className='grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none'
           style={{ gridTemplateRows: activityPaneCollapsed ? '0fr' : '1fr' }}

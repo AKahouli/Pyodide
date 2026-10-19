@@ -35,6 +35,8 @@ export interface StorageListPage {
 }
 
 export interface SignedUrlOptions {
+  /** Enforced by the signature/provider permission, not a client-only precondition. */
+  createOnly?: boolean;
   expirySeconds: number;
   write: boolean;
   contentDisposition?: string;

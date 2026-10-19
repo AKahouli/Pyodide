@@ -116,6 +116,20 @@ describe('SemanticModelInspector', () => {
     await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
   });
 
+  it('replaces a deleted identity field with a current field instead of resubmitting the deleted key', async () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [
+      { key: 'docid', label: 'docid', type: 'text', required: false },
+    ] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    hookState.rules = [{ conceptId: 'customer', fields: ['documentid'] }];
+    hookState.mappings = [{ id: 'mapping', conceptId: 'customer', identityFields: [] }];
+    renderInspector(true);
+    expect(screen.getByText('identity.none')).toBeInTheDocument();
+    expect(screen.getByText('identity.missing')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^docid$/ }));
+    await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['docid']));
+  });
+
   it('offers the fields the last run suggested as the unique ones, and saves them only when asked', async () => {
     useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }, { key: 'country', label: 'Country', type: 'text', required: false }] }] });
     useSemanticModelEditorStore.getState().suggestIdentity('customer', ['country', 'number', 'gone']);

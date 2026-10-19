@@ -9,6 +9,7 @@ asyncpg-style ``fetch/fetchval/fetchrow/execute/executemany``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -49,7 +50,40 @@ def revision_id_for(model_version_id: str, execution_fingerprint: str,
     return "dr_" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
 
 
+async def lock_model_cutover(connection: Any, model_id: str) -> None:
+    """Transaction mutex: task -> job -> cutover, separate from long staging lock."""
+    await connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"semantic:model:cutover:{model_id}")
+
+
+@asynccontextmanager
+async def model_cutover_transaction(pool: Any, model_id: str) -> AsyncIterator[Any]:
+    """Keep lock and writes on one transaction; accept pools or existing connections."""
+    if hasattr(pool, "acquire"):
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await lock_model_cutover(connection, model_id)
+                yield connection
+    else:
+        async with pool.transaction():
+            await lock_model_cutover(pool, model_id)
+            yield pool
+
+
 async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: str,
+                               model_version_id: str, spec_hash: str,
+                               specification: dict[str, Any],
+                               select_current: bool = False) -> str:
+    # First INSERTs also select through selected_at's default.
+    async with model_cutover_transaction(pool, model_id) as connection:
+        return await _mirror_specification(
+            connection, home_workspace_id=home_workspace_id, model_id=model_id,
+            model_version_id=model_version_id, spec_hash=spec_hash,
+            specification=specification, select_current=select_current)
+
+
+async def _mirror_specification(pool: Any, *, home_workspace_id: str, model_id: str,
                                model_version_id: str, spec_hash: str,
                                specification: dict[str, Any],
                                select_current: bool = False) -> str:
@@ -330,6 +364,18 @@ async def record_correction(pool: Any, *, model_id: str, model_version_id: str,
                             actor_user_id: str, reason: str, target_identity: dict[str, Any],
                             action: str, payload: dict[str, Any] | None = None,
                             data_revision_id: str | None = None) -> int:
+    # The API expected-sequence precheck remains optimistic, outside this lock.
+    async with model_cutover_transaction(pool, model_id) as connection:
+        return await _record_correction(
+            connection, model_id=model_id, model_version_id=model_version_id,
+            actor_user_id=actor_user_id, reason=reason, target_identity=target_identity,
+            action=action, payload=payload, data_revision_id=data_revision_id)
+
+
+async def _record_correction(pool: Any, *, model_id: str, model_version_id: str,
+                             actor_user_id: str, reason: str, target_identity: dict[str, Any],
+                             action: str, payload: dict[str, Any] | None = None,
+                             data_revision_id: str | None = None) -> int:
     row = await pool.fetchrow(
         """
         INSERT INTO semantic_population.corrections
@@ -537,6 +583,7 @@ async def purge_model_data(pool: Any, model_id: str, *,
         )
         if running:
             raise PopulationRunning(model_id)
+        await lock_model_cutover(connection, model_id)
         await connection.execute(
             "DELETE FROM semantic_runtime.active_bindings "
             "WHERE model_id = $1 AND environment = 'draft'", model_id)
@@ -641,6 +688,7 @@ async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
             "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
         if running:
             raise ModelJobsRunning(model_id)
+        await lock_model_cutover(connection, model_id)
         refs = await connection.fetch(
             "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
             "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
@@ -670,6 +718,49 @@ async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
     return await with_partition_locks(pool, delete)
 
 
+class FinalizationBusy(RuntimeError):
+    """Another finalization of the same model holds the per-model mutex."""
+
+
+@asynccontextmanager
+async def finalization_lock(pool: Any, model_id: str, *,
+                            guard: Any = None,
+                            wait_seconds: float = 30.0) -> AsyncIterator[None]:
+    """Serialize population finalization per model (P0-03 step A).
+
+    A dedicated session connection holds one PostgreSQL advisory lock across
+    persistence, projection and the fenced cutover, so two attempts never
+    interleave one model's candidate chain. Different models proceed in
+    parallel. The wait is bounded and guard-aware: an attempt that loses its
+    lease stops waiting instead of blocking forever.
+    """
+    key = f"semantic:population:finalize:{model_id}"
+    connection = await pool.acquire()
+    try:
+        locked = False
+        while not locked:
+            if guard is not None:
+                guard.assert_healthy()
+            try:
+                await asyncio.wait_for(
+                    connection.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", key),
+                    wait_seconds)
+                locked = True
+            except asyncio.TimeoutError:
+                continue  # bounded wait: re-check the guard, then try again
+        try:
+            yield
+        finally:
+            try:
+                await connection.execute("SELECT pg_advisory_unlock(hashtextextended($1, 0))", key)
+            except Exception:
+                logger.warning("could not release the population finalization lock; closing the connection",
+                               exc_info=True)
+                connection.terminate() if hasattr(connection, "terminate") else None
+    finally:
+        await pool.release(connection)
+
+
 async def get_active_binding(pool: Any, model_id: str,
                              environment: str = "production") -> dict[str, Any] | None:
     row = await pool.fetchrow(
@@ -692,6 +783,7 @@ async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "pr
     """Compare-and-swap the serving tuple. ``expected_version=None`` creates."""
     async with pool.acquire() as connection:
         async with connection.transaction():
+            await lock_model_cutover(connection, model_id)
             row = await _cas_active_binding(
                 connection, model_id=model_id, environment=environment,
                 expected_version=expected_version, model_version_id=model_version_id,
@@ -790,6 +882,11 @@ async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str,
     ``old_ref``. ``graph_exposure`` is the fields the rebuilt graph shows, stored in the same step."""
     async with pool.acquire() as connection:
         async with connection.transaction():
+            model_id = await connection.fetchval(
+                "SELECT model_id FROM semantic_population.data_revisions WHERE id = $1", revision_id)
+            if model_id is None:
+                return False
+            await lock_model_cutover(connection, model_id)
             if graph_exposure is None:
                 moved = await connection.fetchval(
                     "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
@@ -1037,13 +1134,15 @@ async def list_revision_entities_by_id(pool: Any, revision_id: str,
 
 
 async def list_revision_entities(pool: Any, revision_id: str,
-                                 limit: int = 50000,
-                                 concept_id: str | None = None) -> list[dict[str, Any]]:
+                                  limit: int = 50000,
+                                  concept_id: str | None = None, *,
+                                  timeout: float | None = None) -> list[dict[str, Any]]:
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
         "FROM semantic_population.entities WHERE data_revision_id = $1 "
         "AND ($3::text IS NULL OR concept_id = $3) ORDER BY id LIMIT $2",
-        revision_id, limit, concept_id,
+        revision_id, limit, concept_id, **options,
     )
     result = []
     for row in rows:
@@ -1191,20 +1290,22 @@ def _assertion_row(row: Any) -> dict[str, Any]:
             "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})}
 
 
-async def list_revision_assertions(pool: Any, revision_id: str) -> list[dict[str, Any]]:
+async def list_revision_assertions(pool: Any, revision_id: str, *,
+                                   timeout: float | None = None) -> list[dict[str, Any]]:
     """Every value a revision holds, as a run produced it (value, origin, evidence): the served
     value of each field, then the other sources' values, so a run that keeps them stores them again."""
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertions WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute",
-        revision_id,
+        revision_id, **options,
     )
     others = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute, created_at, id",
-        revision_id,
+        revision_id, **options,
     )
     return [_assertion_row(row) for row in rows] + [_assertion_row(row) for row in others]
 
@@ -1242,12 +1343,14 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,
-                                      limit: int = 20000) -> list[dict[str, Any]]:
+                                      limit: int = 20000, *,
+                                      timeout: float | None = None) -> list[dict[str, Any]]:
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy, state "
         "FROM semantic_population.relationships WHERE data_revision_id = $1 "
         "ORDER BY relation_id, source_entity_id, target_entity_id LIMIT $2",
-        revision_id, limit,
+        revision_id, limit, **options,
     )
     return [{"relationId": row["relation_id"], "sourceEntityId": row["source_entity_id"],
              "targetEntityId": row["target_entity_id"],

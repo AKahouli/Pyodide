@@ -11,7 +11,7 @@ from src.modules.attachment_profile.service import AttachmentProfileService
 
 HAS_OPENPYXL = importlib.util.find_spec("openpyxl") is not None
 HAS_XLRD = importlib.util.find_spec("xlrd") is not None
-HAS_FITZ = importlib.util.find_spec("fitz") is not None
+HAS_FITZ = importlib.util.find_spec("pymupdf") is not None
 
 
 def _write_csv(path, rows: int) -> str:
@@ -146,7 +146,7 @@ def test_service_failed_extraction_reports_status_failed(tmp_path):
 
 @pytest.mark.skipif(not HAS_FITZ, reason="pymupdf not installed")
 def test_pdf_extraction_produces_page_markers(tmp_path):
-    fitz = pytest.importorskip("fitz")
+    fitz = pytest.importorskip("pymupdf")
     path = tmp_path / "doc.pdf"
     document = fitz.open()
     for text in ("first page", "second page"):

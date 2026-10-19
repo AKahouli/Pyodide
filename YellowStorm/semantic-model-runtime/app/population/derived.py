@@ -30,7 +30,8 @@ from typing import Any
 from .document_rules import RuleError, normalize_ai_settings, to_iso_date
 from .run_limits import ai_pacing
 from .expand import ExpandError, expand_entities, is_item_attribute, normalize_expand
-from .tabular import MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, entity_key, normalize_identity_value
+from .tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, entity_key,
+                      merge_provenance_source, normalize_identity_value)
 
 CONFLICT_RULES = ("most_frequent", "latest", "longest", "leave_empty")
 MAX_DERIVATIONS = 50
@@ -133,11 +134,47 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
+def cyclic_derivation_ids(derivations: list[dict]) -> set[str]:
+    """The derivations whose edge belongs to a cycle in the concept dependency graph."""
+    next_concepts: dict[str, list[str]] = {}
+    for derivation in derivations:
+        next_concepts.setdefault(derivation["sourceConceptId"], []).append(derivation["conceptId"])
+
+    def reaches(start: str, wanted: str) -> bool:
+        pending, seen = [start], set()
+        while pending:
+            concept_id = pending.pop()
+            if concept_id == wanted:
+                return True
+            if concept_id in seen:
+                continue
+            seen.add(concept_id)
+            pending.extend(next_concepts.get(concept_id, []))
+        return False
+
+    return {item["derivationId"] for item in derivations
+            if reaches(item["conceptId"], item["sourceConceptId"])}
+
+
+def _order_derivations(derivations: list[dict]) -> list[dict]:
+    """Stable dependency waves; all producers of a source concept finish before it is consumed."""
+    remaining = sorted(derivations, key=lambda item: item["derivationId"])
+    ordered: list[dict] = []
+    while remaining:
+        targets = {item["conceptId"] for item in remaining}
+        ready = [item for item in remaining if item["sourceConceptId"] not in targets]
+        if not ready:
+            raise DerivationError("cyclic_derivation")
+        ready_ids = {item["derivationId"] for item in ready}
+        ordered.extend(ready)
+        remaining = [item for item in remaining if item["derivationId"] not in ready_ids]
+    return ordered
+
+
 def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]:
     """Checks every derivation and returns it in the one shape both sides hash.
 
-    Raises :class:`DerivationError` with an error code. A concept filled by a derivation cannot
-    itself be the source of another one, so derivations never chain or loop.
+    Raises :class:`DerivationError` with an error code. Acyclic chains are returned in dependency order.
     """
     if entries is None:
         return []
@@ -204,10 +241,7 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         except RuleError as exc:
             raise DerivationError("invalid_derivations", "ai_settings", detail=str(exc)) from exc
         normalized.append(derivation)
-    targets = {derivation["conceptId"] for derivation in normalized}
-    if any(derivation["sourceConceptId"] in targets for derivation in normalized):
-        raise DerivationError("chained_derivation")
-    return normalized
+    return _order_derivations(normalized)
 
 
 def _source_value(entity: dict, attribute: str) -> Any:
@@ -495,13 +529,9 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
         first_key_value = _text(value_of(members[0], key_components[0]))
         label = attributes.get(label_field) if label_field else None
         sources: list[dict] = []
-        seen: set[tuple[Any, Any]] = set()
         for member in members:
             for source in (member.get("provenance") or {}).get("sources", []):
-                marker = ((source.get("assetRef") or {}).get("assetVersionId"), source.get("mappingVersion"))
-                if marker not in seen:
-                    seen.add(marker)
-                    sources.append({**source, "rowNumbers": list(source.get("rowNumbers", []))})
+                merge_provenance_source(sources, source)
         member_ids = sorted({source_of(member) for member in members})
         entities.append({
             "entityId": key, "conceptId": target["conceptId"], "namespace": target["namespace"],
@@ -545,13 +575,8 @@ def merge_derived(direct: dict | None, derived: dict) -> dict:
         for field in filled:
             current["attributes"][field] = entity["attributes"][field]
         added_fields[entity["entityId"]] = filled
-        seen = {((source.get("assetRef") or {}).get("assetVersionId"), source.get("mappingVersion"))
-                for source in current["provenance"]["sources"]}
         for source in entity["provenance"]["sources"]:
-            marker = ((source.get("assetRef") or {}).get("assetVersionId"), source.get("mappingVersion"))
-            if marker not in seen:
-                seen.add(marker)
-                current["provenance"]["sources"].append(source)
+            merge_provenance_source(current["provenance"]["sources"], source)
         current["provenance"]["derivedFrom"] = entity["provenance"]["derivedFrom"]
     assertions.extend(assertion for assertion in derived["assertions"]
                       if assertion["attribute"] in added_fields.get(assertion["entityId"], set()))

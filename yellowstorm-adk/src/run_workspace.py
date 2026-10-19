@@ -1,10 +1,12 @@
 """The Ceph folder a single run owns, and its place in the sandbox mount list.
 
-The sandbox manager symlinks every path in `x-workspace-paths` to live Ceph
-(`ln -sfn /home/manus/ceph-workspaces/<path> /mnt/workspace/<name>`), so a file
-written to one of those folders is visible inside an already-running sandbox with
-no restart. Mounting the run's own folder is what lets one connector drop a file
-into the run mid-flight -- mail attachments, say -- and another read it back.
+The sandbox mounts authorized `x-workspace-paths` from live Ceph, so new files
+are visible without a restart. The deployed MCP exposes the run folder's contents
+directly under `/mnt/workspace/`; other input workspaces have named subfolders.
+For example, `user/system_<run_id>/generated-images/image.png` is available at
+`/mnt/workspace/generated-images/image.png`, not beneath a system_<run_id> alias.
+Those aliases can resolve to the separate canonical system-<run_id> workspace.
+Mounting the run folder lets one connector drop a file mid-flight and another read it.
 
 `system_<run_id>` is the sandbox MCP's own convention for this folder, and the run
 id resolves the same way it does there: conversation id first, execution id as the

@@ -155,7 +155,7 @@ runtime**:
   connector's declared `parameter_schema`, so the LLM sees a proper typed
   signature instead of a generic blob.
 - The function body always funnels through **`call_mcp_tool()`**
-  (`flow_engine/mcp/__init__.py`) — a one-shot MCP connection (streamable
+  (`mcp/__init__.py`) — a one-shot MCP connection (streamable
   HTTP/SSE/stdio), call, close. Two important properties:
   - it catches *all* exceptions and returns an **error string**, never
     raises — a failed tool call can't crash a node or force any special LLM

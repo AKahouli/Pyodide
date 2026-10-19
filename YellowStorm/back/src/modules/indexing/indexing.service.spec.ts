@@ -20,13 +20,28 @@ describe('IndexingService.deleteDocumentIndex', () => {
 
     await service.deleteDocumentIndex('document-1', 'workspace-1');
 
-    expect(findOne).toHaveBeenCalledWith({ id: 'document-1', workspaceId: 'workspace-1' });
+    expect(findOne).toHaveBeenCalledWith({ id: 'document-1', workspaceId: 'workspace-1', includeDeleted: true });
     expect(deleteIndex).toHaveBeenCalledWith({
       documentId: 'document-1',
       workspaceId: 'workspace-1',
       filePath: 'files/report.pdf',
       fileName: 'report.pdf',
     });
+  });
+
+  it.each([{ success: false }, new Error('index offline')])('reports cleanup failure to strict callers while preserving ordinary best-effort deletion: %p', async result => {
+    const service = Object.create(IndexingService.prototype) as IndexingService;
+    const deleteIndex = result instanceof Error ? jest.fn().mockRejectedValue(result) : jest.fn().mockResolvedValue(result);
+    Object.assign(service, { enabled: true, documentReadPort: { findOne: jest.fn().mockResolvedValue({ path: 'file', originalName: 'report.pdf' }) },
+      indexingClient: { deleteIndex }, logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() } });
+    await expect(service.deleteDocumentIndex('d', 'w', true)).rejects.toThrow();
+    await expect(service.deleteDocumentIndex('d', 'w')).resolves.toBeUndefined();
+  });
+
+  it('does not call disabled indexing cleanup complete for a strict caller', async () => {
+    const service = Object.create(IndexingService.prototype) as IndexingService;
+    Object.assign(service, { enabled: false, logger: { debug: jest.fn() } });
+    await expect(service.deleteDocumentIndex('d', 'w', true)).rejects.toThrow('unavailable');
   });
 });
 

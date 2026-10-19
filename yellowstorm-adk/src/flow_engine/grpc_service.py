@@ -22,6 +22,7 @@ from google.protobuf.struct_pb2 import Struct
 from langgraph.checkpoint.base import copy_checkpoint
 from langgraph.types import Command
 from structlog import get_logger
+from src.flow_engine.runtime.artifact_publication import with_artifact_authority
 
 from src.flow_engine.builder import compose
 from src.config.settings import get_settings
@@ -223,6 +224,7 @@ class PlaybookFlowRuntimeServicer:
         self._active_executions: dict[str, _ActiveExecution] = {}
         self._checkpoint_forks = CheckpointForkService()
 
+    @with_artifact_authority
     async def Run(self, request: Any, context: grpc.aio.ServicerContext) -> AsyncGenerator[Any, None]:
         execution_id = request.execution_id
         flow_id = request.flow_id
@@ -498,6 +500,7 @@ class PlaybookFlowRuntimeServicer:
             return {"resumed": resumed}
         return pb.ResumeFromStepResponse(resumed=resumed)
 
+    @with_artifact_authority
     async def RunFromCheckpoint(
         self, request: Any, context: grpc.aio.ServicerContext,
     ) -> AsyncGenerator[Any, None]:
