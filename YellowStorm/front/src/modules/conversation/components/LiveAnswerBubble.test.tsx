@@ -7,7 +7,7 @@ import { initialRootWorkState, useRootWorkStore } from '../rootWorkStore';
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string, args?: object) => key + (args ? JSON.stringify(args) : '') }) }));
 vi.mock('../store', () => ({ useConversationStore: (selector: (state: unknown) => unknown) => selector({ stopStream: vi.fn(), sendMessage: vi.fn() }) }));
-vi.mock('../uiStore', () => ({ useConversationUiStore: (selector: (state: unknown) => unknown) => selector({ setContextPanel: vi.fn() }) }));
+vi.mock('../uiStore', () => ({ useConversationUiStore: (selector: (state: unknown) => unknown) => selector({ setContextPanel: vi.fn() }), closeConversationContextPanel: vi.fn() }));
 vi.mock('./activity/ConversationAssistantBubble', () => ({ ConversationAssistantBubble: ({ workActivity }: { workActivity: ReactNode }) => <div>{workActivity}</div> }));
 beforeEach(() => useRootWorkStore.setState(initialRootWorkState));
 

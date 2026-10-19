@@ -6,7 +6,7 @@ import { openRecordCitation, type RecordCitationTarget } from '@/modules/semanti
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
-import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
+import { useFileViewerDisplayMode, useOnCitationOpen, useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -824,8 +824,10 @@ const TextPartRenderer = ({ content, showCursor, isStreaming = false, citations,
 export const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
+  const onCitationOpen = useOnCitationOpen();
 
   const handleClick = useCallback(async () => {
+    onCitationOpen?.();
     try {
       await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
     } catch {
@@ -833,7 +835,7 @@ export const SingleInlineCitation = ({ citation: c, citationScope }: { citation:
         description: tCommon('ai.errors.openFileDescription'),
       });
     }
-  }, [c, citationScope, fileViewerDisplayMode, tCommon]);
+  }, [c, citationScope, fileViewerDisplayMode, tCommon, onCitationOpen]);
 
   return (
     <InlineCitation>
@@ -879,8 +881,10 @@ const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
 export const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
+  const onCitationOpen = useOnCitationOpen();
 
   const handleCitationClick = async (citation: CitationData) => {
+    onCitationOpen?.();
     try {
       await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
     } catch {

@@ -211,7 +211,7 @@ export function useUpdateGovernanceWorkspaceBinding(programId: string | null) {
 
 export function useDeleteGovernanceWorkspaceBinding(programId: string | null) {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (bindingId: string) => governanceApi.deleteWorkspaceBinding(programId ?? '', bindingId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all }); } });
+  return useMutation({ mutationFn: ({ bindingId, scopeId }: { bindingId: string; scopeId?: string }) => governanceApi.deleteWorkspaceBinding(programId ?? '', bindingId, scopeId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all }); } });
 }
 
 export function useReconcileGovernanceWorkspaceBinding(programId: string | null) {

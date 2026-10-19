@@ -174,3 +174,8 @@ export const useConversationUiStore = create<ConversationUiState>()(
     { name: 'conversation-ui-store' },
   ),
 );
+
+/** A citation takes over the right side of the conversation: hide outline/assets/work. */
+export function closeConversationContextPanel(): void {
+  useConversationUiStore.getState().setContextPanel(null);
+}

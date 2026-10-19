@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { showSuccess, showError } from '@/lib/notifications';
 import { useConversationStore } from '../store';
+import { closeConversationContextPanel } from '../uiStore';
 import { componentsToMarkdown, mapConversationComponentsToContentParts } from '../utils';
 import { createOpenUiTextProjector, isOpenUiProgram } from './openui/plain-text';
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
@@ -195,6 +196,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
       setSourcesOpen(false);
+      closeConversationContextPanel();
       try {
         await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), { conversationId, messageId: message.id });
       } catch {

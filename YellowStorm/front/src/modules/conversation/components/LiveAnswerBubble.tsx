@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useModuleTranslation } from '@/modules/localization';
 import { useConversationStore } from '../store';
+import { closeConversationContextPanel } from '../uiStore';
 import type { LiveAnswer } from '../live-streams';
 import type { ChoiceInteractionMetadata } from '../types';
 import { ConversationAssistantBubble, type ActivityPaneState } from './activity/ConversationAssistantBubble';
@@ -19,7 +20,7 @@ export function LiveAnswerBubble({ answer, choiceInteractions, activityPaneState
   const work = groups.find((group) => group.attention) ?? groups.find((group) => group.active);
   const workState = groupHeaderState(work);
   return <div className='group/msg' id={`message-${answer.messageId}`}>
-    <MessageProvider isStreaming isLastAiMessage>
+    <MessageProvider isStreaming isLastAiMessage onCitationOpen={closeConversationContextPanel}>
       <ConversationAssistantBubble conversationId={answer.conversationId} messageId={answer.messageId} activityPaneState={activityPaneState} agentId={answer.agentId ?? null} agentName={answer.agentName} components={answer.components} isStreaming showWorking={answer.components.length === 0} choiceInteractions={choiceInteractions}
         workActivity={<RequestWorkStatus conversationId={answer.conversationId} messageId={answer.messageId} />} workState={workState}
         onComponentAction={(action) => sendMessage(answer.conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: answer.messageId } })}

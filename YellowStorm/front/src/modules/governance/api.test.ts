@@ -75,6 +75,14 @@ describe('governanceApi', () => {
     expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/workspace-bindings/binding-1/reconciliation-runs/run-1/resume', {});
   });
 
+  it('deletes a workspace binding, optionally scoped to one scope', async () => {
+    await governanceApi.deleteWorkspaceBinding('program-1', 'binding-1');
+    await governanceApi.deleteWorkspaceBinding('program-1', 'binding-1', 'scope-1');
+
+    expect(mocks.delete).toHaveBeenNthCalledWith(1, '/governance/programs/program-1/workspace-bindings/binding-1');
+    expect(mocks.delete).toHaveBeenNthCalledWith(2, '/governance/programs/program-1/workspace-bindings/binding-1', { params: { scopeId: 'scope-1' } });
+  });
+
   it('runs and decides evidence-backed temporal candidates', async () => {
     mocks.get.mockResolvedValue({ data: { data: [] } }); mocks.post.mockResolvedValue({ data: { data: {} } });
     await governanceApi.listTemporalCandidates('program-1', 'document-1');

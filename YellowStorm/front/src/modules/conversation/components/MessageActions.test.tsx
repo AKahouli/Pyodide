@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions } from './MessageActions';
+import { useConversationUiStore } from '../uiStore';
 import * as documentExports from '../utils/document-export';
 
 const updateFeedbackMock = vi.hoisted(() => vi.fn());
@@ -456,8 +457,10 @@ describe('MessageActions', () => {
     );
 
     expect(screen.getByText('messageActions.sources')).toBeInTheDocument();
+    useConversationUiStore.getState().setContextPanel('files');
     await userEvent.click(screen.getByRole('button', { name: /impl-guide\.pdf/ }));
     await waitFor(() => expect(openCitationSourceMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'docs/impl-guide.pdf' }), 'sidebar', 'ai.citations.defaultSource', { conversationId: 'conv-1', messageId: 'ai-1' }));
+    expect(useConversationUiStore.getState().contextPanel).toBeNull();
     expect(screen.getByRole('button', { name: 'spec' })).toBeInTheDocument();
   });
 

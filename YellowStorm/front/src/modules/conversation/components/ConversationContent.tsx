@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatConversationFollow, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
-import { useConversationUiStore } from '../uiStore';
+import { useConversationUiStore, closeConversationContextPanel } from '../uiStore';
 import { assetMessageDisplay } from '../utils/asset-message-display';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
@@ -168,7 +168,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
     <div className='group/msg' id={`message-${message.id}`}>
       {!isUser && <BackgroundResultContext message={message} messages={allMessages} />}
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
-      <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false}>
+      <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false} onCitationOpen={closeConversationContextPanel}>
         {isUser && isEditing
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
@@ -337,7 +337,7 @@ export function ConversationContent() {
 
           {activeAnswers.length === 0 && (showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
-              <MessageProvider isStreaming={true} isLastAiMessage={true}>
+              <MessageProvider isStreaming={true} isLastAiMessage={true} onCitationOpen={closeConversationContextPanel}>
                 <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} activityPaneState={activityPaneStateFor(streamingMessageId || 'streaming')} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
               </MessageProvider>
             </div>

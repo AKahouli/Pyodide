@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { ForbiddenException } from '@modules/exceptions';
+import { BadRequestException, ForbiddenException } from '@modules/exceptions';
 import type { WorkspaceReadPort, WorkspaceShareReadPort } from '@modules/workspace/ports';
 import { PgWorkspaceReadAdapter } from '@modules/workspace/persistence/postgres/pg-workspace-read.adapter';
 import { PgWorkspaceShareReadAdapter } from '@modules/workspace/persistence/postgres/pg-workspace-share-read.adapter';
@@ -40,6 +40,7 @@ describe('GovernanceWorkspaceBindingService', () => {
       isPublic?: boolean;
       shared?: boolean;
       existingScopeId?: string;
+      existingScopeIds?: string[];
       existingVisibility?: 'scope_specific' | 'multi_scope' | 'program_shared';
       existingEnabled?: boolean;
       fullScopeAccess?: boolean;
@@ -53,19 +54,21 @@ describe('GovernanceWorkspaceBindingService', () => {
     };
     const binding = bindingRecord({
       visibility: options.existingVisibility ?? 'scope_specific',
-      scopeIds: options.existingVisibility === 'program_shared' ? [] : [options.existingScopeId ?? scopeId],
+      scopeIds: options.existingScopeIds ?? (options.existingVisibility === 'program_shared' ? [] : [options.existingScopeId ?? scopeId]),
       enabled: options.existingEnabled ?? true,
     });
     let replaced: Record<string, unknown> | undefined;
     const bindingStore = {
       insert: jest.fn().mockResolvedValue(bindingRecord()),
-      findByProgramAndWorkspace: jest.fn().mockResolvedValue(options.existingScopeId ? binding : null),
+      findByProgramAndWorkspace: jest.fn().mockResolvedValue(options.existingScopeId || options.existingScopeIds ? binding : null),
+      findByIdAndProgram: jest.fn().mockResolvedValue(binding),
       update: jest.fn().mockResolvedValue(binding),
       findById: jest.fn().mockImplementation(async () => replaced ?? binding),
       replaceScopeIds: jest.fn().mockImplementation(async (_id: string, scopeIds: string[], visibility: string) => {
         replaced = bindingRecord({ scopeIds, visibility });
         return replaced;
       }),
+      deleteById: jest.fn().mockResolvedValue(undefined),
     };
     const scopeStore: Partial<ScopeStore> = { listByProgram: jest.fn().mockResolvedValue([]) };
     const workspaceReadPort = { findById: jest.fn().mockResolvedValue(workspace) };
@@ -201,5 +204,69 @@ describe('GovernanceWorkspaceBindingService', () => {
 
     expect(binding.enabled).toBe(false);
     expect(bindingStore.update).not.toHaveBeenCalled();
+  });
+
+  it('detaches one scope from a shared binding and keeps the remaining scope connected', async () => {
+    const otherScopeId = new Types.ObjectId().toString();
+    const { service, binding, bindingStore, draftPreparation } = buildService({
+      existingVisibility: 'multi_scope',
+      existingScopeIds: [scopeId, otherScopeId],
+    });
+
+    await service.delete(actorId, programId, binding.id, 'owner@example.test', scopeId);
+
+    expect(bindingStore.deleteById).not.toHaveBeenCalled();
+    expect(bindingStore.replaceScopeIds).toHaveBeenCalledWith(binding.id, [otherScopeId], 'scope_specific');
+    expect(draftPreparation.prepare).toHaveBeenCalledWith(
+      actorId,
+      'owner@example.test',
+      programId,
+      scopeId,
+    );
+  });
+
+  it('deletes the binding when detaching its only scope', async () => {
+    const { service, binding, bindingStore, draftPreparation } = buildService({
+      existingVisibility: 'scope_specific',
+      existingScopeIds: [scopeId],
+    });
+
+    await service.delete(actorId, programId, binding.id, 'owner@example.test', scopeId);
+
+    expect(bindingStore.deleteById).toHaveBeenCalledWith(binding.id);
+    expect(bindingStore.replaceScopeIds).not.toHaveBeenCalled();
+    expect(draftPreparation.prepare).toHaveBeenCalledWith(
+      actorId,
+      'owner@example.test',
+      programId,
+      scopeId,
+    );
+  });
+
+  it('rejects detaching a single scope from a program-wide binding', async () => {
+    const { service, bindingStore } = buildService({
+      existingVisibility: 'program_shared',
+    });
+
+    await expect(
+      service.delete(actorId, programId, 'binding-id', 'owner@example.test', scopeId),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(bindingStore.deleteById).not.toHaveBeenCalled();
+    expect(bindingStore.replaceScopeIds).not.toHaveBeenCalled();
+  });
+
+  it('rejects detaching a scope the binding does not cover', async () => {
+    const { service, bindingStore } = buildService({
+      existingVisibility: 'scope_specific',
+      existingScopeIds: [scopeId],
+    });
+
+    await expect(
+      service.delete(actorId, programId, 'binding-id', 'owner@example.test', new Types.ObjectId().toString()),
+    ).rejects.toThrow('Workspace is not bound to this scope');
+
+    expect(bindingStore.deleteById).not.toHaveBeenCalled();
+    expect(bindingStore.replaceScopeIds).not.toHaveBeenCalled();
   });
 });

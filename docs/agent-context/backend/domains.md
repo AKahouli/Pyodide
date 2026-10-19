@@ -27,6 +27,7 @@ When adding a new producer: add the versioned contract, gate emission on a `data
 - **Temporal intelligence worker** is feature-gated, polls every 5s, validates workspace content/indexing identity before and after evidence search, and writes temporal-candidate records.
 - **Persistence uses domain-specific uniqueness/idempotency indexes:** source-event deduplication, one binding per `(program, workspace)`, and version/revision uniqueness. When adding a new governance collection, declare the uniqueness invariant as a compound index next to the schema, not in the service.
 - **Governance reconciliation** is exposed to the frontend via polling (currently 1s) on the reconciliation Query — there is no governance SSE today. If you add one, follow [related guidance](realtime.md).
+- **Workspace binding detach:** `DELETE /governance/programs/:programId/workspace-bindings/:bindingId` removes the whole binding; with the optional `?scopeId=` query param it detaches only that scope — remaining single scopes downgrade `multi_scope` to `scope_specific`, and detaching the last scope deletes the binding. Program-shared bindings reject single-scope detach.
 - **Governed conversations** are a rollout-gated integration between governance and the conversation module; their enablement flows through the `governedConversations` config namespace and the frontend `governedConversationFeatures` shared flag.
 
 ### 24.3 Workspace Artifacts and Async Generation
