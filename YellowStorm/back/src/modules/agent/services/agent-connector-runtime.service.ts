@@ -12,9 +12,7 @@ import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
 import { isTrustedMcpServerUrl } from '../../connector/utils/trusted-mcp-server.util';
 import { McpJwtService } from '../../connector/services/mcp-jwt.service';
-import { hasConfiguredMcpCredential, hasSeparateProviderCredential, normalizeMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
-import { UnauthorizedException } from '@modules/exceptions';
-import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { hasConfiguredMcpCredential, hasSeparateProviderCredential, storedMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -216,7 +214,7 @@ export class AgentConnectorRuntimeService {
     fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
     agentId?: string,
   ): Promise<Record<string, unknown>[]> {
-    const bindings = connectorIds
+    let bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
       .filter(Boolean)
       // Stored stdio (or unknown) transports are never bound: the agent runtime
@@ -265,12 +263,31 @@ export class AgentConnectorRuntimeService {
     if (userId) {
       // Different connectors have independent auth state. Resolve them together,
       // retaining each connector's destination/access/credential ordering.
+      // A connector that fails its own policy resolution (destination blocked by
+      // the egress policy, access denied, no usable credential) is dropped from
+      // this runtime with a warning — exactly like an inactive credential — so
+      // one unusable binding cannot fail the whole conversation. The connector
+      // simply never reaches the runtime, so nothing egresses to it.
+      const unusable = new Set<string>();
       await Promise.all(bindings.map(async (binding) => {
         const connector = connectorsMap.get(binding.connector_id);
         if (!connector) return;
-        const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
-        await this.connectorService.assertRuntimeDestination(connector);
-        if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
+        const drop = (reason: string, error?: Error) => {
+          unusable.add(binding.connector_id);
+          this.logger.warn('Connector unusable for agent runtime; dropping its bindings', {
+            connector_id: binding.connector_id,
+            reason,
+            ...(error ? { error: error.message } : {}),
+          });
+        };
+        const policy = storedMcpSecurityPolicy(connector.mcpSecurityPolicy);
+        try {
+          await this.connectorService.assertRuntimeDestination(connector);
+          if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
+        } catch (err) {
+          drop('destination_or_access_denied', err as Error);
+          return;
+        }
         if (policy.profile === 'public') return;
         const declaresProviderAuth = Boolean(connector.authSourceType && connector.authSourceType !== 'none');
         if (declaresProviderAuth) {
@@ -288,7 +305,8 @@ export class AgentConnectorRuntimeService {
               connector_id: binding.connector_id,
               error: (err as Error).message,
             });
-            throw err;
+            drop('provider_credential_unavailable', err as Error);
+            return;
           }
         }
         // ADR-0026: when the assertion is the ingress credential and the
@@ -296,11 +314,13 @@ export class AgentConnectorRuntimeService {
         // resolve into its own header — the assertion overwrites Authorization
         // later, so counting that slot would still emit an assertion-only call.
         if (policy.profile === 'internal_jwt' && declaresProviderAuth && !hasSeparateProviderCredential(binding.auth_headers)) {
-          throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable provider credential');
+          drop('no_usable_provider_credential');
+          return;
         }
         if (policy.profile === 'configured') {
           if (!hasConfiguredMcpCredential(connector, binding.auth_headers)) {
-            throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+            drop('no_usable_credential');
+            return;
           }
           try {
             const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
@@ -323,6 +343,9 @@ export class AgentConnectorRuntimeService {
           }
         }
       }));
+      if (unusable.size) {
+        bindings = bindings.filter((binding: { connector_id: string }) => !unusable.has(binding.connector_id));
+      }
     }
 
     const mcpJwt = this.mcpJwt;

@@ -39,11 +39,12 @@ describe('AgentConnectorRuntimeService', () => {
     expect(jwt.bindingAuth.mock.calls.every((call) => call[1] === 'acting-user')).toBe(true);
   });
 
-  it('does not mint any binding JWT when another concurrent connector fails access validation', async () => {
+  it('drops a connector that fails access validation while its siblings still bind', async () => {
     let rejectAccess!: (error: Error) => void;
     const accessGate = new Promise<void>((_resolve, reject) => { rejectAccess = reject; });
     const jwt = { assertConnectorAccess: jest.fn((connector: { id: string }) =>
-      connector.id === 'denied' ? accessGate : Promise.resolve()), bindingAuth: jest.fn() };
+      connector.id === 'denied' ? accessGate : Promise.resolve()),
+      bindingAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer signed-jwt' }, env: {} }) };
     const service = new AgentConnectorRuntimeService(
       { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
       { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never, {} as never,
@@ -55,13 +56,15 @@ describe('AgentConnectorRuntimeService', () => {
       actions: [{ key: 'read', isEnabled: true }],
     } as never]));
     const pending = service.buildConnectorBindings(connectors, ['allowed', 'denied'], 'acting-user');
-    const rejected = expect(pending).rejects.toThrow('access denied');
     await new Promise(setImmediate);
     expect(jwt.assertConnectorAccess).toHaveBeenCalledTimes(2);
     expect(jwt.bindingAuth).not.toHaveBeenCalled();
     rejectAccess(new Error('access denied'));
-    await rejected;
-    expect(jwt.bindingAuth).not.toHaveBeenCalled();
+    const bindings = await pending;
+    // The denied connector gets nothing; the allowed sibling still binds.
+    expect(bindings.map((binding: Record<string, unknown>) => binding.connector_id)).toEqual(['allowed']);
+    expect(jwt.bindingAuth).toHaveBeenCalledTimes(1);
+    expect(jwt.bindingAuth).toHaveBeenCalledWith('https://allowed.example/mcp', 'acting-user', 'allowed', {}, {});
   });
 
   it('injects JWT and renewal metadata even when the connector has no saved credential', async () => {
@@ -130,13 +133,16 @@ describe('AgentConnectorRuntimeService', () => {
       { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never, auth as never,
       { get: jest.fn((_key, fallback) => fallback) } as never, mcpJwt as never,
     );
-    await expect(service.buildConnectorBindings(new Map([['connector-1', {
+    // Unusable protected connectors are dropped (warn + no binding) instead of
+    // failing the whole conversation; the connector never reaches the runtime.
+    const dropped = await service.buildConnectorBindings(new Map([['connector-1', {
       id: 'connector-1', name: 'SharePoint', authSourceType: 'connected_app', connectedAppKey: 'microsoft',
       runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'X-M365-Access-Token', headerPrefix: '' },
       mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8100/mcp',
       mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, requiredPermissions: [] },
       actions: [{ key: 'list_accessible_sites', isEnabled: true }],
-    } as never]]), ['connector-1'], 'acting-user')).rejects.toThrow('no usable provider credential');
+    } as never]]), ['connector-1'], 'acting-user');
+    expect(dropped).toEqual([]);
     expect(mcpJwt.bindingAuth).not.toHaveBeenCalled();
     expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
   });
@@ -154,13 +160,14 @@ describe('AgentConnectorRuntimeService', () => {
     );
     // A bearer credential defaulting to Authorization would survive this check
     // and then be overwritten by the assertion, emitting an assertion-only call.
-    await expect(service.buildConnectorBindings(new Map([['connector-1', {
+    const dropped = await service.buildConnectorBindings(new Map([['connector-1', {
       id: 'connector-1', name: 'SharePoint', authSourceType: 'connected_app', connectedAppKey: 'microsoft',
       runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer ' },
       mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8100/mcp',
       mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, requiredPermissions: [] },
       actions: [{ key: 'list_accessible_sites', isEnabled: true }],
-    } as never]]), ['connector-1'], 'acting-user')).rejects.toThrow('no usable provider credential');
+    } as never]]), ['connector-1'], 'acting-user');
+    expect(dropped).toEqual([]);
     expect(mcpJwt.bindingAuth).not.toHaveBeenCalled();
   });
 
@@ -179,12 +186,13 @@ describe('AgentConnectorRuntimeService', () => {
     );
     // A metadata header must not stand in for the credential the assertion
     // overwrites: the token is dropped, leaving an assertion-only request.
-    await expect(service.buildConnectorBindings(new Map([['connector-1', {
+    const dropped = await service.buildConnectorBindings(new Map([['connector-1', {
       id: 'connector-1', name: 'SharePoint', authSourceType: 'server_config', connectedAppKey: '',
       mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8100/mcp',
       mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-sharepoint', actorDelegation: 'verified_user', allowPrivateNetwork: true, requiredPermissions: [] },
       actions: [{ key: 'list_accessible_sites', isEnabled: true }],
-    } as never]]), ['connector-1'], 'acting-user')).rejects.toThrow('no usable provider credential');
+    } as never]]), ['connector-1'], 'acting-user');
+    expect(dropped).toEqual([]);
     expect(mcpJwt.bindingAuth).not.toHaveBeenCalled();
   });
 
@@ -218,12 +226,13 @@ describe('AgentConnectorRuntimeService', () => {
       { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
       { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never, auth as never,
       { get: jest.fn((_key, fallback) => fallback) } as never, jwt as never);
-    await expect(service.buildConnectorBindings(new Map([['connector-1', {
+    const dropped = await service.buildConnectorBindings(new Map([['connector-1', {
       id: 'connector-1', name: 'Protected', authSourceType: 'connected_app', connectedAppKey: 'provider',
       mcpTransportType: 'streamable_http', mcpServerUrl: 'https://example.test/mcp',
       mcpServerConfig: { headers: { Authorization: 'Bearer forbidden-static-fallback' } },
       actions: [{ key: 'search', isEnabled: true }],
-    } as never]]), ['connector-1'], 'acting-user')).rejects.toThrow(failure === 'failed' ? 'revoked credential' : 'no usable credential');
+    } as never]]), ['connector-1'], 'acting-user');
+    expect(dropped).toEqual([]);
     expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
     expect(jwt.bindingAuth).not.toHaveBeenCalled();
   });

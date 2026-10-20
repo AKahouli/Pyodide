@@ -25,7 +25,7 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
+import { storedMcpSecurityPolicy } from './utils/mcp-security-policy';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -145,7 +145,7 @@ export class AdminConnectorController {
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
-    const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
+    const policy = storedMcpSecurityPolicy(connector?.mcpSecurityPolicy);
     const runtimeAuthConfig = body.runtimeAuthConfig;
     const resolvedAuth = connector && policy.profile === 'configured'
       ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
