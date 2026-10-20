@@ -286,6 +286,8 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_SSE_REPLAY_ENABLED: Joi.boolean().default(true),
   CONVERSATION_SSE_REPLAY_MAX_EVENTS: Joi.number().min(10).max(2000).default(200),
   CONVERSATION_SSE_REPLAY_TTL_MS: Joi.number().min(5000).max(600000).default(120000),
+  // Opt-in periodic aggregate SSE measurement logs (PR-06 evidence collection).
+  CONVERSATION_SSE_MEASUREMENT_LOGS: Joi.boolean().default(false),
   // Standard-run recovery worker (WP06.5)
   CONVERSATION_RECOVERY_ENABLED: Joi.boolean().default(true),
   CONVERSATION_RECOVERY_INTERVAL_MS: Joi.number().min(5000).max(600000).default(30000),

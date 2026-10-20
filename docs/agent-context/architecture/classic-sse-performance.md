@@ -29,7 +29,9 @@ Do not run outage/kill experiments on the developer's live stack.
 ## Measurement surfaces
 
 `StreamGatewayService` keeps fixed-cardinality, fixed-bucket cumulative measurements
-and emits registered `conversation.sse.measurement` SDK events every 30 seconds.
+and, only when `CONVERSATION_SSE_MEASUREMENT_LOGS=true` (default off), emits
+registered `conversation.sse.measurement` SDK events every 30 seconds. Counters
+still accrue in memory and remain available to focused tests via the snapshot.
 Operations: `poll`, `lock`, `flush`, `cleanup`, `queue_commit`; `count` is the sample
 count, `duration_ms` is the sum, and `detail` is the JSON array of **disjoint** bucket
 counts. Upper bounds in milliseconds are `1,5,10,25,50,100,200,500,1000,2000,5000,10000,+Inf`.

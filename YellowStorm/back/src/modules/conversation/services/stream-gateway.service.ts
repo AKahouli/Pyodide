@@ -84,8 +84,10 @@ export class StreamGatewayService implements OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     if (!this.db) throw new Error('Conversation SSE requires PostgreSQL');
     await this.db.execute(sql`SELECT 1 FROM conversation.sse_events LIMIT 0`);
-    this.measurementTimer = setInterval(() => this.reportMeasurements(), 30000);
-    this.measurementTimer.unref();
+    if (this.configService.get<boolean>('conversation.sseMeasurementLogsEnabled')) {
+      this.measurementTimer = setInterval(() => this.reportMeasurements(), 30000);
+      this.measurementTimer.unref();
+    }
   }
 
   constructor(
