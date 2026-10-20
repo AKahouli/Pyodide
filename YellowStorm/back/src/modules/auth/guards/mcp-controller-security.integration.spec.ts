@@ -10,6 +10,8 @@ import { request as httpRequest, Server } from 'node:http';
 import { AgentCrudInternalController } from '@modules/agent/controllers/agent-crud-internal.controller';
 import { AgentService } from '@modules/agent/agent.service';
 import { AgentTypeService } from '@modules/agent-type/agent-type.service';
+import { TeamCrudInternalController } from '@modules/team/controllers/team-crud-internal.controller';
+import { TeamService } from '@modules/team/team.service';
 import { ModelsService } from '@modules/models/models.service';
 import { PlaybookAssistantInternalController } from '@modules/playbook-flow/controllers/playbook-assistant-internal.controller';
 import { PlaybookAssistantService } from '@modules/playbook-flow/assistant/playbook-assistant.service';
@@ -23,6 +25,10 @@ import { AuditLogService } from '@modules/authorization/services/audit-log.servi
 import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
 import { PgConnectorStore } from '@modules/connector/persistence/pg-connector.store';
 import { DelegatedActorGuard } from './delegated-actor.guard';
+
+// Workspace operations are outside these callback domains. Avoid bootstrapping
+// the full application via WorkspaceShareService's user/auth barrel imports.
+jest.mock('@modules/workspace/workspace-share.service', () => ({ WorkspaceShareService: class WorkspaceShareService {} }));
 
 interface HttpProbe {
   set(name: string, value: string | string[]): HttpProbe;
@@ -69,13 +75,14 @@ function request(server: Server): { get(path: string): HttpProbe; post(path: str
 describe('MCP controller security boundary over HTTP', () => {
   const userId = '507f1f77bcf86cd799439011';
   const targets = [
-    { audience: 'mcp-agent', principal: 'mcp-agent', env: 'AGENT_MCP_BACKEND_SERVICE_TOKEN', path: '/internal/agent-crud/agents' },
-    { audience: 'mcp-playbook', principal: 'mcp-playbook', env: 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN', path: '/internal/playbook-assistant/playbooks' },
-    { audience: 'mcp-semantic-model', principal: 'semantic-model-mcp', env: 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', path: '/internal/semantic-model-assistant/models' },
+    { audience: 'mcp-agent', principal: 'mcp-agent', path: '/internal/agent-crud/agents' },
+    { audience: 'mcp-playbook', principal: 'mcp-playbook', path: '/internal/playbook-assistant/playbooks' },
+    { audience: 'mcp-semantic-model', principal: 'semantic-model-mcp', path: '/internal/semantic-model-assistant/models' },
+    { audience: 'mcp-agent', principal: 'mcp-agent', path: '/internal/agent-crud/teams' },
   ];
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const secret = (principal: string) => `${principal}-test-only-machine-credential-00000001`;
   const agent = { getAllForUserResponse: jest.fn(async () => [{ id: 'agent' }]) };
+  const team = { findAllForUser: jest.fn(async () => [{ id: 'team' }]) };
   const playbook = { searchPlaybooks: jest.fn(async () => [{ id: 'playbook' }]) };
   const semantic = { listModels: jest.fn(async () => [{ id: 'semantic' }]), createModel: jest.fn(async () => ({ id: 'created' })) };
   const audit = { logSuccess: jest.fn() };
@@ -91,13 +98,12 @@ describe('MCP controller security boundary over HTTP', () => {
     sub: userId, connectorId: audience, securityRevision: 1, jti: randomUUID(), ...overrides,
   }, privateKey, { algorithm: 'RS256', issuer: 'ws01-test', audience, expiresIn: 300 });
   const headers = (target = targets[0], token = assertion(target.audience)) => ({
-    'X-YellowStorm-Service-Principal': target.principal,
-    'X-YellowStorm-Service-Token': secret(target.principal),
     'X-YellowStorm-Mcp-Assertion': token,
     'X-Correlation-Id': randomUUID(),
   });
   const expectNoDomainWork = () => {
     expect(agent.getAllForUserResponse).not.toHaveBeenCalled();
+    expect(team.findAllForUser).not.toHaveBeenCalled();
     expect(playbook.searchPlaybooks).not.toHaveBeenCalled();
     expect(semantic.listModels).not.toHaveBeenCalled();
     expect(semantic.createModel).not.toHaveBeenCalled();
@@ -109,11 +115,9 @@ describe('MCP controller security boundary over HTTP', () => {
     writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
     const values: Record<string, string> = {
       NODE_ENV: 'production', MCP_JWT_PRIVATE_KEY_FILE: keyPath, MCP_JWT_ISSUER: 'ws01-test',
-      INTERNAL_SERVICE_SECRET: 'legacy-generic-test-only-secret-00000001',
-      ...Object.fromEntries(targets.map(target => [target.env, secret(target.principal)])),
     };
     const module = await Test.createTestingModule({
-      controllers: [AgentCrudInternalController, PlaybookAssistantInternalController, SemanticModelAssistantInternalController],
+      controllers: [AgentCrudInternalController, TeamCrudInternalController, PlaybookAssistantInternalController, SemanticModelAssistantInternalController],
       providers: [DelegatedActorGuard, McpJwtService,
         { provide: ConfigService, useValue: { get: (key: string, fallback?: unknown) => values[key] ?? fallback } },
         { provide: UserService, useValue: { findById: jest.fn(async () => ({ id: userId, status: accountStatus, email: 'ws01@example.test' })) } },
@@ -127,6 +131,7 @@ describe('MCP controller security boundary over HTTP', () => {
         } : null) } },
         { provide: AuditLogService, useValue: audit },
         { provide: AgentService, useValue: agent }, { provide: AgentTypeService, useValue: {} }, { provide: ModelsService, useValue: {} },
+        { provide: TeamService, useValue: team },
         { provide: PlaybookAssistantService, useValue: playbook }, { provide: PlaybookAssistantContextService, useValue: {} },
         { provide: SemanticModelAssistantService, useValue: semantic },
       ],
@@ -154,31 +159,25 @@ describe('MCP controller security boundary over HTTP', () => {
     } as never, userId);
     const response = await request(app.getHttpServer()).get(target.path).set(headers(target)).expect(200);
     expect(Array.isArray(response.body)).toBe(true);
-    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId }));
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId,
+      metadata: expect.objectContaining({ servicePrincipal: target.principal, connectorId: target.audience }),
+    }));
   });
-  it.each(targets.slice(1))('rejects the Agent machine credential on $principal before domain work', async target => {
+  it.each(targets)('does not trust a caller-selected service identity on $principal', async target => {
     await request(app.getHttpServer()).get(target.path).set(headers(target))
-      .set('X-YellowStorm-Service-Token', secret('mcp-agent')).expect(401);
-    expectNoDomainWork();
-  });
-  it.each([
-    { target: targets[0], slug: 'agent-mcp' },
-    { target: targets[1], slug: 'playbook-mcp' },
-  ])('rejects connector slug $slug as a machine principal, even with its correct key', async ({ target, slug }) => {
-    await request(app.getHttpServer()).get(target.path).set(headers(target))
-      .set('X-YellowStorm-Service-Principal', slug).expect(401);
-    expectNoDomainWork();
-  });
-  it.each(targets.slice(1))('rejects a foreign Agent principal declaration on $principal', async target => {
-    await request(app.getHttpServer()).get(target.path).set(headers()).expect(401);
-    expectNoDomainWork();
+      .set('X-YellowStorm-Service-Principal', 'caller-selected')
+      .set('X-YellowStorm-Service-Token', 'not-a-credential').expect(200);
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ servicePrincipal: target.principal, connectorId: target.audience }),
+    }));
   });
   it.each(targets)('rejects generic-key-only on $principal', async target => {
-    await request(app.getHttpServer()).get(target.path).set('X-Internal-Token', 'legacy-generic-test-only-secret-00000001').expect(401);
+    await request(app.getHttpServer()).get(target.path).set('X-Correlation-Id', randomUUID())
+      .set('X-Internal-Token', 'legacy-generic-test-only-secret-00000001').expect(401);
     expectNoDomainWork();
   });
-  it.each(targets)('rejects a valid foreign audience even with the correct $principal machine credential', async target => {
-    const foreign = targets.find(other => other !== target)!;
+  it.each(targets)('rejects a valid foreign audience without service tokens on $principal', async target => {
+    const foreign = targets.find(other => other.audience !== target.audience)!;
     await request(app.getHttpServer()).get(target.path).set(headers(target, assertion(foreign.audience)))
       .set('X-YellowStorm-Mcp-Audience', foreign.audience).expect(401);
     expectNoDomainWork();
@@ -207,15 +206,31 @@ describe('MCP controller security boundary over HTTP', () => {
     await request(app.getHttpServer()).get(targets[0].path).set(headers(targets[0], token)).expect(401);
     expectNoDomainWork();
   });
-  it('rejects a structurally valid assertion signed by a different RSA key', async () => {
+  it.each(targets)('rejects a foreign signature without service tokens on $principal', async target => {
     const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-    const token = sign({ sub: userId, connectorId: 'mcp-agent', securityRevision: 1, jti: randomUUID() }, other,
-      { algorithm: 'RS256', issuer: 'ws01-test', audience: 'mcp-agent', expiresIn: 300 });
-    await request(app.getHttpServer()).get(targets[0].path).set(headers(targets[0], token)).expect(401);
+    const token = sign({ sub: userId, connectorId: target.audience, securityRevision: 1, jti: randomUUID() }, other,
+      { algorithm: 'RS256', issuer: 'ws01-test', audience: target.audience, expiresIn: 300 });
+    await request(app.getHttpServer()).get(target.path).set(headers(target, token)).expect(401);
     expectNoDomainWork();
   });
-  it('blocks foreign machine authority before a Semantic write can run', async () => {
+  it.each(targets)('rejects a foreign issuer without service tokens on $principal', async target => {
+    const token = sign({ sub: userId, connectorId: target.audience, securityRevision: 1, jti: randomUUID() }, privateKey,
+      { algorithm: 'RS256', issuer: 'foreign-issuer', audience: target.audience, expiresIn: 300 });
+    await request(app.getHttpServer()).get(target.path).set(headers(target, token)).expect(401);
+    expectNoDomainWork();
+  });
+  it('blocks wrong-domain JWT authority before a Semantic write can run', async () => {
     await request(app.getHttpServer()).post('/internal/semantic-model-assistant/models').set(headers()).expect(401);
+    expectNoDomainWork();
+  });
+  it.each(targets)('rejects missing assertion without service tokens on $principal', async target => {
+    await request(app.getHttpServer()).get(target.path).set(headers(target, '')).expect(401);
+    expectNoDomainWork();
+  });
+  it.each(targets)('rejects stale revision without service tokens on $principal', async target => {
+    const signedHeaders = headers(target);
+    revision = 2;
+    await request(app.getHttpServer()).get(target.path).set(signedHeaders).expect(401);
     expectNoDomainWork();
   });
   it.each(['revision', 'inactive connector', 'revoked account', 'connector permission'])('rechecks current %s', async state => {
@@ -227,7 +242,7 @@ describe('MCP controller security boundary over HTTP', () => {
     await request(app.getHttpServer()).get(targets[0].path).set(signedHeaders).expect(401);
     expectNoDomainWork();
   });
-  it.each(targets.slice(1))('denies revoked route permissions on $principal', async target => {
+  it.each(targets.filter(target => target.audience !== 'mcp-agent'))('denies revoked route permissions on $principal', async target => {
     permissions = [];
     await request(app.getHttpServer()).get(target.path).set(headers(target)).expect(403);
     expectNoDomainWork();
@@ -237,9 +252,10 @@ describe('MCP controller security boundary over HTTP', () => {
       .set('X-YellowStorm-User-Id', '507f1f77bcf86cd799439099').expect(401);
     expectNoDomainWork();
   });
-  it.each(['X-YellowStorm-Service-Principal', 'X-YellowStorm-Service-Token', 'X-YellowStorm-Mcp-Assertion', 'X-YellowStorm-User-Id'])
+  it.each(['X-YellowStorm-Service-Principal', 'X-YellowStorm-Service-Token', 'X-YellowStorm-Mcp-Assertion', 'X-YellowStorm-User-Id', 'X-Correlation-Id'])
   ('rejects raw duplicate %s headers through the HTTP parser', async name => {
-    const valid = { ...headers(), 'X-YellowStorm-User-Id': userId };
+    const valid = { ...headers(), 'X-YellowStorm-User-Id': userId,
+      'X-YellowStorm-Service-Principal': 'untrusted', 'X-YellowStorm-Service-Token': 'unused' };
     const value = valid[name as keyof typeof valid];
     await request(app.getHttpServer()).get(targets[0].path).set(valid).set(name, [value, value]).expect(401);
     expectNoDomainWork();

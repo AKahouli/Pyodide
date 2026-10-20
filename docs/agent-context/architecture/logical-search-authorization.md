@@ -10,41 +10,79 @@ with ADR-0017/0018/0023. Source lives across this repository and
   `MCP_WORKSPACE_SCOPE_TTL_SECONDS` in backend `.env` defaults to 180, integer
   1..300. Ordinary non-scoped assertion lifetimes remain unchanged.
 - Connector policy explicitly enables `workspaceAuthorization: true`, requires
-  verified_user delegation and an audience. For Logical Search use configured
-  service bearer ingress plus the separately issued `X-YellowStorm-Mcp-Assertion`.
+  verified_user delegation and an audience. For Logical Search use `internal_jwt`
+  and `Authorization: Bearer <signed workspace JWT>` only; no static service token.
   Existing privileged connector-policy and revision controls own this field.
 - `WorkspaceShareService.readableWorkspaceScope` obtains a bounded canonical ID
   snapshot from PgWorkspaceStore using owner/share/public rules. The bound is
   `MCP_WORKSPACE_SCOPE_MAX_IDS` (default 1000, 1..1000); more than the bound fails
   closed, and the receiver applies its own configured bound. An empty list grants no
   document access. Renewal reloads the snapshot rather than copying previous claims.
-- `yellowstorm-adk/src/mcp` replaces only the assertion header during two-header
-  renewal and retains the service bearer. Editable headers cannot bootstrap proof.
+- `yellowstorm-adk/src/mcp` renews the bearer JWT and discards editable identity
+  headers. Unrelated two-header connectors retain their separate provider/service
+  credential contract. Editable headers cannot bootstrap proof.
 - Native semantic extraction passes its invoking user to the standalone search
   client. `SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID` selects the same protected
   connector; McpJwtService checks requested workspace access and issues the same
   scope for fixed `/search_native` or `/search_native/batch` paths at that receiver's
-  exact origin. Requests carry bearer, assertion and Workspace-Id; redirects are
+  exact origin. Requests carry the signed bearer JWT and Workspace-Id; redirects are
   refused. No caller-supplied user ID is sent as proof.
 - The external receiver loads its trusted RSA public key once and locally checks
-  signatures, issuer/audience, lifetime, connector/revision and read scope. Every
+  signatures, issuer/audience, lifetime, structural connector/revision claims and read scope. Every
   requested workspace must be in scope. HTTP is stateless. SQL remains scoped.
 
 ## Deployment
 
 Provision external MCP `.env`: `MCP_AUTH_MODE=workspace_assertion`,
 `MCP_ENVIRONMENT=production`, `MCP_JWT_PUBLIC_KEY_FILE`, `MCP_JWT_ISSUER`,
-`MCP_JWT_AUDIENCE`, `MCP_JWT_CONNECTOR_ID`, `MCP_JWT_SECURITY_REVISION`, plus the
-existing `MCP_API_KEY`. Set `MCP_WORKSPACE_SCOPE_MAX_IDS` to the same value as the
+`MCP_JWT_AUDIENCE=mcp-logical-search`. No receiver connector/revision pins.
+Remove `MCP_API_KEY`. Set `MCP_WORKSPACE_SCOPE_MAX_IDS` to the same value as the
 backend (default 1000); a receiver bound lower than the issuer's rejects the scope.
 Use only the public counterpart of the backend issuer key.
+Per user-approved proposed [ADR-0034](../decisions/ADR-0034-logical-search-offline-authority-without-pins.md),
+remove `MCP_JWT_CONNECTOR_ID` and `MCP_JWT_SECURITY_REVISION` from receiver
+configuration. Issuer/renewal retains current connector-policy and revision checks.
+Previously issued assertions remain valid until expiry (default 180 seconds,
+maximum 300); policy changes are not instantaneous receiver revocation. Update
+connector and receiver audience together and renew/rebind executions. The public
+key, issuer and dedicated audience remain required trust configuration; default
+mode/environment/scope-bound entries need not be explicitly repeated in `.env`.
 Configure the matching connector through authorized security management, using
 `http://localhost:8045/http/` only with the approved exact development egress grant;
 production requires protected TLS ingress. Rebuild/restart backend as needed,
 restart MCP in conda `logicalsearch`, and rebind agent execution.
 Set `SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID` on the backend for native semantic
-extraction, matching that connector; retain its existing service bearer setting.
+extraction, matching that connector; remove its old static ingress credential.
 Missing invoking user or connector configuration fails before native HTTP access.
+
+Connector editor profile/authentication changes must preserve an existing explicit
+`workspaceAuthorization: true` while the destination remains compatible. The
+privileged **Edit Connector → Security policy → Include workspace read scope**
+switch manages this opt-in explicitly (English/French label and helper). It
+requires Streamable HTTP, verified-user delegation, an audience and a configured
+or internal-JWT profile; ordinary editors do not see the control. Save the changed
+policy before inspecting tools. Turning it off for a configured profile also
+clears the otherwise-invalid delegation/audience; internal-JWT identity remains.
+Supplementary connector field guidance is available through adjacent focusable
+help tooltips (pointer or keyboard focus; Escape closes). The workspace switch
+also retains a screen-reader description. Persistent labels, credential state,
+validation errors and save-before-inspection notices remain visible.
+The shared policy comparator includes this field so save and inspection revision
+gates cannot overlook its removal. Public/nondelegated or incompatible transport
+transitions clear authority; selecting the Logical Search audience alone never
+enables it. A saved policy missing this opt-in produces no signed workspace scope
+and is rejected by the receiver, including during tool inspection. Restore it only
+through privileged, revision-fenced connector management, not a direct DB update.
+
+JWT-only migration follows user-approved proposed [ADR-0033](../decisions/ADR-0033-jwt-only-mcp-callbacks.md).
+Deploy issuer/client and receiver together; prior two-header qualification below
+is historical and does not qualify this changed wire format. Compose probes now
+check TCP listener liveness, not authenticated database readiness. HTTP health
+probes still require a valid JWT and allowed network. After permission was enabled,
+the three focused receiver suites ran via the existing `logicalsearch` interpreter's
+stdlib unittest runner: 62 tests, one platform skip, no failures. The example
+configuration is migrated. Cross-repository live runtime qualification remains
+separate. Do not provision a permanently hardcoded expiring JWT as a probe.
 
 Workspace identity is the canonical backend ID (indexing `brain_id`), not
 `storagePrefix`/alias. Legacy rows using another namespace must be reconciled by

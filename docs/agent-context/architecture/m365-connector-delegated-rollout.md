@@ -28,7 +28,7 @@ ADR-0018/0026 stateless transport):
 - Each connector's connected app still resolves a token for a real signed-in
   user (Connect Apps shows Microsoft 365 connected).
 - The backend signer can mint assertions for the connector audience
-  (`MCP_JWT_*` / `SEMANTIC_MODEL_MCP_JWT_*` pair configured and validated at
+  (`MCP_JWT_PRIVATE_KEY_FILE` / `MCP_JWT_ISSUER` configured and validated at
   startup).
 - The receiver mounts the backend public key (`MCP_JWT_PUBLIC_KEY`) and sets
   `MCP_JWT_ISSUER`, `MCP_JWT_AUDIENCE`, `M365_TOKEN_HEADER=x-m365-access-token`.

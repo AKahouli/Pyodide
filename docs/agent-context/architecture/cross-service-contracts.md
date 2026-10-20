@@ -17,11 +17,12 @@ their owning source and verification below.
 - Error parity: backend domain exceptions carry registered codes; frontend keeps
   enum parity + EN/FR messages (`YellowStorm/front/src/lib/error-codes.ts`).
   Adding a code requires both sides + localized message.
-- MCP→NestJS: Agent, Playbook and Semantic clients send their distinct machine
-  principal/token plus `X-YellowStorm-Mcp-Assertion`. Controller-owned audiences
+- MCP→NestJS: Agent, Playbook and Semantic clients send
+  `X-YellowStorm-Mcp-Assertion` without static service credentials. Controller-owned audiences
   fence each domain; the verified signed subject owns attribution and a supplied
-  user header may not disagree. Generic `X-Internal-Token` authorization and the
-  Semantic client's redundant generic-key dependency are removed. Internal JWT
+  user header may not disagree. Audit service attribution is derived from verified
+  route authority. Generic `X-Internal-Token` authorization and the
+  MCP callback machine-token dependency are removed. Internal JWT
   assertions are RS256, bounded to 300 seconds; current account, connector policy,
   revision and resource rights are rechecked. Other MCP profiles remain valid.
   See the [principal matrix](../../security/internal-principal-inventory.md).

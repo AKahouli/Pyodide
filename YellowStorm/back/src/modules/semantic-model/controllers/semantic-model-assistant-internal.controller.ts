@@ -2,7 +2,6 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { DelegatedActorGuard, McpRouteAudience } from '@modules/auth/guards/delegated-actor.guard';
-import { SemanticMcpServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
   AssistantCloneModelDto,
@@ -40,7 +39,7 @@ const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODEL
 @Public()
 @Controller('internal/semantic-model-assistant')
 @McpRouteAudience('mcp-semantic-model')
-@UseGuards(SemanticMcpServiceGuard, DelegatedActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
+@UseGuards(DelegatedActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
 export class SemanticModelAssistantInternalController {
   constructor(private readonly assistant: SemanticModelAssistantService) {}
 

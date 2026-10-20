@@ -25,26 +25,41 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 
 ## 15. Internal service principals and MCP egress (SEC-06/07/08)
 
-**Scoped internal principals (WP-07):** service identity comes from possession of a per-service secret, checked with constant-time comparison — never a plain service-name header. `auth/guards/internal-service-principal.guard.ts` fixes one principal per guard class:
+**JWT-only MCP callbacks:** semantic, Playbook and Agent/Team internal callbacks use
+`DelegatedActorGuard` without a separate static service token. The forwarded signed
+assertion must satisfy the route-owned audience and current connector/revision,
+delegation and actor checks; domain permissions still apply. Audit principal comes
+from verified authority, not the service-name header. See proposed
+[ADR-0033](../decisions/ADR-0033-jwt-only-mcp-callbacks.md) for the user-approved
+scope and coordinated deployment requirements. Verification/review is tracked
+separately; this is not production certification.
+
+Playbook callback construction does not require or trust
+`X-YellowStorm-Agent-Id`. The backend resolves its active reserved Platform
+Copilot agent using the existing AgentService resolver. Conversation ownership,
+Platform Copilot purpose/pinned-agent checks, response/question linkage and
+bound request identity remain enforced; missing canonical agent fails closed.
+The MCP forwards conversation/correlation context and the signed actor assertion,
+not an actor-selecting user or agent header.
+
+**Other scoped internal principals (WP-07):** service identity comes from possession of a per-service secret, checked with constant-time comparison — never a plain service-name header. `auth/guards/internal-service-principal.guard.ts` fixes one principal per guard class:
 
 | Principal | Env secret / headers | Endpoint group |
 | --- | --- | --- |
-| `semantic-model-mcp` | `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`; headers `X-Yellowstorm-Service-Principal` + `X-Yellowstorm-Service-Token` | `internal/semantic-model-assistant/*` only |
 | `app-runtime` | `APP_RUNTIME_BIND_TOKEN` (same two headers, principal `app-runtime`) | `internal/app-runtime/*` only |
 | `adk-runtime` | `ADK_RUNTIME_MCP_RENEWAL_TOKEN` (same two headers, principal `adk-runtime`) | `connectors/internal/mcp-token` renewal with current signed actor proof only |
-| `mcp-agent` | `AGENT_MCP_BACKEND_SERVICE_TOKEN` | Agent/Team internal CRUD, fixed actor audience `mcp-agent` |
-| `mcp-playbook` | `PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN` | Playbook assistant routes, fixed actor audience `mcp-playbook` |
 | `semantic-runtime` | `SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN` | Semantic asset grant and five asset operations, canonical signed admission plus live task/lease/claim proof |
 | `adk-root-runtime` | `ADK_ROOT_RUNTIME_SERVICE_TOKEN` | Root/native conversation operations with purpose-separated live dispatch authority |
 | `adk-playbook-artifact` | `ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN` | Playbook artifact/native operations with signed current execution and lease-generation authority |
 
-P1 removes generic-key authorization from the tracked internal routes. All eight
+P1 removes generic-key authorization from the tracked internal routes. Remaining
 scoped credentials are required at production startup, at least 32 characters,
 without padding and pairwise distinct (also distinct from a configured legacy
-key); each guard denies unset or ambiguous credentials. Agent and Playbook
-connector slugs differ from their machine-principal names. MCP deployments must
-receive only their own machine credential and public verification material, never
-the generic key or private signer. Effective mounts/rotation are deployment gates.
+key); each guard denies unset or ambiguous credentials. JWT-only MCP deployments
+receive public verification material, never the generic key or private signer.
+Backend signing uses only `MCP_JWT_PRIVATE_KEY_FILE` and `MCP_JWT_ISSUER`;
+semantic-prefixed signer aliases are retired. Effective mounts/rotation are
+deployment gates. Do not remove unrelated runtime service credentials.
 
 Native ingest, connector import and Telegram validation use the fixed Root/native
 and Playbook caller set plus `X-YellowStorm-Execution-Authority`; body/header actor

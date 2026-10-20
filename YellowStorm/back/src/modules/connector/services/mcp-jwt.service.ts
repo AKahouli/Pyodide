@@ -30,16 +30,6 @@ export interface AdkExecutionAuthority {
   dispatchStartedAt?: string;
 }
 
-/** Bounded deployment compatibility only: remove after legacy signer keys migrate.
- * Shared keys take precedence; this adapter never grants connector trust or selects recipients.
- */
-function signerConfigWithLegacyCompatibility(config: ConfigService): { path?: string; issuer?: string } {
-  return {
-    path: config.get<string>('MCP_JWT_PRIVATE_KEY_FILE') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE'),
-    issuer: config.get<string>('MCP_JWT_ISSUER') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'),
-  };
-}
-
 /** Dedicated MCP signing key; never reuse the application's HS256 secret. */
 @Injectable()
 export class McpJwtService {
@@ -56,7 +46,8 @@ export class McpJwtService {
       if (!Number.isInteger(this.workspaceScopeTtl) || this.workspaceScopeTtl < 1 || this.workspaceScopeTtl > 300) {
         throw new Error('MCP_WORKSPACE_SCOPE_TTL_SECONDS must be an integer between 1 and 300');
       }
-      const { path, issuer } = signerConfigWithLegacyCompatibility(config);
+       const path = config.get<string>('MCP_JWT_PRIVATE_KEY_FILE');
+       const issuer = config.get<string>('MCP_JWT_ISSUER');
       if (!path && !issuer) return;
       if (!path || !issuer) {
         throw new Error('MCP JWT mode requires a private key file and issuer');
@@ -247,20 +238,8 @@ export class McpJwtService {
     }
     const { token, serverUrl: issuedEndpoint } = await this.issue(connectorId, userId);
     if (canonicalMcpEndpoint(issuedEndpoint) !== canonicalMcpEndpoint(serverUrl)) this.deny();
-    if (policy.profile === 'configured') {
-      // Saved server-config credentials are another supported trusted source.
-      // Resolved per-user credentials take precedence; reject ambiguous casing.
-      const resolved = Object.entries(existing).filter(([name]) => name.toLowerCase() === 'authorization');
-      const saved = connector.authSourceType !== 'connected_app'
-        ? Object.entries(connector.mcpServerConfig?.headers ?? {}).filter(([name]) => name.toLowerCase() === 'authorization') : [];
-      const credentials = resolved.length ? resolved : saved;
-      if (credentials.length !== 1 || typeof credentials[0][1] !== 'string' || !/^Bearer \S+$/i.test(credentials[0][1])) this.deny();
-      return { ...Object.fromEntries(Object.entries(existing).filter(([name]) => !['authorization', 'x-yellowstorm-mcp-assertion'].includes(name.toLowerCase()))),
-        Authorization: credentials[0][1],
-        'X-YellowStorm-Mcp-Assertion': token };
-    }
     return {
-      ...Object.fromEntries(Object.entries(existing).filter(([name]) => name.toLowerCase() !== 'authorization')),
+      ...Object.fromEntries(Object.entries(existing).filter(([name]) => !['authorization', 'x-yellowstorm-mcp-assertion'].includes(name.toLowerCase()))),
       Authorization: `Bearer ${token}`,
     };
   }
@@ -283,7 +262,7 @@ export class McpJwtService {
     const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
     const destination = new URL(canonicalMcpEndpoint(endpoint));
     const mcp = new URL(canonicalMcpEndpoint(connector.mcpServerUrl));
-    if (!policy.workspaceAuthorization || policy.profile !== 'configured'
+    if (!policy.workspaceAuthorization || !['configured', 'internal_jwt'].includes(policy.profile)
       || destination.origin !== mcp.origin || !['/search_native', '/search_native/batch'].includes(destination.pathname)
       || !workspaceIds.length || workspaceIds.length > 100 || !this.workspaceShares) this.deny();
     await this.workspaceShares.assertUserHasAccess(userId, workspaceIds);

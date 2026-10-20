@@ -47,6 +47,13 @@ describe('McpJwtService current-policy boundary', () => {
     row.mcpTransportType = 'sse';
     await expect(service.issue('connector-1', 'user-1')).rejects.toThrow();
   });
+  it.each(['Bearer provider', 'Basic provider'])('preserves unrelated configured auth %s without minting a workspace assertion', async credential => {
+    row.mcpSecurityPolicy = { version: 1, profile: 'configured', actorDelegation: 'none',
+      allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
+    const existing = { Authorization: credential, 'X-Provider-Token': 'independent-provider' };
+    expect(await service.headers(row.mcpServerUrl as string, 'user-1', existing, 'connector-1')).toEqual(existing);
+    expect(workspaces.readableWorkspaceScope).not.toHaveBeenCalled();
+  });
   it.each(['?token=TEST_CANARY_R03', '?%74oken=TEST_CANARY_R03', '#TEST_CANARY_R03'])
   ('denies legacy unsafe endpoints before browser token issuance: %s', async suffix => {
     row.mcpServerUrl = `https://example.com/mcp${suffix}`;
@@ -64,14 +71,19 @@ describe('McpJwtService current-policy boundary', () => {
     expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(endpoint,
       expect.objectContaining({ allowExactEndpoints: [endpoint] }));
   });
-  it.each([false, true])('loads bounded legacy signer config with shared precedence (%s)', async shared => {
+  it.each([false, true])('requires canonical signer config regardless of legacy settings (%s)', async shared => {
     values = { SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: 'legacy.pem', SEMANTIC_MODEL_MCP_JWT_ISSUER: 'legacy-issuer',
       ...(shared ? { MCP_JWT_PRIVATE_KEY_FILE: 'shared.pem', MCP_JWT_ISSUER: 'shared-issuer' } : {}) };
     const compatible = new McpJwtService({ get: (name: string, fallback?: unknown) => values[name] ?? fallback } as never,
       users as never, store as never, authorization as never);
-    expect(readFileSync).toHaveBeenLastCalledWith(shared ? 'shared.pem' : 'legacy.pem');
+    if (!shared) {
+      await expect(compatible.issue('connector-1', 'user-1')).rejects.toThrow();
+      expect(readFileSync).not.toHaveBeenCalledWith('legacy.pem');
+      return;
+    }
+    expect(readFileSync).toHaveBeenLastCalledWith('shared.pem');
     const { token } = await compatible.issue('connector-1', 'user-1');
-    expect(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).iss).toBe(shared ? 'shared-issuer' : 'legacy-issuer');
+    expect(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).iss).toBe('shared-issuer');
     row.mcpSecurityPolicy = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
     await expect(compatible.issue('connector-1', 'user-1')).rejects.toThrow();
   });
@@ -118,30 +130,41 @@ describe('McpJwtService current-policy boundary', () => {
     expect(decode(renewed.token).workspaceScope.ids).toEqual(['a'.repeat(24)]);
     expect(workspaces.readableWorkspaceScope).toHaveBeenCalledWith('user-1');
   });
-  it('keeps the bearer credential when binding/renewing a configured scope assertion', async () => {
-    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
-    const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', { Authorization: 'Bearer service-key' }, {});
-    expect(bound.headers.Authorization).toBe('Bearer service-key');
+  it.each(['configured', 'internal_jwt'])('binds and renews %s workspace authority using only bearer JWT', async profile => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile, workspaceAuthorization: true };
+    const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {});
+    expect(bound.headers.Authorization).toMatch(/^Bearer ey/);
+    expect(bound.headers['X-YellowStorm-Mcp-Assertion']).toBeUndefined();
     expect(bound.env).toEqual({ YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1' });
-    expect((await service.renew('connector-1', bound.headers['X-YellowStorm-Mcp-Assertion'])).token).toBeTruthy();
-    await expect(service.headers(row.mcpServerUrl as string, 'user-1', {}, 'connector-1')).rejects.toThrow();
+    const proof = bound.headers.Authorization.slice(7);
+    expect(await service.verifyMcpAssertion(proof, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    workspaces.readableWorkspaceScope.mockResolvedValueOnce(['a'.repeat(24)]);
+    const renewed = await service.renew('connector-1', proof);
+    expect(JSON.parse(Buffer.from(renewed.token.split('.')[1], 'base64url').toString()).workspaceScope.ids).toEqual(['a'.repeat(24)]);
+    row.securityRevision = 2;
+    await expect(service.renew('connector-1', renewed.token)).rejects.toThrow();
   });
-  it('supports saved-config Bearer without accepting ambiguous credentials or connected-app fallback', async () => {
+  it('replaces saved/resolved legacy workspace credentials and assertions without dropping independent provider headers', async () => {
     row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
     row.mcpServerConfig = { headers: { authorization: 'Bearer saved' } };
     const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {});
-    expect(bound.headers.Authorization).toBe('Bearer saved');
-    await expect(service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1',
-      { Authorization: 'Bearer one', authorization: 'Bearer two' }, {})).rejects.toThrow();
-    row.authSourceType = 'connected_app';
-    await expect(service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {})).rejects.toThrow();
+    expect(bound.headers.Authorization).toMatch(/^Bearer ey/);
+    const headers = await service.headers(row.mcpServerUrl as string, 'user-1', {
+      Authorization: 'Bearer old', authorization: 'Bearer another',
+      'x-yellowstorm-mcp-assertion': 'stale', 'X-Provider-Token': 'provider-token',
+    }, 'connector-1');
+    expect(Object.keys(headers).filter(key => key.toLowerCase() === 'authorization')).toEqual(['Authorization']);
+    expect(headers.Authorization).toMatch(/^Bearer ey/);
+    expect(headers['x-yellowstorm-mcp-assertion']).toBeUndefined();
+    expect(headers['X-Provider-Token']).toBe('provider-token');
   });
-  it('binds native search to the approved receiver and rejects denied workspace batches', async () => {
-    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile: 'configured', workspaceAuthorization: true };
+  it.each(['configured', 'internal_jwt'])('binds native search with %s bearer JWT and rejects denied workspace batches', async profile => {
+    row.mcpSecurityPolicy = { ...row.mcpSecurityPolicy as object, profile, workspaceAuthorization: true };
     const headers = await service.workspaceReadHeaders('connector-1', 'user-1', 'https://example.com/search_native/batch',
-      ['a'.repeat(24), 'b'.repeat(24)], { Authorization: 'Bearer service' });
+      ['a'.repeat(24), 'b'.repeat(24)], {});
     expect(headers['Workspace-Id']).toBe(['a'.repeat(24), 'b'.repeat(24)].join(','));
-    expect(headers['X-YellowStorm-Mcp-Assertion']).toBeTruthy();
+    expect(headers.Authorization).toMatch(/^Bearer ey/);
+    expect(headers['X-YellowStorm-Mcp-Assertion']).toBeUndefined();
     await expect(service.workspaceReadHeaders('connector-1', 'user-1', 'https://evil.example/search_native',
       ['a'.repeat(24)], { Authorization: 'Bearer service' })).rejects.toThrow();
     workspaces.assertUserHasAccess.mockRejectedValueOnce(new Error('denied'));

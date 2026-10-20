@@ -1,5 +1,15 @@
 # R01 internal principal and caller inventory
 
+## JWT-only MCP update (2026-10-20)
+
+The historical inventory below predates the user-approved JWT-only migration.
+Semantic, Playbook and Agent/Team callbacks now require the signed delegated
+assertion, current connector/revision and route-owned audience, without their
+former static service tokens. Other runtime principals remain unchanged.
+See [ADR-0033](../agent-context/decisions/ADR-0033-jwt-only-mcp-callbacks.md)
+and [current backend security](../agent-context/backend/security.md). Local
+implementation/testing does not establish production rollout or review completion.
+
 Snapshot: `abe23f8f99d6d371f0bfd9155d5727327d0f3a17`; audit baseline
 `86bf7972de6ab22e6aaf732da291a5c6e3280c98` is an ancestor. The intervening
 commits add conversation assets/preview verification and remove unused Studio

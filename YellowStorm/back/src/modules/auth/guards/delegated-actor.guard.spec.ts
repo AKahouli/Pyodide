@@ -1,6 +1,8 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { DelegatedActorGuard } from './delegated-actor.guard';
 
+jest.mock('@modules/connector/services/mcp-jwt.service', () => ({ McpJwtService: class McpJwtService {} }));
+
 interface TestRequest {
   headers: Record<string, string>;
   method?: string;
@@ -41,7 +43,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
       headers: {
         'x-yellowstorm-mcp-assertion': 'signed-jwt',
         'x-correlation-id': 'request-1',
-        'x-yellowstorm-service-principal': 'semantic-model-mcp',
+        'x-yellowstorm-service-principal': 'untrusted-principal',
       },
       method: 'POST',
       route: { path: '/internal/semantic-model-assistant/query-records' },
@@ -64,7 +66,6 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
       headers: {
         'x-yellowstorm-mcp-assertion': 'signed-jwt',
         'x-correlation-id': 'request-42',
-        'x-yellowstorm-service-principal': 'semantic-model-mcp',
       },
       method: 'POST',
       route: { path: '/internal/semantic-model-assistant/query-records' },
@@ -83,6 +84,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
     expect(record.targetId).toBeUndefined();
     expect(record.metadata).toEqual({
       servicePrincipal: 'semantic-model-mcp',
+      connectorId: 'connector-1',
       correlationId: 'request-42',
       method: 'POST',
       route: '/internal/semantic-model-assistant/query-records',
@@ -182,6 +184,13 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   it('rejects duplicate actor headers before assertion verification', async () => {
     await expect(guard().canActivate(context({ headers: {
       'x-yellowstorm-mcp-assertion': 'one,two', 'x-correlation-id': 'request-1',
+    } }))).rejects.toThrow(/Ambiguous security header/);
+    expect(mcpJwt.verifyMcpAssertion).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate correlation headers before assertion verification', async () => {
+    await expect(guard().canActivate(context({ headers: {
+      'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'one,two',
     } }))).rejects.toThrow(/Ambiguous security header/);
     expect(mcpJwt.verifyMcpAssertion).not.toHaveBeenCalled();
   });

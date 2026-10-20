@@ -5,7 +5,7 @@ import { Logger } from '@nestjs/common';
 import { SemanticModelNativeSearchClient as NativeSearchClient, type SemanticModelNativeSearchRequest } from './semantic-model-native-search-client.service';
 
 const workspaceReadHeaders = jest.fn(async (_connectorId, _userId, _endpoint, ids: string[], headers) => ({
-  ...headers, 'Workspace-Id': [...new Set(ids)].join(','), 'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
+  ...headers, 'Workspace-Id': [...new Set(ids)].join(','), Authorization: 'Bearer signed-fixture',
 }));
 
 // Existing response/retry tests execute with a trusted invoking-user fixture.
@@ -37,7 +37,6 @@ function config(
     ageGraph: 'semantic_model_graph',
     nativeSearchUrl: 'http://localhost:8045/search_native',
     nativeSearchBatchUrl: 'http://localhost:8045/search_native/batch',
-    nativeSearchAuthToken: 'test-token',
     nativeSearchConnectorId: 'connector-1',
     nativeSearchLogQuery: false,
     documentExtractionAgentId: '',
@@ -55,6 +54,7 @@ describe('SemanticModelNativeSearchClient', () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
+    workspaceReadHeaders.mockClear();
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -69,10 +69,9 @@ describe('SemanticModelNativeSearchClient', () => {
     expect(url).toBe('http://localhost:8045/search_native');
     expect(JSON.parse(init.body)).toEqual(request);
     expect(init.headers).toEqual({
-      Authorization: 'Bearer test-token',
+      Authorization: 'Bearer signed-fixture',
       'Content-Type': 'application/json',
       'Workspace-Id': 'workspace-1',
-      'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
     });
     expect(init.headers).not.toHaveProperty('X-User-Id');
   });
@@ -111,10 +110,9 @@ describe('SemanticModelNativeSearchClient', () => {
       ],
     });
     expect(init.headers).toEqual({
-      Authorization: 'Bearer test-token',
+      Authorization: 'Bearer signed-fixture',
       'Content-Type': 'application/json',
       'Workspace-Id': 'w',
-      'X-YellowStorm-Mcp-Assertion': 'signed-fixture',
     });
   });
 
@@ -171,16 +169,39 @@ describe('SemanticModelNativeSearchClient', () => {
       .rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it('requires the bearer token', async () => {
-    const client = new SemanticModelNativeSearchClient(config({ nativeSearchAuthToken: '' }));
-
-    await expect(client.search({ query: 'q', workspace_id: 'w', file_name: 'f.pdf' }))
-      .rejects.toBeInstanceOf(ServiceUnavailableException);
+  it.each([false, true])('uses workspace JWT authority without a static token (batch=%s)', async batch => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(batch ? { results: [{ id: '0', result: [] }] } : []));
+    const client = new SemanticModelNativeSearchClient(config());
+    const request = { query: 'q', workspace_id: 'w', file_name: 'f.pdf' };
+    await expect(batch ? client.searchBatch([request]) : client.search(request))
+      .resolves.toEqual(batch ? [{ sections: [], error: null }] : []);
+    expect(workspaceReadHeaders).toHaveBeenCalledWith('connector-1', 'invoking-user',
+      batch ? config().nativeSearchBatchUrl : config().nativeSearchUrl, ['w'], { 'Content-Type': 'application/json' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer signed-fixture',
+      'Content-Type': 'application/json', 'Workspace-Id': 'w' });
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('error');
+  });
+  it.each([false, true])('fails before network access when authority is missing (batch=%s)', async batch => {
+    const request = { query: 'q', workspace_id: 'w', file_name: 'f.pdf' };
+    for (const [settings, issuer, user] of [
+      [config(), { workspaceReadHeaders }, undefined],
+      [config({ nativeSearchConnectorId: '' }), { workspaceReadHeaders }, 'invoking-user'],
+      [config(), undefined, 'invoking-user'],
+    ] as const) {
+      const client = new NativeSearchClient(settings, issuer as never);
+      await expect(batch ? client.searchBatch([request], 0, 1, user) : client.search(request, user))
+        .rejects.toThrow(/verified actor/);
+    }
+    expect(workspaceReadHeaders).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
-  it('fails before network access when invoking identity is missing', async () => {
-    const client = new NativeSearchClient(config(), { workspaceReadHeaders } as never);
-    await expect(client.search({ query: 'q', workspace_id: 'w', file_name: 'f.pdf' })).rejects.toThrow(/verified actor/);
+  it.each([false, true])('does not contact native search when workspace authorization rejects (batch=%s)', async batch => {
+    const denied = jest.fn().mockRejectedValue(new Error('workspace policy denied'));
+    const client = new NativeSearchClient(config(), { workspaceReadHeaders: denied } as never);
+    const request = { query: 'q', workspace_id: 'w', file_name: 'f.pdf' };
+    await expect(batch ? client.searchBatch([request], 0, 1, 'invoking-user') : client.search(request, 'invoking-user'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -8,8 +8,7 @@ const scopedServiceSecret = () => Joi.string().when('NODE_ENV', {
   .messages({ 'any.invalid': 'Scoped service credentials must not contain padding' });
 
 const independentServiceTokenKeys = [
-  'AGENT_MCP_BACKEND_SERVICE_TOKEN', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
-  'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
+  'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
   'APP_RUNTIME_BIND_TOKEN', 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN',
   'ADK_ROOT_RUNTIME_SERVICE_TOKEN', 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN',
   'INTERNAL_SERVICE_SECRET',
@@ -111,7 +110,6 @@ export const configValidationSchema = Joi.object({
     .default('semantic_model_graph'),
   SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
   SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
-  SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
@@ -425,8 +423,6 @@ export const configValidationSchema = Joi.object({
   // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
-  PLAYBOOK_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
-  AGENT_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
   PLAYBOOK_MCP_JWT_AUDIENCE: Joi.string().default('mcp-playbook'),
   AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
@@ -435,8 +431,6 @@ export const configValidationSchema = Joi.object({
   MCP_WORKSPACE_SCOPE_MAX_IDS: Joi.number().integer().min(1).max(1000).default(1000),
   SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID: Joi.string().allow('').default(''),
   ADK_RUNTIME_MCP_RENEWAL_TOKEN: scopedServiceSecret(),
-  AGENT_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
-  PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
   SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN: scopedServiceSecret(),
   ADK_ROOT_RUNTIME_SERVICE_TOKEN: scopedServiceSecret(),
   ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN: scopedServiceSecret(),
@@ -444,12 +438,9 @@ export const configValidationSchema = Joi.object({
   INTERNAL_SERVICE_SECRET: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
-  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
-  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   // Scoped internal service principal for the semantic MCP server (WP07.2):
   // semantic assistant + MCP token renewal only; distinct from the legacy
   // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).
-  SEMANTIC_MODEL_MCP_SERVICE_TOKEN: scopedServiceSecret(),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),

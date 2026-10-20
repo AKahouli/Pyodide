@@ -31,7 +31,6 @@ def backend() -> YellowStormAgentClient:
     if _client is None:
         _client = YellowStormAgentClient(
             settings.backend_url,
-            settings.internal_token,
             settings.timeout_seconds,
             settings.max_response_bytes,
         )

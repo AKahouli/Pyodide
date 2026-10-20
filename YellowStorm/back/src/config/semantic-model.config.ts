@@ -36,7 +36,6 @@ export default registerAs('semanticModel', () => ({
   nativeSearchUrl: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_URL || 'http://localhost:8045/search_native',
   nativeSearchBatchUrl: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL
     || `${process.env.SEMANTIC_MODEL_NATIVE_SEARCH_URL || 'http://localhost:8045/search_native'}/batch`,
-  nativeSearchAuthToken: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN || '',
   nativeSearchConnectorId: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID || '',
   nativeSearchLogQuery: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY === 'true',
   documentExtractionAgentId: process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID || '',

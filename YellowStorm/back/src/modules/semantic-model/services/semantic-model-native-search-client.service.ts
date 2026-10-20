@@ -46,13 +46,6 @@ export class SemanticModelNativeSearchClient {
   ) {}
 
   async search(request: SemanticModelNativeSearchRequest, userId?: string): Promise<SemanticModelNativeSearchSection[]> {
-    if (!this.config.nativeSearchAuthToken) {
-      throw new SemanticModelNativeSearchFatalError(
-        ErrorCode.SERVICE_UNAVAILABLE,
-        'SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN is not configured',
-      );
-    }
-
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const headers = await this.authorizedHeaders(userId, [request.workspace_id], this.config.nativeSearchUrl);
@@ -134,13 +127,6 @@ export class SemanticModelNativeSearchClient {
         `Semantic native search batch exceeds the ${NATIVE_SEARCH_BATCH_SIZE}-request limit`,
       );
     }
-    if (!this.config.nativeSearchAuthToken) {
-      throw new SemanticModelNativeSearchFatalError(
-        ErrorCode.SERVICE_UNAVAILABLE,
-        'SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN is not configured',
-      );
-    }
-
     const batchedRequests = requests.map((request, index) => ({
       id: String(index),
       ...request,
@@ -210,7 +196,7 @@ export class SemanticModelNativeSearchClient {
         'Native search requires a verified actor and SEMANTIC_MODEL_NATIVE_SEARCH_CONNECTOR_ID');
     }
     return this.mcpJwt.workspaceReadHeaders(this.config.nativeSearchConnectorId, userId, endpoint, ids, {
-      Authorization: `Bearer ${this.config.nativeSearchAuthToken}`, 'Content-Type': 'application/json',
+      'Content-Type': 'application/json',
     });
   }
 

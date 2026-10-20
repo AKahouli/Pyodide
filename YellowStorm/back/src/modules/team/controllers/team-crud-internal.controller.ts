@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { AgentMcpServiceGuard } from '../../auth/guards/internal-service-principal.guard';
 import { DelegatedActorGuard, actingUserIdFrom, McpRouteAudience } from '../../auth/guards/delegated-actor.guard';
 import { TeamService } from '../team.service';
 import { CreateTeamDto, UpdateTeamDto, UpdateHierarchyDto } from '../dto';
@@ -28,7 +27,7 @@ import { ITeamResponse, ITeamWithAgentsResponse } from '../interfaces/team.inter
 @Public()
 @Controller('internal/agent-crud')
 @McpRouteAudience('mcp-agent')
-@UseGuards(AgentMcpServiceGuard, DelegatedActorGuard)
+@UseGuards(DelegatedActorGuard)
 export class TeamCrudInternalController {
   constructor(private readonly teamService: TeamService) {}
 
