@@ -8,8 +8,6 @@ steps: 18
 permission:
   "*": deny
   sdlc_health: allow
-  "code-review-graph_list_graph_stats_tool": allow
-  hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
   read:
@@ -32,27 +30,25 @@ permission:
     "git diff*": allow
     "git show*": allow
     "git blame*": allow
-  "code-review-graph_semantic_search_nodes_tool": allow
-  "code-review-graph_query_graph_tool": allow
-  "code-review-graph_get_flow_tool": allow
-  "code-review-graph_list_flows_tool": allow
-  "code-review-graph_traverse_graph_tool": allow
-  "code-review-graph_detect_changes_tool": allow
-  "code-review-graph_get_minimal_context_tool": allow
-  "code-review-graph_get_impact_radius_tool": allow
+    "graphify query*": allow
+    "graphify path*": allow
+    "graphify explain*": allow
+    "graphify affected*": allow
+    "graphify god-nodes*": allow
+    "graphify hook status*": allow
   skill:
     "*": deny
-    crg-navigation: allow
+    graphify-navigation: allow
 ---
 
 You reproduce and localize a failure. You never edit files.
 
-Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests. A graph failure does not block coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 ## Method
 
-1. Reuse the caller's current scoped evidence. For a new code investigation start with minimal CRG context and the explicit root; use focused source fallback for unavailable/stale indexing. Locate the symptom and trace only unanswered callers/boundaries.
-2. Check `detect_changes_tool` with the supplied base and changed files, and `git log -n 10 -- <path>` when recent edits may explain the bug. Prefer minimal detail and bounded results; report focused source-search fallbacks when indexing/static analysis cannot answer.
+1. Reuse the caller's current scoped evidence. For a new code investigation start with a bounded `graphify query "<symptom question>" --budget 1500` from the absolute worktree root; use focused source fallback for unavailable/stale indexing. Locate the symptom and trace only unanswered callers/boundaries.
+2. Check `git log -n 10 -- <path>` and `git diff <base> -- <path>` when recent edits may explain the bug. Prefer minimal detail and bounded results; report focused source-search fallbacks when indexing/static analysis cannot answer.
 3. Run the narrowest reproduction: the existing failing test, a single test file, or a type check. Do not run whole suites.
 4. For boundary failures (REST, gRPC, queue, schema) trace the value across each layer and name the layer where it diverges.
 5. Stop when you have a root-cause hypothesis backed by evidence, or when two reproduction attempts fail.
@@ -69,4 +65,4 @@ Suggested fix scope: files and the minimal change
 Regression test to add: ...
 ```
 
-Return this handoff to the primary agent only; no human completion report or Experience follow-up. State the exact next action when work remains.
+Return this handoff to the primary agent only; no human completion report. State the exact next action when work remains.

@@ -10,13 +10,12 @@ $files = @{
     'plugins\sdlc.js' = Join-Path $runtime 'plugins\sdlc.js'
     'lib\sdlc-core.mjs' = Join-Path $runtime 'lib\sdlc-core.mjs'
     'lib\startup-health.mjs' = Join-Path $runtime 'lib\startup-health.mjs'
-    'lib\memory-settings.mjs' = Join-Path $runtime 'lib\memory-settings.mjs'
     'AGENTS.md' = Join-Path $config 'AGENTS.md'
 }
 foreach ($file in Get-ChildItem -LiteralPath (Join-Path $config 'agents') -Filter '*.md') {
     $files['agents\' + $file.Name] = $file.FullName
 }
-foreach ($skill in @('crg-navigation','chrome-devtools','context7-mcp')) {
+foreach ($skill in @('graphify-navigation','chrome-devtools','context7-mcp','ponytail')) {
     $files['skills\' + $skill + '\SKILL.md'] = Join-Path $config ('skills\' + $skill + '\SKILL.md')
 }
 foreach ($source in $files.Values) {
@@ -37,5 +36,17 @@ foreach ($relative in $files.Keys) {
     New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
     Copy-Item -LiteralPath $files[$relative] -Destination $target
 }
+# Retire files from earlier harness versions this installer no longer owns.
+$retired = @('lib\memory-settings.mjs', 'skills\crg-navigation\SKILL.md')
+foreach ($relative in $retired) {
+    $existing = Join-Path $Destination $relative
+    if (Test-Path -LiteralPath $existing -PathType Leaf) {
+        $saved = Join-Path $backup $relative
+        New-Item -ItemType Directory -Path (Split-Path $saved -Parent) -Force | Out-Null
+        Copy-Item -LiteralPath $existing -Destination $saved
+        Remove-Item -LiteralPath $existing -Force
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $Destination 'skills\crg-navigation') -PathType Container) { Remove-Item -LiteralPath (Join-Path $Destination 'skills\crg-navigation') -Force }
 if (Test-Path -LiteralPath $backup) { Write-Output "Previous harness files backed up to $backup" }
 Write-Output 'Installed SDLC runtime and approved agent instructions. Restart OpenCode to load them. Provider credentials were not modified.'

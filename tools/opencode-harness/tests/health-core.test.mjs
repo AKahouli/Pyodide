@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { openHarness } from '../runtime/lib/sdlc-core.mjs';
 import { fixture } from './fixture.mjs';
 
-const passing = { graph: { status: 'PASS', reason: 'Scoped graph query completed.' }, hindsight: { status: 'PASS', reason: 'Daemon and integration verified.' } };
+const passing = { graph: { status: 'PASS', reason: 'Scoped graph query completed.' } };
 const goal = { goal: 'Verify session isolation', acceptance: ['Session owns its receipt'], nextAction: 'Continue', status: 'active' };
 
 function workerReceipt(child) {
@@ -67,11 +67,11 @@ if (process.argv[2] === '--bootstrap-worker') {
       assert.equal(h.health('session-a').probe, receipt.probe);
       h.health('session-a', { ...passing, graph: { status: 'FAIL', reason: 'Wrong root', action: 'Check this repository graph' } });
       assert.equal(h.health('session-a').graph.status, 'FAIL');
-      h.health('session-a', { ...passing, hindsight: { status: 'PENDING', reason: 'Checking recall' } });
-      assert.equal(h.health('session-a').hindsight.status, 'PENDING');
+      h.health('session-a', { ...passing, graph: { status: 'PENDING', reason: 'Checking index' } });
+      assert.equal(h.health('session-a').graph.status, 'PENDING');
       assert.equal(h.state('session-a').checks[0].status, 'PASS');
       assert.deepEqual(h.state('session-a').files, {});
-      assert.throws(() => h.health('session-a', { graph: { status: 'SKIPPED' }, hindsight: passing.hindsight }), /explicit graph status/);
+      assert.throws(() => h.health('session-a', { graph: { status: 'SKIPPED' } }), /explicit graph status/);
     } finally { h.close(); f.cleanup(); }
   });
 
@@ -111,8 +111,8 @@ if (process.argv[2] === '--bootstrap-worker') {
       h = await openHarness(f.root);
       assert.equal(h.health('parallel-a'), null);
       assert.equal(h.health('parallel-b', passing).graph.status, 'PASS');
-      h.health('parent', { ...passing, hindsight: { status: 'FAIL', reason: 'Parent integration unavailable' } });
-      assert.equal(h.health('parent').hindsight.status, 'FAIL');
+      h.health('parent', { ...passing, graph: { status: 'FAIL', reason: 'Parent integration unavailable' } });
+      assert.equal(h.health('parent').graph.status, 'FAIL');
       assert.equal(h.state('parallel-a').completed[0], 'parallel-a-19');
       assert.equal(h.state('parallel-b').completed[0], 'parallel-b-19');
       await Promise.all(children.map(child => { const exit = once(child, 'exit'); child.send('close'); return exit; }));

@@ -6,8 +6,6 @@ steps: 30
 permission:
   "*": deny
   sdlc_health: allow
-  "code-review-graph_list_graph_stats_tool": allow
-  hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
   read:
@@ -27,6 +25,12 @@ permission:
   bash:
     "*": deny
     "git status*": allow
+    "graphify query*": allow
+    "graphify path*": allow
+    "graphify explain*": allow
+    "graphify affected*": allow
+    "graphify god-nodes*": allow
+    "graphify hook status*": allow
     "git diff*": allow
     "npm test*": allow
     "npm run build*": allow
@@ -36,20 +40,16 @@ permission:
     "npx tsc --noEmit*": allow
     "conda run -n meta pytest*": allow
   task: deny
-  "code-review-graph_get_minimal_context_tool": allow
-  "code-review-graph_query_graph_tool": allow
-  "code-review-graph_semantic_search_nodes_tool": allow
-  "code-review-graph_get_impact_radius_tool": allow
   "context7_*": allow
   skill:
     "*": deny
-    crg-navigation: allow
+    graphify-navigation: allow
     context7-mcp: allow
 ---
 
 Implement exactly the caller's bounded task. An editing task requires the absolute repo root, acceptance criteria, explicitly owned files, shared files reserved by the primary agent, and concise context/checks already established. Coordinate overlapping changes with the primary; file assignments are workflow guidance, not edit permissions. A read-only or harness-check task may explicitly own no files; honor its acceptance criterion without demanding edits.
 
-Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests. A graph failure does not block coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 - Reuse the handoff; investigate only unanswered questions. Follow repository and applicable package instructions.
 - Before the first edit, reuse the primary's current applicable ADR IDs and constraints; if missing, consult the owning ADR index and relevant current records. Return the selection and any conflict with your result. Do not treat proposed or superseded policy as current approval.
