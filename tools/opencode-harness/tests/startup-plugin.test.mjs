@@ -133,6 +133,20 @@ test('missing policy reports failure and allows native edits without replacing s
   assert.ok(toasts.some(item => item.message.includes('checkpoints FAIL')));
 });
 
+test('graphify invocations are counted in health receipts', async t => {
+  const { plugin, root } = await create(t);
+  assertPass(await health(plugin, 'counted'));
+  assert.equal((await health(plugin, 'counted')).graphifyInvocations, 0);
+  await plugin['tool.execute.before']({ sessionID: 'counted', tool: 'bash', callID: 'q1' }, { args: { command: 'graphify query "x"' } });
+  await plugin.event({ event: { type: 'message.part.updated', properties: { part: { type: 'tool', sessionID: 'counted', callID: 'q1', tool: 'bash', state: { status: 'completed' } } } } });
+  assert.equal((await health(plugin, 'counted')).graphifyInvocations, 1);
+  await plugin['tool.execute.before']({ sessionID: 'counted', tool: 'bash', callID: 'n1' }, { args: { command: 'npm test -- focused' } });
+  await plugin['tool.execute.before']({ sessionID: 'counted', tool: 'edit', callID: 'e1' }, { args: { filePath: 'src/a.js' } });
+  assert.equal((await health(plugin, 'counted')).graphifyInvocations, 1, 'only graphify bash calls count');
+  await plugin['tool.execute.before']({ sessionID: 'counted', tool: 'bash', callID: 'q2' }, { args: { command: 'graphify explain "y"' } });
+  assert.equal((await health(plugin, 'counted', true)).graphifyInvocations, 2, 'refresh keeps the cumulative count');
+});
+
 test('refresh supersedes stale graphify tool errors through generation fencing', async t => {
   const { plugin } = await create(t);
   assertPass(await health(plugin, 'race'));

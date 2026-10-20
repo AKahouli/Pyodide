@@ -13,6 +13,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
   const startup = new Map();
   const notices = new Map();
   const observedCalls = new Map();
+  const graphifyCalls = new Map();
   const generations = new Map();
   const startedAt = new Map();
   let inFlight;
@@ -36,8 +37,9 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     try { await client?.tui?.showToast({ body: { title: blocked ? 'OpenCode checkpoint protection unavailable' : 'OpenCode integration warning — coding can continue', message, variant: blocked ? 'error' : 'warning', duration: 12000 } }); } catch { /* System context and stderr retain the failure if the UI is unavailable. */ }
   };
   const persist = (sessionID, report) => {
-    try { return harness ? harness.health(sessionID, report) : { ...report, sessionID }; }
-    catch { return { ...report, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Checkpoint memory unavailable; continue coding and retry sdlc_health after recovery.' } }; }
+    const withCount = { ...report, graphifyInvocations: graphifyCalls.get(sessionID) ?? 0 };
+    try { return harness ? harness.health(sessionID, withCount) : { ...withCount, sessionID }; }
+    catch { return { ...withCount, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Checkpoint memory unavailable; continue coding and retry sdlc_health after recovery.' } }; }
   };
   const check = async (sessionID, refresh = false) => {
     if (refresh) startup.delete(sessionID);
@@ -122,6 +124,9 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     },
     'tool.execute.before': async (input, output) => {
       if (input.tool === 'bash' && /^graphify\s/.test(String(output.args?.command ?? '').trimStart())) {
+        graphifyCalls.set(input.sessionID, (graphifyCalls.get(input.sessionID) ?? 0) + 1);
+        const cached = await startup.get(input.sessionID);
+        if (cached) startup.set(input.sessionID, Promise.resolve(persist(input.sessionID, cached)));
         await check(input.sessionID);
         observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });
       }
