@@ -58,7 +58,7 @@ export function serializeConnectorSecretFields(data: ConnectorFormValues) {
 }
 
 export function securityPolicyChanged(current: ConnectorSecurityPolicy | undefined, saved: ConnectorSecurityPolicy | undefined) {
-  const normalize = (policy: ConnectorSecurityPolicy | undefined) => policy ? [policy.version, policy.profile, policy.audience ?? '', policy.actorDelegation, policy.allowPrivateNetwork, policy.allowInsecureHttp, [...policy.requiredPermissions].sort()] : null;
+  const normalize = (policy: ConnectorSecurityPolicy | undefined) => policy ? [policy.version, policy.profile, policy.audience ?? '', policy.actorDelegation, policy.allowPrivateNetwork, policy.allowInsecureHttp, policy.workspaceAuthorization ?? false, [...policy.requiredPermissions].sort()] : null;
   return JSON.stringify(normalize(current)) !== JSON.stringify(normalize(saved));
 }
 

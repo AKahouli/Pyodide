@@ -18,6 +18,16 @@ function Fixture() {
 }
 
 describe('connector worker settings', () => {
+  it('explains keyboard-highlighted worker classifications while preserving their option names', async () => {
+    const user = userEvent.setup();
+    render(<ConnectorWorkerSettings policy={{ enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false }} actions={[]} onPolicyChange={vi.fn()} onActionsChange={vi.fn()} />);
+    await user.click(screen.getByRole('combobox', { name: 'connectors.workers.defaultKind' }));
+    await user.keyboard('{End}');
+    const unknown = screen.getByRole('option', { name: 'connectors.workers.kind.unknown' });
+    expect(unknown).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('connectors.help.kind.unknown');
+    expect(unknown).toHaveAccessibleDescription('connectors.help.kind.unknown');
+  });
   it('starts ON and filters a large tool catalog without losing the default', async () => {
     const user = userEvent.setup();
     render(<Fixture />);

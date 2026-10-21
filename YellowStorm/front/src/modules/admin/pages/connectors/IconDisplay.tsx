@@ -5,6 +5,8 @@
 
 import { useEffect, useState } from 'react';
 import type { IconType } from 'react-icons';
+import { useModuleTranslation } from '@/modules/localization';
+import { ConnectorControlHelp } from './ConnectorWorkerSettings';
 
 type IconModule = Record<string, unknown>;
 
@@ -118,10 +120,11 @@ interface IconPickerPreviewProps {
 }
 
 export function IconPickerPreview({ icon, color, iconColor = 'light', onClear, onToggleColorMode }: Readonly<IconPickerPreviewProps>) {
+  const { t } = useModuleTranslation('admin');
   if (!icon) {
     return (
       <div className='flex items-center justify-center w-10 h-10 rounded-md border border-dashed border-muted-foreground/30'>
-        <span className='text-xs text-muted-foreground/50'>Icon</span>
+        <span className='text-xs text-muted-foreground/50'>{t('connectors.form.fields.icon.label')}</span>
       </div>
     );
   }
@@ -137,36 +140,37 @@ export function IconPickerPreview({ icon, color, iconColor = 'light', onClear, o
       {hasColorBackground && (
         <div className='absolute -top-2 -right-2 flex gap-1'>
           {onToggleColorMode && (
-            <button
+            <ConnectorControlHelp description={t('connectors.help.iconMode')}><button
               type='button'
               onClick={onToggleColorMode}
               className='w-5 h-5 bg-background border border-border rounded-full flex items-center justify-center shadow-sm hover:bg-muted transition-colors text-xs'
-              title={iconColor === 'light' ? 'Switch to dark icon' : 'Switch to light icon'}
+              aria-label={t('connectors.help.iconMode')}
             >
               {iconColor === 'light' ? '◐' : '◑'}
-            </button>
+            </button></ConnectorControlHelp>
           )}
           {onClear && (
-            <button
+            <ConnectorControlHelp description={t('connectors.help.iconClear')}><button
               type='button'
               onClick={onClear}
               className='w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform text-xs'
-              title='Clear icon'
+              aria-label={t('connectors.help.iconClear')}
             >
               ×
-            </button>
+            </button></ConnectorControlHelp>
           )}
         </div>
       )}
 
       {!hasColorBackground && onClear && (
-        <button
+        <ConnectorControlHelp description={t('connectors.help.iconClear')}><button
           type='button'
           onClick={onClear}
-          className='absolute -top-1 -right-1 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs hover:scale-110'
+          aria-label={t('connectors.help.iconClear')}
+          className='absolute -top-1 -right-1 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-xs hover:scale-110'
         >
           ×
-        </button>
+        </button></ConnectorControlHelp>
       )}
     </div>
   );

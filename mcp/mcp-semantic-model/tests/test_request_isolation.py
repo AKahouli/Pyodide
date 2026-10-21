@@ -123,10 +123,14 @@ async def test_real_default_sse_stateless_transport(keys, monkeypatch, tmp_path)
 
     async def backend_handler(request):
         await asyncio.sleep(0)
-        seen.append((request.headers["x-yellowstorm-user-id"], request.headers["x-yellowstorm-mcp-assertion"]))
+        assertion = request.headers["x-yellowstorm-mcp-assertion"]
+        actor = jwt.decode(assertion, keys[1], algorithms=["RS256"], issuer="yellowstorm", audience="mcp-semantic-model")["sub"]
+        assert "x-yellowstorm-service-token" not in request.headers
+        assert "x-yellowstorm-user-id" not in request.headers
+        seen.append((actor, assertion))
         return httpx.Response(200, json={"models": []})
 
-    backend = YellowStormSemanticModelClient("http://backend", service_token="service",
+    backend = YellowStormSemanticModelClient("http://backend",
                                              transport=httpx.MockTransport(backend_handler))
     # Capture the actual production entrypoint's run arguments; do not silently
     # test a separately configured server that could hide a stateful launch.
@@ -137,7 +141,7 @@ async def test_real_default_sse_stateless_transport(keys, monkeypatch, tmp_path)
     settings = SimpleNamespace(validate=lambda: None, auth_mode="JWT", ingress_token="",
         jwt_public_key_file=str(public_file), jwt_issuer="yellowstorm", jwt_audience="mcp-semantic-model",
         port=8027, backend_url="http://backend", timeout_seconds=120,
-        max_response_bytes=2097152, service_token="service")
+        max_response_bytes=2097152)
     monkeypatch.setattr(Settings, "from_env", lambda: settings)
     class MockBackendClient(YellowStormSemanticModelClient):
         def __new__(cls, *args, **kwargs):

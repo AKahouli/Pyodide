@@ -1,5 +1,6 @@
 import pytest
 from fastmcp import Client
+from types import SimpleNamespace
 
 import server
 from auth import PlatformActorContext, actor_context
@@ -203,3 +204,29 @@ async def test_execute_python_maps_backend_failure_to_cleaned_error(monkeypatch)
         actor_context.reset(token)
 
     assert result_dict(response)["error"]["code"] == "PYODIDE_RUNTIME_OFFLINE"
+
+
+@pytest.mark.asyncio
+async def test_health_live_is_public_and_ready_validates_settings(monkeypatch):
+    import httpx
+
+    app = server.mcp.http_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            live = await client.get("/health/live")
+            assert live.status_code == 200
+            assert live.json() == {"status": "ok"}
+
+            monkeypatch.setattr(server, "settings", SimpleNamespace(validate=lambda: None))
+            ready = await client.get("/health/ready")
+            assert ready.status_code == 200
+            assert ready.json() == {"status": "ready"}
+
+            def broken():
+                raise ValueError("missing key material")
+
+            monkeypatch.setattr(server, "settings", SimpleNamespace(validate=broken))
+            not_ready = await client.get("/health/ready")
+            assert not_ready.status_code == 503
+            assert not_ready.json() == {"status": "not_ready"}

@@ -2185,6 +2185,18 @@ Also wires mention-seen observers for group-capable data shape; group-specific U
 
 In group conversations, the input receives **members** (everyone except the current user) for `@` tagging. When replying to a specific member, **`autoMention`** can prefill a mention—see input and **`EditableUserMessage`** for details.
 
+### Historical OpenUI loading
+
+Completed answers outside the viewport defer their renderer until within 200 px
+or explicitly opened with **View answer**. Activation is permanent for that
+mounted answer, preserving local values and open reports when scrolling away.
+Streaming answers and private MiniApps remain eager; the latter retain their
+existing autosave/export guards and capture registrations. Copy and static exports
+can still project untouched answers from stored source. Report/presentation
+adapters load only when a program contains a report, rather than for every chat
+card. Initial message pagination remains five messages. See
+`OpenUiAnswer.viewport.test.tsx`, `OpenUiRenderer.test.tsx` and `ReportPanel.test.tsx`.
+
 ### Standalone HtmlView downloads
 
 Saved HtmlViews expose **Download interactive HTML**. The handler flushes autosave,

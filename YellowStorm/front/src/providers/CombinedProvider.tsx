@@ -7,7 +7,7 @@
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import type { ColorTheme } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/modules/auth';
-import { SettingsModalProvider } from '@/modules/profile';
+import { SettingsModalProvider } from '@/modules/profile/SettingsContext';
 import { UsageProvider } from '@/modules/usage/UsageContext';
 import { NotificationsProvider } from '@/modules/notifications';
 import { LocalizationProvider } from '@/modules/localization';

@@ -26,7 +26,7 @@ try {
         $introWriter.WriteLine('# OpenCode SDLC harness')
         $introWriter.WriteLine('')
         $introWriter.WriteLine('Start with [Developer user guide](tools/opencode-harness/docs/DEVELOPER-SETUP.md).')
-        if ($hasSetupLauncher) { $introWriter.WriteLine('Or double-click tools/opencode-harness/Install-Harness.cmd for guided setup with optional Hindsight (Y/N).') }
+        if ($hasSetupLauncher) { $introWriter.WriteLine('Or double-click tools/opencode-harness/Install-Harness.cmd for guided setup.') }
         $introWriter.WriteLine('')
         $introWriter.WriteLine('This Windows release contains the harness and reviewed YellowStorm documentation profile. Use it with the application Git checkout. Each developer configures their own accounts and local services; runtime databases and credentials are excluded.')
         $introWriter.WriteLine('')

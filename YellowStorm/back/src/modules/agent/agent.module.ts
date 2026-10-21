@@ -15,7 +15,6 @@ import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
-import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
 import { PgConnectorStore } from '@modules/connector/persistence/pg-connector.store';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
@@ -93,7 +92,9 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
     AgentTaskExecutionService,
     { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
     // ADR-0024: shared delegated-user guard for the mcp-agent internal surface.
-    McpJwtService,
+    // McpJwtService is intentionally not re-provided here: a local instance would
+    // lack WorkspaceShareService (its @Optional() dep), so issuance with
+    // workspaceAuthorization would deny. Use ConnectorModule's exported instance.
     PgConnectorStore,
     DelegatedActorGuard,
   ],

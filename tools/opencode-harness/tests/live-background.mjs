@@ -16,7 +16,7 @@ if (process.argv.includes('--create-fixture')) {
       'background-probe': { mode: 'primary', model: 'openai/gpt-6-luna', prompt: 'Acceptance coordinator. Follow the exact test directions. Use task and sdlc_checkpoint only; never edit files. Acknowledge internal completion briefly.', permission: { '*': 'deny', task: 'allow', sdlc_checkpoint: 'allow' } },
       'background-child': { mode: 'subagent', model: 'openai/gpt-6-luna', prompt: 'Execute the supplied bounded read-only wait once with bash, then return CHILD_DONE. Do not call other tools.', permission: { '*': 'deny', bash: 'allow' } },
     },
-    mcp: Object.fromEntries(['code-review-graph', 'chrome-devtools', 'context7'].map(name => [name, { enabled: false }])),
+    mcp: Object.fromEntries(['chrome-devtools', 'context7'].map(name => [name, { enabled: false }])),
   }, null, 2));
   console.log(`Disposable fixture: ${disposable.root}\nIn an owned PowerShell terminal:\n$env:OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS = '1'\nSet-Location -LiteralPath '${disposable.root}'\nopencode serve --hostname 127.0.0.1 --port 6207\nIn another terminal from the source repository:\nnode tools/opencode-harness/tests/live-background.mjs "${disposable.root}" http://127.0.0.1:6207\nStop only this test server afterwards with Ctrl+C. Retain the fixture for evidence or remove this exact temporary directory after inspection.`);
   process.exit(0);
@@ -133,7 +133,7 @@ try {
     const childHistory = await request(`/session/${maintainerID}/message`);
     assert.ok(childHistory.some(message => message.info.role === 'assistant' && message.info.agent === 'maintainer' && message.parts.some(part => part.type === 'text' && part.text.includes('FOLLOWUP_BACKGROUND'))));
   } finally { followupController.abort(); }
-  console.log(JSON.stringify({ version: health.version, harnessVersion: firstCheckpoint.startupHealth[session.id].harnessVersion, externalPlugins: true, parentSession: session.id, childSession: childID, foregroundMaintainerAccepted: true, backgroundMaintainerAccepted: true, foregroundMaintainerFollowupAccepted: true, backgroundMaintainerFollowupAccepted: true, checkpointPendingSurvivesIdleAndSecondTurn: true, mainAnswersBeforeChildCompletes: true, automaticCompletionNotification: true, integrationStatus: { graph: firstCheckpoint.startupHealth[session.id].graph.status, hindsight: firstCheckpoint.startupHealth[session.id].hindsight.status } }));
+  console.log(JSON.stringify({ version: health.version, harnessVersion: firstCheckpoint.startupHealth[session.id].harnessVersion, externalPlugins: true, parentSession: session.id, childSession: childID, foregroundMaintainerAccepted: true, backgroundMaintainerAccepted: true, foregroundMaintainerFollowupAccepted: true, backgroundMaintainerFollowupAccepted: true, checkpointPendingSurvivesIdleAndSecondTurn: true, mainAnswersBeforeChildCompletes: true, automaticCompletionNotification: true, integrationStatus: { graph: firstCheckpoint.startupHealth[session.id].graph.status, checkpoints: firstCheckpoint.startupHealth[session.id].checkpoints.status } }));
 } finally {
   clearTimeout(timeout); controller.abort(); db?.close();
 }

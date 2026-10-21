@@ -83,7 +83,7 @@ describe('MCP security policy validation', () => {
   });
 
   it.each(['X-YellowStorm-User-Id', 'x-yellowstorm-service-token', 'X-YellowStorm-Mcp-Assertion',
-    'YELLOWSTORM_MCP_JWT_USER_ID', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN', 'INTERNAL_SERVICE_SECRET'])
+    'YELLOWSTORM_MCP_JWT_USER_ID', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN', 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', 'INTERNAL_SERVICE_SECRET'])
   ('rejects nested reserved authority key %s', key => {
     expect(() => assertNoReservedMcpOverrides({ nested: [{ [key]: 'spoofed' }] })).toThrow(BadRequestException);
   });

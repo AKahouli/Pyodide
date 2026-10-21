@@ -203,9 +203,11 @@ const baseProps = {
 
 it('renders a status dot for a page with an indexing status and none without', () => {
   const { rerender } = render(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A', indexingStatus: 'ready' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
-  expect(screen.getByRole('img', { name: 'Indexé' })).toBeInTheDocument();
+  // The global test setup stubs useModuleTranslation so t() returns the key;
+  // the production label is the translated "Indexed"/"Indexé".
+  expect(screen.getByRole('img', { name: 'indexing.ready' })).toBeInTheDocument();
   rerender(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
-  expect(screen.queryByRole('img', { name: 'Indexé' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('img', { name: 'indexing.ready' })).not.toBeInTheDocument();
 });
 
 it('add row calls onAdd with the url and name', () => {

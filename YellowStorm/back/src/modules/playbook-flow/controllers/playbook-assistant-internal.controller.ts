@@ -2,7 +2,6 @@ import { Body, Controller, Delete, Get, Headers, Logger, Param, Post, Query, Res
 import type { Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
-import { PlaybookMcpServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 import { BadRequestException, ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
@@ -27,14 +26,15 @@ import { PlaybookAssistantContextService } from '../assistant/playbook-assistant
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
 import { DelegatedActorGuard, McpRouteAudience } from '@modules/auth/guards/delegated-actor.guard';
 import { UserService } from '@modules/user';
+import { AgentService } from '@modules/agent/agent.service';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
 
 @Public()
 @ApiTags('Playbook Assistant Internal')
 @Controller('internal/playbook-assistant')
-@McpRouteAudience('mcp-playbook')
-@UseGuards(PlaybookMcpServiceGuard, DelegatedActorGuard)
+@McpRouteAudience('mcp-playbook', 'mcp-platform')
+@UseGuards(DelegatedActorGuard)
 export class PlaybookAssistantInternalController {
   private readonly logger = new Logger(PlaybookAssistantInternalController.name);
 
@@ -43,6 +43,7 @@ export class PlaybookAssistantInternalController {
     private readonly assistantService: PlaybookAssistantService,
     private readonly userService: UserService,
     private readonly authorizationService: AuthorizationService,
+    private readonly agentService: AgentService,
   ) {}
 
   @Get('playbooks')
@@ -124,18 +125,18 @@ export class PlaybookAssistantInternalController {
 
   @Post('requests/:requestId/assessment')
   @ApiOperation({ summary: 'Assess a bound Playbook assistant request' })
-  assessRequest(@Headers() headers: Record<string, string | undefined>, @Param('requestId') requestId: string) {
-    return this.assistantService.assessRequest(requestId, this.actor(headers));
+  async assessRequest(@Headers() headers: Record<string, string | undefined>, @Param('requestId') requestId: string) {
+    return this.assistantService.assessRequest(requestId, await this.actor(headers));
   }
 
   @Post('clarifications/:continuationId')
   @ApiOperation({ summary: 'Continue a bound Playbook assistant clarification' })
-  continueClarification(
+  async continueClarification(
     @Headers() headers: Record<string, string | undefined>,
     @Param('continuationId') continuationId: string,
     @Body() dto: ContinuePlaybookClarificationDto,
   ) {
-    return this.assistantService.continueClarificationAndStart(continuationId, this.actor(headers), dto);
+    return this.assistantService.continueClarificationAndStart(continuationId, await this.actor(headers), dto);
   }
 
   @Post('requests/:requestId/constructions')
@@ -145,7 +146,7 @@ export class PlaybookAssistantInternalController {
     @Param('requestId') requestId: string,
     @Body() dto: StartBoundPlaybookConstructionDto,
   ) {
-    const actor = this.actor(headers);
+    const actor = await this.actor(headers);
     await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_UPDATE);
     return this.assistantService.startBoundConstruction(requestId, actor, dto.contextId);
   }
@@ -157,7 +158,7 @@ export class PlaybookAssistantInternalController {
     @Param('requestId') requestId: string,
     @Body() dto: StartPlaybookGenerationDto,
   ) {
-    const actor = this.actor(headers);
+    const actor = await this.actor(headers);
     return this.assistantService.startGeneration(requestId, actor, dto);
   }
 
@@ -167,7 +168,7 @@ export class PlaybookAssistantInternalController {
     @Headers() headers: Record<string, string | undefined>,
     @Body() dto: StartPlaybookGenerationDto,
   ) {
-    const actor = this.actor(headers);
+    const actor = await this.actor(headers);
     return this.assistantService.startCurrentTurnGeneration(actor, dto);
   }
 
@@ -179,7 +180,7 @@ export class PlaybookAssistantInternalController {
     @Param('id') id: string,
     @Body() dto: RunCurrentTurnPlaybookModificationDto,
   ) {
-    const actor = this.actor(headers);
+    const actor = await this.actor(headers);
     await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_UPDATE);
     return this.assistantService.runCurrentTurnModification(id, actor, dto);
   }
@@ -406,10 +407,14 @@ export class PlaybookAssistantInternalController {
     return actingUserId;
   }
 
-  private actor(headers: Record<string, string | undefined>) {
+  private async actor(headers: Record<string, string | undefined>) {
+    const agentId = await this.agentService.findActivePlatformCopilotAgentId();
+    if (!agentId) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'Platform Copilot agent is unavailable');
+    }
     return {
       ownerId: this.requireUserId(headers['x-yellowstorm-user-id']),
-      agentId: this.requireActorValue(headers['x-yellowstorm-agent-id'], 'agent'),
+      agentId,
       conversationId: this.requireActorValue(headers['x-yellowstorm-conversation-id'], 'conversation'),
       correlationId: this.requireActorValue(headers['x-correlation-id'], 'correlation'),
     };

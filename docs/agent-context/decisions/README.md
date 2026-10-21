@@ -1,4 +1,4 @@
-# Yellowmind platform architecture decisions
+﻿# Yellowmind platform architecture decisions
 
 Read this small index before platform code changes. Select decisions whose source
 paths, ownership, interfaces or security boundary intersect the task; read those
@@ -6,6 +6,11 @@ records and check any superseding decision before editing. Do not load every ADR
 
 | Decision | Status | Applies when | Constraint to verify |
 | --- | --- | --- | --- |
+| [ADR-0034: Logical Search offline authority without deployment pins](ADR-0034-logical-search-offline-authority-without-pins.md) | proposed | User-approved dedicated audience and removal of receiver connector/revision pins | Keep signed scope and structural claims; offline revocation is expiry-bounded, issuer/renewal rechecks current connector authority |
+| [ADR-0033: JWT-only first-party MCP callbacks](ADR-0033-jwt-only-mcp-callbacks.md) | proposed | User-approved removal of static MCP callback credentials and signer aliases | Preserve signed connector/revision, route audience, actor and resource authorization; Logical Search stays offline signed-scope authorization; rollout and security qualification remain separate |
+| [ADR-0035: Platform MCP consolidation](ADR-0035-platform-mcp-consolidation.md) | proposed | User-approved merge of Playbook + Agent/Team + Semantic MCPs into one modular mcp/mcp-platform deployment with a single mcp-platform audience | Tool modules keep names/error codes; shared JWT-only foundation per ADR-0033; backend accepts legacy + platform audiences until old deployments retire |
+| [ADR-0032: Configurable Logical Search workspace-scope bound](ADR-0032-logical-search-workspace-scope-bound.md) | accepted | Multi-user Logical Search signed scope size | Complete readable snapshot stays fail-closed but is bounded by `MCP_WORKSPACE_SCOPE_MAX_IDS` (default 1000, 1..1000) on both issuer and receiver; mismatched or oversized scope is rejected, ADR-0031 otherwise unchanged |
+| [ADR-0031: Logical Search signed workspace scope](ADR-0031-logical-search-signed-workspace-scope.md) | accepted | Multi-user Logical Search read authorization | Locally verified signed canonical workspace list; existing assertion/renewal, configurable 180-second TTL capped at 300, explicit privileged opt-in, no per-search entitlement round trip |
 | [ADR-0030: P1 domain- and job-bound internal authority](ADR-0030-p1-domain-and-job-bound-internal-authority.md) | proposed | R01/R02/R03 scoped machine/actor/job migration | Records user-directed restoration of route audiences over ADR-0024 cross-domain policy, live semantic job grants with exact-document discovery exception, retired raw-key signer and public endpoint-secret isolation; implementation/review/rollout evidence remains separate |
 | [ADR-0029: cross-tab access-token handoff](ADR-0029-cross-tab-access-token-handoff.md) | proposed | Same-origin refresh-cookie rotation and per-tab access-token/SSE recovery | Bounded transient token handoff before reconnect; current principal/generation/freshness checks, no credential persistence, preserve server rotation/revocation and dispose development listeners |
 | [ADR-0028: OpenUI HTML artifact policy](ADR-0028-openui-html-artifact-policy.md) | proposed | HtmlView execution, autosave and administrator policy | Strict generated-script removal by default; optional inline JavaScript with declared self-navigation/resource limits; opaque srcdoc with trusted external bootstrap and instance-bound private state; preserve application CSP |

@@ -1059,6 +1059,7 @@ export class SemanticRuntimeClientService {
   }
 
   async suggestDocumentFields(body: RuntimeDocumentLabelsRequest & {
+    modelId: string;
     concept: { id: string; label: string; description: string; attributes: Array<Pick<AttributeDefinition, 'key' | 'label' | 'type' | 'description'>> };
   }): Promise<RuntimeDocumentFieldSuggestions> {
     let res: Response;
@@ -1066,7 +1067,9 @@ export class SemanticRuntimeClientService {
       res = await fetch(`${this.requireRuntime()}/v1/semantic-model-population/document-field-suggestions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+        body: JSON.stringify({ ...body, authorizedMetadata: {
+          actorUserId: body.actorUserId, modelId: body.modelId, sources: body.sources,
+        } }), signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
       });
     } catch (error) { throw this.translate(error); }
     if (res.status === 422) {
@@ -1083,7 +1086,9 @@ export class SemanticRuntimeClientService {
       res = await fetch(`${base}/v1/semantic-model-population/document-preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, authorizedMetadata: {
+          actorUserId: body.actorUserId, modelId: body.modelId, sources: [body.entry.source],
+        } }),
         signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
       });
     } catch (error) {

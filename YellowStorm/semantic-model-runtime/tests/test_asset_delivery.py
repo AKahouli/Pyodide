@@ -88,6 +88,42 @@ def test_task_lease_covers_maximum_parser_and_fetch_window():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("home,denied_at", [("other-workspace", None), (WS, None),
+                                            ("other-workspace", "grant"),
+                                            ("other-workspace", "metadata")])
+async def test_non_tabular_discovery_reauthorizes_without_downloading(monkeypatch, home, denied_at):
+    source = {**SOURCE, "mimeType": "application/pdf", "originalName": "document.pdf"}
+    command = {"workspaceId": home, "actorUserId": "user-1",
+               "payload": {"source": source, "workspaceGrants": [WS]}}
+    calls = []
+
+    def route(request):
+        if request.url.path.endswith("/semantic-asset-grant"):
+            calls.append("grant")
+            body = json.loads(request.content)
+            assert body["operation"] == "metadata"
+            assert (body["workspaceId"], body["assetId"]) == (WS, ASSET)
+            assert body["capability"] == "a" * 64
+            return httpx.Response(403 if denied_at == "grant" else 200,
+                                  json={"token": "metadata-grant"})
+        assert request.url.path.endswith("/semantic-asset-metadata")
+        calls.append("metadata")
+        assert request.url.params["actorUserId"] == "user-1"
+        assert request.headers["x-semantic-asset-grant"] == "metadata-grant"
+        return httpx.Response(403 if denied_at == "metadata" else 200, json=source)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as client:
+        async def metadata(source, actor):
+            return await fetch_workspace_asset_metadata(source, actor, client=client)
+        monkeypatch.setattr("app.datasource.asset_delivery.fetch_workspace_asset_metadata", metadata)
+        outcome = await run_discovery_for_task(command)
+    assert outcome["ok"] is (denied_at is None)
+    if denied_at:
+        assert outcome["errorCode"] in {"asset_execution_forbidden", "workspace_forbidden"}
+    assert calls == (["grant"] if denied_at == "grant" else ["grant", "metadata"])
+
+
+@pytest.mark.asyncio
 async def test_derived_upload_grant_binds_the_exact_outgoing_file_name(tmp_path):
     path = tmp_path / "message.txt"
     path.write_bytes(b"message")
@@ -284,12 +320,16 @@ async def test_worker_fetches_and_profiles_ready_tabular_source():
 
 
 @pytest.mark.asyncio
-async def test_worker_does_not_fetch_terminal_or_oversized_source():
+async def test_worker_does_not_fetch_terminal_or_oversized_source(monkeypatch):
     async def unexpected(*_args):
         raise AssertionError("fetch should not run")
 
     command = {"actorUserId": "6512f0a1c9e77a001234ccc3", "workspaceId": WS,
                "payload": {"source": {**SOURCE, "sizeBytes": 50 * 1024 * 1024 + 1}}}
+    async def metadata(source, actor):
+        assert actor == command["actorUserId"]
+        return dict(source)
+    monkeypatch.setattr("app.datasource.asset_delivery.fetch_workspace_asset_metadata", metadata)
     outcome = await run_discovery_for_task(command, fetch=unexpected)
     assert outcome["ok"] is True
     assert outcome["profile"]["status"] == "partial"

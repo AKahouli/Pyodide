@@ -20,28 +20,22 @@ and a missing acting user raise MCP tool errors.
 
 ## Authentication model
 
-- **Ingress (this server ← caller)**: `Authorization: Bearer $AGENT_MCP_INGRESS_TOKEN`.
-  The caller (YellowStorm backend, through ADK connector bindings) additionally stamps the
-  trusted identity headers `X-YellowStorm-User-Id`, `X-YellowStorm-Agent-Id`,
-  `X-YellowStorm-Conversation-Id`, `X-Correlation-Id`. Only `X-YellowStorm-User-Id` is
-  required for a tool call (it must be a well-formed id; malformed values are rejected);
-  the other three are optional traceability aids — missing or malformed values fall back
-  to `unknown-*` placeholders instead of rejecting the call. Bearer-only is enough for
-  `initialize`/`list_tools`.
-- **JWT mode**: set `AGENT_MCP_AUTH_MODE=JWT`, `AGENT_MCP_JWT_PUBLIC_KEY_FILE`,
+- **Ingress (this server ← caller)**: `Authorization: Bearer <signed MCP JWT>` on
+  every request, including initialization and discovery. JWT is the default and
+  only supported startup mode; `Bearer` mode is rejected, with no static fallback.
+  Configure `AGENT_MCP_JWT_PUBLIC_KEY_FILE`,
   `AGENT_MCP_JWT_ISSUER`, and `AGENT_MCP_JWT_AUDIENCE=mcp-agent`. The server verifies
   YellowStorm's five-minute RS256 token and uses signed `sub` as the acting user,
   rejecting a caller-supplied user header that disagrees with it. Required integer
   time claims must satisfy `0 < exp - iat <= 300` seconds. Connector and ADK calls renew it. Agent
   ownership and shares are checked by the backend on each operation.
 - **Egress (this server → backend)**: every call to
-  `/api/v1/internal/agent-crud/*` carries `X-YellowStorm-Service-Principal: mcp-agent` and `X-YellowStorm-Service-Token: $AGENT_MCP_BACKEND_SERVICE_TOKEN`
-  plus the identity headers above and, in JWT mode, `X-YellowStorm-Mcp-Assertion`.
-  The backend authenticates the scoped service principal and its shared
+  `/api/v1/internal/agent-crud/*` carries only the current signed identity in
+  `X-YellowStorm-Mcp-Assertion` and `X-Correlation-Id` (no static service credential).
+  The backend verifies route audience, connector/revision and current access; its
   `DelegatedActorGuard` derives the user from that signed assertion, never a naked
   user-id header. The invoking user's permissions, ownership and shares remain
-  authoritative (ADR-0024). Bearer ingress is a development compatibility mode,
-  not sufficient delegation for protected backend operations.
+  authoritative. Missing assertions fail before a backend request is sent.
 
 ### Request isolation
 
@@ -65,15 +59,18 @@ Copy `.env.example` to `.env` (auto-loaded; real environment variables win):
 | Variable | Default | Purpose |
 |---|---|---|
 | `YELLOWSTORM_BACKEND_URL` | `http://localhost:3000` | NestJS backend base URL |
-| `AGENT_MCP_BACKEND_SERVICE_TOKEN` | — (required) | Unique `mcp-agent` machine principal credential (distinct from connector slug `agent-mcp`); no shared-secret fallback; minimum 32 characters in production; signed actor audience must be `mcp-agent` |
-| `AGENT_MCP_INGRESS_TOKEN` | — (Bearer mode) | Static ingress token when JWT is disabled |
-| `AGENT_MCP_AUTH_MODE` | `Bearer` | Set `JWT` for signed per-user tokens |
-| `AGENT_MCP_JWT_PUBLIC_KEY_FILE` | — | Public PEM path when JWT is enabled |
+| `AGENT_MCP_AUTH_MODE` | `JWT` | Only accepted mode |
+| `AGENT_MCP_JWT_PUBLIC_KEY_FILE` | — (required) | Mounted public PEM path |
 | `AGENT_MCP_JWT_ISSUER` | — | Must match the backend signer |
 | `AGENT_MCP_JWT_AUDIENCE` | `mcp-agent` | Dedicated audience for this MCP |
 | `MCP_PORT` | `8026` | HTTP listen port |
 | `AGENT_MCP_TIMEOUT_SECONDS` | `60` | Backend call timeout (1–300) |
 | `AGENT_MCP_MAX_RESPONSE_BYTES` | `2097152` | Response size cap |
+
+Configure the backend with canonical `MCP_JWT_PRIVATE_KEY_FILE` and `MCP_JWT_ISSUER`;
+mount only the matching public PEM here. Key/issuer/audience must be nonblank.
+Retired ingress/backend service-token variables are not read. Restart the MCP
+after provisioning JWT trust; other connector auth profiles are unchanged.
 
 ## Run locally
 

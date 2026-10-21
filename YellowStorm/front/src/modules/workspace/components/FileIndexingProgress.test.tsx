@@ -7,7 +7,8 @@ import { FileIndexingProgress } from './FileIndexingProgress';
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
-      let value = en[key as keyof typeof en] ?? key;
+      const entry = en[key as keyof typeof en];
+      let value = typeof entry === 'string' ? entry : key;
       for (const [name, replacement] of Object.entries(params ?? {})) value = value.replace(`{{${name}}}`, String(replacement));
       return value;
     },

@@ -9,8 +9,9 @@ relay. The MCP process never executes Python itself.
 | Variable | Default | Purpose |
 |---|---|---|
 | `YELLOWSTORM_BACKEND_URL` | `http://localhost:3000` | NestJS backend base URL |
-| `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` | — | Sent as `X-Internal-Token`; must equal the backend `INTERNAL_SERVICE_SECRET` |
-| `PYODIDE_MCP_INGRESS_TOKEN` | — | Bearer token agents must present; stored on the connector |
+| `MCP_JWT_PUBLIC_KEY_FILE` | — | PEM public key matching the backend MCP signer |
+| `MCP_JWT_ISSUER` | `yellowstorm` | Expected assertion issuer |
+| `MCP_JWT_AUDIENCE` | `mcp-pyodide` | Expected assertion audience |
 | `PYODIDE_MCP_TIMEOUT_SECONDS` | `100` | HTTP timeout toward the backend |
 | `MCP_PORT` | `8027` | HTTP listen port |
 | `PYODIDE_MCP_MAX_CODE_BYTES` | `65536` | Maximum code size |
@@ -23,14 +24,20 @@ relay. The MCP process never executes Python itself.
 
 ```bash
 pip install -r requirements.txt
-python server.py          # streamable-http on 0.0.0.0:8027/mcp
+python server.py          # stateless streamable-http on 0.0.0.0:8027/mcp
 ```
 
 ## Trusted identity
 
-Every non-health request needs `Authorization: Bearer <PYODIDE_MCP_INGRESS_TOKEN>` and a trusted
-`X-YellowStorm-User-Id`. `X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id` and `X-Correlation-Id` are
-optional tracing context. The model never controls these values: they come from the connector binding.
+Every non-health request needs `Authorization: Bearer <signed MCP assertion>` — the short-lived,
+backend-signed RS256 assertion minted per connector (issuer `yellowstorm`, audience `mcp-pyodide`,
+lifetime ≤ 300s). The acting user is taken **only** from the verified token subject; a spoofable
+`X-YellowStorm-User-Id` header is rejected unless it matches the signature. Missing, expired,
+foreign-audience or invalid-signature assertions fail closed with 401. The retired
+`x-pyodide-mcp-token` static credential is denied on every route.
+`X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id` and `X-Correlation-Id` are optional
+tracing context, and `workspace_id` / `X-YellowStorm-Input-Files` carry the connector binding's
+workspace context. The model never controls these values: they come from the connector binding.
 
 ## Tool
 
@@ -52,10 +59,8 @@ references (no file content through MCP). Sizes/limits remain those of the MVP.
 ## Connect it to an agent
 
 1. **Admin → Connectors → New connector**: MCP, transport *Streamable HTTP*, URL `http://<host>:8027/mcp`,
-   authentication *Bearer token* with `PYODIDE_MCP_INGRESS_TOKEN`. Discover the tools.
-2. Make sure the backend's `PYODIDE_MCP_SERVER_URL` is exactly that URL so the connector receives the acting
-   user's identity.
-3. **Agent edit → Connectors**: add the connector and select `execute_python`. A Playbook task can bind the
+   security profile *Internal JWT* with audience `mcp-pyodide` and verified-user delegation.
+2. **Agent edit → Connectors**: add the connector and select `execute_python`. A Playbook task can bind the
    same connector/action.
 
 ## Tests

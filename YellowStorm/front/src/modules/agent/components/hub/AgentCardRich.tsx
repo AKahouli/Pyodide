@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from '@/lib/utils';
 import type { Agent } from '../../types';
 import { useModuleTranslation } from '@/modules/localization';
-import { usePermissions } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks';
 import { AgentMemoriesModal } from '../AgentMemoriesModal';
 import { useLibrary } from './LibraryContext';
 import { itemKey } from './library-model';

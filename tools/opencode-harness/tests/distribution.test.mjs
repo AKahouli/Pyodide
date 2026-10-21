@@ -26,7 +26,7 @@ test('installer preserves personal settings and backs up overwritten instruction
   assert.equal(first.length, 1);
   assert.equal(readFileSync(path.join(backups, first[0], 'AGENTS.md'), 'utf8'), 'Personal instruction before install');
   assert.equal(readFileSync(path.join(destination, 'opencode.json'), 'utf8'), '{"personalSetting":"preserve"}');
-  for (const skill of ['chrome-devtools', 'crg-navigation', 'context7-mcp']) assert.match(readFileSync(path.join(destination, 'skills', skill, 'SKILL.md'), 'utf8'), /^---/);
+  for (const skill of ['chrome-devtools', 'graphify-navigation', 'context7-mcp', 'ponytail']) assert.match(readFileSync(path.join(destination, 'skills', skill, 'SKILL.md'), 'utf8'), /^---/);
   writeFileSync(path.join(destination, 'agents/frontend-qa.md'), 'model: personal/provider-model');
   install(installer, destination);
   const second = readdirSync(backups).filter(item => !first.includes(item));

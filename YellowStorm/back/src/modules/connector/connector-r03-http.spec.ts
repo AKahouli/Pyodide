@@ -41,7 +41,9 @@ describe('R03 serialized connector HTTP boundary', () => {
     const service = new ConnectorService(store as never, {} as never,
       { setContext: jest.fn(), log: jest.fn() } as never, {} as never,
       {} as never, {} as never, config, undefined, new CryptoService(config));
-    const jwt = new McpJwtService({ get: () => undefined } as never,
+    // The real ConfigService returns the caller-supplied default for an unset key
+    // (MCP_WORKSPACE_SCOPE_TTL_SECONDS defaults to 180); honour it like the service does.
+    const jwt = new McpJwtService({ get: (_key: string, defaultValue?: unknown) => defaultValue } as never,
       {} as never, store as never, {} as never);
     const module = await Test.createTestingModule({
       controllers: [ConnectorController, AdminConnectorController],

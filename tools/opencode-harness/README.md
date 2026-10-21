@@ -3,20 +3,19 @@
 The versioned configuration snapshot, native plugin, and focused tests live
 here. `config/opencode.example.json` supplies integration and permission defaults;
 merge it with working provider settings rather than replacing them.
-The existing Hindsight integration remains independent of task checkpoints.
+The structural graph is the local graphify CLI querying each worktree's `graphify-out/graph.json`; its git hooks keep the graph fresh.
 
 For developer onboarding and manual steps, start with
 [Developer user guide](docs/DEVELOPER-SETUP.md), then
-[Hindsight setup](docs/HINDSIGHT-SETUP.md) and
 [Operations/recovery](docs/OPERATIONS.md). `package.ps1` exports committed source
 and the reviewed repository context profile with a manifest and hashes.
 
 ## Install
 
 For guided Windows installation, double-click [Install-Harness.cmd](Install-Harness.cmd).
-It asks whether to install Hindsight (Y/N), reuses `install.ps1` and preserves personal
-configuration with backups. See [the one-click procedure](docs/DEVELOPER-SETUP.md#one-click-installer)
-for prerequisites, authentication/WSL steps and partial-success exit codes.
+It installs the graphify CLI and its freshness hooks, reuses `install.ps1` and preserves
+personal configuration with backups. See [the one-click procedure](docs/DEVELOPER-SETUP.md#one-click-installer)
+for prerequisites and partial-success exit codes.
 
 Run `./tools/opencode-harness/install.ps1` from PowerShell, then stop and restart
 the entire OpenCode host process. Creating a new chat in a running host does not
@@ -29,13 +28,12 @@ destination's `.sdlc-backups/` before replacement. Reconcile personal instructio
 or model overrides from that backup after installation.
 The installed plugin SDK must already exist in that configuration directory.
 Native parallel-session checks are verified against OpenCode CLI 1.18.34;
-the graph driver is also verified in the desktop's Node 24.15 runtime.
+the graphify index probe is also verified in the desktop's Node 24.15 runtime.
 
 Checkpoint/edit workflow activates in worktrees containing
 `tools/opencode-harness/policy.json`. Startup diagnostics also run elsewhere:
 missing policy/checkpoint support is reported rather than silently disabled,
-and normal editing remains available. This does not automatically opt
-other repositories into Hindsight or create their policy files.
+and normal editing remains available. This does not create their policy files.
 Policy routes identify the minimum documentation that must be consulted for
 each edited area. Extend them for new owning contracts; retain the human index
 at `docs/agent-context/README.md`.
@@ -47,7 +45,7 @@ Save compact goal, criteria, progress, verification inputs and next action at
 milestones. Checkpoints and integration health are advisory. Native OpenCode
 permissions govern edits and shell commands; no reservation, preparation tool,
 read receipt or task status is required to edit. Documentation and code reuse
-remain workflow instructions. Graph/Hindsight failures use focused source and
+remain workflow instructions. Graph failures use focused source and
 Git documentation as the fallback. Checkpoint failures do not block coding.
 
 ## Background handoff and scoped recipes
@@ -96,16 +94,15 @@ Workflow and response instructions live in `AGENTS.md` and native agent Markdown
 command and specialist permissions live in `opencode.json`/agent frontmatter.
 Keep broad permission defaults before specific exceptions: native rules use the
 last matching rule. The plugin injects compact task state and health observations,
-rather than another copy of the workflow prompt. Successful diagnostic tools do
-not trigger duplicate graph validation or authenticated memory reads. Native tool
-errors and session capture failures remain visible; explicit health refresh checks
-recovery without gating coding.
+rather than another copy of the workflow prompt. Successful diagnostic commands do
+not trigger duplicate graph validation. Native tool errors remain visible; explicit
+health refresh checks recovery without gating coding.
 
 Each human-facing response ends with **Follow-up:** an explicit next actor/action
 and expected result. Ready-to-test work includes a concrete route/action/check;
 proposals must not imply implementation. Ongoing authorized work continues without
-routine confirmation. Reusable lessons are optional when useful, not a substitute
-for the next step. Hindsight persistence is separate from the footer.
+routine confirmation. Reusable lessons belong in reviewed Git records, not as a
+substitute for the next step.
 
 ## Feature context and maintenance
 

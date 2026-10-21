@@ -7,7 +7,7 @@ services:
     ports:
       - "8003:8003"
     environment:
-      - TEAMS_MCP_TRANSPORT=sse
+      - TEAMS_MCP_TRANSPORT=streamable-http
       - TEAMS_MCP_PORT=8003
       - ALLOWED_ORIGINS=*
       - LOG_LEVEL=info

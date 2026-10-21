@@ -334,6 +334,7 @@ export class SemanticSourceMappingService {
     }
     return this.runtime.suggestDocumentFields({
       actorUserId: userId,
+      modelId: model.id,
       concept: { id: concept.id, label: concept.label, description: dto.description ?? '',
         attributes: concept.attributes.map(({ key, label, type, description }) => ({ key, label, type, ...(description ? { description } : {}) })),
       },

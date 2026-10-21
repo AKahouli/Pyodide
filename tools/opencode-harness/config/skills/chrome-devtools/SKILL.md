@@ -20,7 +20,7 @@ Tool names are prefixed `chrome-devtools_`. Prefer text over pixels: a snapshot 
 ## Rules
 
 - Reuse authentication only inside this task's owned context. New private contexts do not inherit another session's login. If sign-in is needed, return `BLOCKED / AUTH_REQUIRED` with URL, context/page IDs, blocked criteria, and exact action to the primary agent. It asks the user once for this context to sign in directly in the browser/password manager. Never type or inspect credentials; pause inspection during entry. Resume the same QA task after confirmation and preserve unchanged checks.
-- Return a non-secret login recipe: origin/environment, method, supplied account alias/role, credential-store reference if available, browser policy `isolated`, and verification date. Ephemeral context/page IDs stay in the current handoff. Never copy or store credentials, cookies, tokens, or OTPs in Hindsight, Git, or artifacts.
+- Return a non-secret login recipe: origin/environment, method, supplied account alias/role, credential-store reference if available, browser policy `isolated`, and verification date. Ephemeral context/page IDs stay in the current handoff. Never copy or store credentials, cookies, tokens, or OTPs in Git, checkpoints, or artifacts.
 - If isolated contexts or page-ID routing are unavailable, return `BLOCKED / BROWSER_ISOLATION`; never use another task's tab or shared default context. Keep owned pages for auth waits and user testing; close only your pages when released by the primary agent. Parallel test data also needs run ownership and scoped cleanup.
 - Redact tokens, cookies, emails, and customer data from any evidence.
 - Do not emulate mobile unless the handoff requests it.

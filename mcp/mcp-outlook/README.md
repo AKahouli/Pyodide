@@ -116,19 +116,22 @@ pip install -r requirements.txt
 ## Configuration
 
 This repository keeps the upstream Graph tools and adapts only their runtime
-boundary. MCP ingress is authenticated before dispatch with `MCP_AUTH_MODE=JWT`
-and a dedicated audience (`mcp-outlook`), or the explicit development/private
-`BEARER` mode with `MCP_INGRESS_TOKEN`. The verified JWT subject supplies the
-actor; identity headers cannot override it. Microsoft Graph uses the separate
-server-side `M365_ACCESS_TOKEN` provider credential and the ingress token is
-never forwarded to Graph. This is ADR-0017 profile C; configure least-privilege
-Graph permissions and do not expose the listener directly.
+boundary. MCP ingress is two-credential and authenticated before dispatch
+(ADR-0017): the `Authorization` bearer is the backend-signed actor assertion
+(`MCP_AUTH_MODE=JWT`, audience `mcp-outlook`, or the explicit
+development/private `BEARER` mode with `MCP_INGRESS_TOKEN`), and the configured
+provider-token header carries the acting user's delegated Microsoft Graph token.
+Graph calls use only that per-request token; there is no environment token, so
+mail and calendar operations run with the user's own permissions. The
+`streamable-http` transport runs stateless, so no session retains either
+credential. Configure least-privilege Graph permissions and do not expose the
+listener directly.
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `M365_ACCESS_TOKEN` | Server-side Microsoft Graph provider token |
+| `M365_TOKEN_HEADER` | Header carrying the acting user's delegated Graph token (default `x-m365-access-token`) |
 | `CEPH_S3_ENDPOINT` / `CEPH_S3_BUCKET` / `CEPH_S3_ACCESS_KEY_ID` / `CEPH_S3_SECRET_ACCESS_KEY` | Storage, required for `storage_key` attachments and `download_mail_attachments` |
-| `OUTLOOK_MCP_TRANSPORT` | Transport type: `sse` (default), `http`, `streamable-http` |
+| `OUTLOOK_MCP_TRANSPORT` | Transport type: `streamable-http` (default), `sse`, `http` |
 | `OUTLOOK_MCP_PORT` / `PORT` | Server port (default: 8002) |
 | `ALLOWED_ORIGINS` | CORS origins (default: `*`) |
 
@@ -146,19 +149,20 @@ npm start
 
 ## Testing with the MCP Inspector
 
-Start the server (SSE, default port 8002 or `OUTLOOK_MCP_PORT`), then point the
-[Inspector](https://github.com/modelcontextprotocol/inspector) at it:
+Start the server (streamable HTTP, default port 8002 or `OUTLOOK_MCP_PORT`), then
+point the [Inspector](https://github.com/modelcontextprotocol/inspector) at it:
 
 ```bash
 npm start                                   # terminal A
 npx @modelcontextprotocol/inspector         # terminal B
 ```
 
-In the Inspector UI: **Transport = SSE**, **URL = `http://localhost:8002/sse`**.
-For auth, either set `M365_ACCESS_TOKEN` in `.env` or add the header
-`Authorization: Bearer <token>` in the Inspector. Then call `search_emails` and
-page a mailbox past the 25 results the Search tool was capped at. No Node runtime
-is required by the server — `npm start` just runs `python server.py`.
+In the Inspector UI: **Transport = Streamable HTTP**, **URL =
+`http://localhost:8002/mcp`**. Send the backend actor assertion as
+`Authorization: Bearer <assertion>` and the acting user's Graph token as
+`x-m365-access-token: <graph-token>`. Then call `search_emails` and page a
+mailbox past the 25 results the Search tool was capped at. No Node runtime is
+required by the server — `npm start` just runs `python server.py`.
 
 ## Required Permissions
 

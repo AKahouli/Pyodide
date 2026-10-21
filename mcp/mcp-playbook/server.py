@@ -57,7 +57,6 @@ def backend() -> YellowStormPlaybookClient:
     if _client is None:
         _client = YellowStormPlaybookClient(
             settings.backend_url,
-            settings.internal_token,
             settings.timeout_seconds,
             settings.max_response_bytes,
         )

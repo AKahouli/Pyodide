@@ -16,10 +16,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }) }));
-vi.mock('@/modules/admin', () => ({
-  DEFAULT_FEATURE_VISIBILITY: mocks.visibility,
-  getFeatureVisibility: vi.fn().mockResolvedValue(mocks.visibility),
-}));
+vi.mock('@/modules/admin/constants', () => ({ DEFAULT_FEATURE_VISIBILITY: mocks.visibility }));
+vi.mock('@/modules/admin/api', () => ({ getFeatureVisibility: vi.fn().mockResolvedValue(mocks.visibility) }));
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({
   usePermissions: () => ({
     hasAnyPermission: () => mocks.semanticReadAllowed,

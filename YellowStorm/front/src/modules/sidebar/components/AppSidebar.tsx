@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useState, useCallback, memo } from 'react';
+import { createElement, useEffect, useMemo, useState, useCallback, useRef, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { ArrowRight, MessageSquarePlus } from 'lucide-react';
 
@@ -71,11 +71,15 @@ export const AppSidebar = memo(function AppSidebar() {
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
+  const conversationsHasMore = useConversationStore((s) => s.conversationsHasMore);
   const v2Pointers = useAppBuilderStudioPointersStore((s) => s.items);
   const fetchV2Pointers = useAppBuilderStudioPointersStore((s) => s.fetch);
+  const v2Loading = useAppBuilderStudioPointersStore((s) => s.loading);
+  const v2NextCursor = useAppBuilderStudioPointersStore((s) => s.nextCursor);
+  const loadingNextPage = useRef(false);
 
   useEffect(() => {
-    // Load at least the rail cap so "All chats" is reachable whenever more exists.
+    // Keep the initial history bounded; scrolling appends subsequent pages.
     fetchConversations({ reset: true, limit: RECENT_CHATS_CAP });
     fetchV2Pointers({ reset: true });
   }, [fetchConversations, fetchV2Pointers]);
@@ -84,7 +88,17 @@ export const AppSidebar = memo(function AppSidebar() {
     () => buildHistoryRows(historyConversations, v2Pointers, t('recentChats.untitled')),
     [historyConversations, v2Pointers, t],
   );
-  const cappedRows = useMemo(() => mergedHistory.slice(0, 5), [mergedHistory]);
+  const loadMoreHistory = useCallback(async () => {
+    if (loadingNextPage.current || conversationsLoading || v2Loading) return;
+    if (!conversationsHasMore && !v2NextCursor) return;
+    loadingNextPage.current = true;
+    try {
+      await Promise.all([
+        conversationsHasMore ? fetchConversations({ limit: RECENT_CHATS_CAP }) : Promise.resolve(),
+        v2NextCursor ? fetchV2Pointers() : Promise.resolve(),
+      ]);
+    } finally { loadingNextPage.current = false; }
+  }, [conversationsLoading, v2Loading, conversationsHasMore, v2NextCursor, fetchConversations, fetchV2Pointers]);
 
   const handleNewConversation = useCallback(() => {
     if (!isMobile && state === 'collapsed') toggleSidebar();
@@ -120,7 +134,7 @@ export const AppSidebar = memo(function AppSidebar() {
   return (
     <Sidebar collapsible='icon' className='shrink-0 z-30'>
       {/* Header remains fixed while configured navigation controls every destination. */}
-      <SidebarHeader className='gap-2 p-2'>
+      <SidebarHeader className='shrink-0 gap-2 p-2'>
         <div className='flex h-9 min-w-0 items-center gap-1'>
         <NavLink
           to='/'
@@ -156,14 +170,15 @@ export const AppSidebar = memo(function AppSidebar() {
           hasAnyPermission={hasAnyPermission}
           hasAdminAccess={hasAdminAccess}
           onNewConversation={handleNewConversation}
-          historyRows={cappedRows}
-          historyLoading={conversationsLoading}
+          historyRows={mergedHistory}
+          historyLoading={conversationsLoading || v2Loading}
+          onLoadMoreHistory={loadMoreHistory}
           showAllChatsLink={false}
           collapsed={collapsed}
         />
       </SidebarContent>
 
-      <SidebarFooter className='gap-1 p-2'>
+      <SidebarFooter className='shrink-0 gap-1 p-2'>
         {showHistory && !collapsed && <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild><NavLink to='/chats'><span>{t('recentChats.allChats')}</span><ArrowRight aria-hidden className='ms-auto size-4' /></NavLink></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
         {/* Above the SidebarRail hit-strip so the trigger stays clickable when collapsed. */}
         <div className={`relative z-30 mt-1 flex items-center gap-1 border-t border-sidebar-border pt-2 ${!isMobile && state === 'collapsed' ? 'flex-col' : ''}`}>

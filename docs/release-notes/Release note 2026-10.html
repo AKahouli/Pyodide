@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YellowStorm Release Notes — 2026-10-01 to 2026-10-21</title>
+<style>
+:root{--bg:#0f1117;--panel:#171a23;--panel2:#1e2230;--text:#e7eaf3;--muted:#9aa4bd;--line:#2a2f3d;--accent:#ffd43b;--accent2:#4dabf7}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+header.hero{background:linear-gradient(135deg,#1b1f2b,#12151d);border:1px solid var(--line);border-radius:16px;padding:28px 30px;margin-bottom:22px}
+header.hero h1{margin:0 0 8px;font-size:28px;letter-spacing:.3px}
+header.hero h1 span{color:var(--accent)}
+header.hero p{margin:4px 0;color:var(--muted)}
+.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.meta span{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:13px;color:var(--muted)}
+.meta b{color:var(--text);font-weight:600}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 26px}
+nav.toc a{background:var(--panel2);border:1px solid var(--line);color:var(--muted);text-decoration:none;border-radius:8px;padding:6px 12px;font-size:13px}
+nav.toc a:hover{color:var(--accent);border-color:var(--accent)}
+h2{font-size:20px;margin:34px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+h2 .num{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--accent);font-size:14px;font-weight:700}
+h2 .count{color:var(--muted);font-size:13px;font-weight:400;margin-left:auto}
+.tagline{color:var(--accent2);font-weight:600;margin:0 0 8px}
+.summary{color:var(--muted);margin:0 0 14px;max-width:900px}
+table.grid{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:6px 0 10px}
+table.grid th{text-align:left;background:var(--panel2);color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.6px;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.grid td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+table.grid td:first-child{white-space:nowrap;color:var(--text);width:230px}
+table.grid tr:last-child td{border-bottom:none}
+table.grid tr:hover td{background:#1b1f2b}
+code{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;color:var(--accent2);background:#10131b;padding:1px 5px;border-radius:5px}
+.date{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+section.feature{margin-bottom:8px}
+section.feature.accent h2 .num{background:#3a1f24;color:#ffa8a8;border-color:#3a1f24}
+section.feature.accent .tagline{color:#ff8787}
+details{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-top:20px}
+summary{cursor:pointer;font-weight:600;color:var(--accent)}
+.note{color:var(--muted);font-size:13px}
+footer{margin-top:34px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+@media print{body{background:#fff;color:#111}header.hero,section.feature,table.grid,details{background:#fff;border-color:#ccc}nav.toc{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+<h1>YellowStorm <span>Release Notes</span></h1>
+<p>Aggregated new features, sub-features and security fixes delivered between <b>2026-10-01</b> and <b>2026-10-21</b>.</p>
+<div class="meta">
+<span>Branch: <b>security/p0p1-remediation</b></span>
+<span>HEAD: <b>ef5f412</b></span>
+<span>Total changes: <b>441</b></span>
+<span>Features: <b>8</b></span>
+<span>Security: <b>8 areas</b></span>
+</div>
+</header>
+
+<nav class="toc"><a href="#conversation">Conversation</a><a href="#semantic-model">Semantic Model</a><a href="#connectors-mcp">Connectors &amp; MCP</a><a href="#auth-access">Auth &amp; Access</a><a href="#openui-artifacts">OpenUI &amp; Artifacts</a><a href="#workspaces-files-app-builder">Workspaces, Files &amp; App Builder</a><a href="#adk-runtime-performance">ADK, Runtime &amp; Performance</a><a href="#platform-tooling-localization">Platform, Tooling &amp; Localization</a><a href="#security-fixes">Security Fixes</a><a href="#appendix">Full change log</a></nav>
+
+<h2>At a glance</h2>
+<table class="grid"><thead><tr><th>Feature</th><th>Focus</th><th>Sub-features</th><th>Commits represented</th></tr></thead><tbody>
+<tr><td>Conversation</td><td><span class="tagline">Native Responses parent, faster first token, and a full files-and-artifacts surface.</span></td><td>10</td><td>55</td></tr>
+<tr><td>Semantic Model</td><td><span class="tagline">Richer ingestion and mapping, a faster run engine, HNSW graph search and model-health diagnostics.</span></td><td>8</td><td>61</td></tr>
+<tr><td>Connectors &amp; MCP</td><td><span class="tagline">M365 connectors, hardened MCP identity and a consolidated Platform MCP.</span></td><td>6</td><td>18</td></tr>
+<tr><td>Auth &amp; Access</td><td><span class="tagline">Hardened login, in-memory tokens, managed identity and scoped authority.</span></td><td>5</td><td>10</td></tr>
+<tr><td>OpenUI &amp; Artifacts</td><td><span class="tagline">OpenUI 1.0 renderer, interactive mini-apps and safe exports.</span></td><td>5</td><td>20</td></tr>
+<tr><td>Workspaces, Files &amp; App Builder</td><td><span class="tagline">Upload quotas, Azure Blob Storage and App Builder studio work.</span></td><td>4</td><td>16</td></tr>
+<tr><td>ADK, Runtime &amp; Performance</td><td><span class="tagline">ADK 2.11 migration, guarded root delegation and optimized runtimes.</span></td><td>9</td><td>36</td></tr>
+<tr><td>Platform, Tooling &amp; Localization</td><td><span class="tagline">Graphify-first investigations, scoped docs and Arabic RTL.</span></td><td>5</td><td>18</td></tr>
+<tr><td>Security Fixes</td><td><span class="tagline">P0/P1 remediation across connector secrets, MCP egress, actor-bound auth and uploads.</span></td><td>8</td><td>24</td></tr>
+</tbody></table>
+<p class="note">Each feature below aggregates its changes into sub-features with a synthetic summary. "Commits represented" counts the highlighted references, not the full history (see the collapsed appendix).</p>
+
+<section class="feature" id="conversation">
+<h2><span class="num">1</span>Conversation <span class="count">10 sub-features</span></h2>
+<p class="tagline">Native Responses parent, faster first token, and a full files-and-artifacts surface.</p>
+<p class="summary">Conversation moved to a native Responses parent with per-model API selection, cutting time-to-first-token and adding a live thinking indicator. Streaming and transport were hardened (HTTP/2 gateway reuse, gateway connections kept across human turns, authenticated SSE replay across replicas, fail-closed execution state). The composer gained a complete files-and-artifacts surface — expose, search, restore, delete, image history and toolbar — plus OpenUI media/slide rendering and standalone dashboard export. Concurrency and background work were made safe (concurrent replies, background tasks, clarification, fan-out recovery, lease-renewal checkpoints), and sharing/copilot handoff were gated behind audience controls and permissions.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Native model layer</b></td><td>Native Responses parent with per-model API selection, history replay, summaries and preserved reasoning context.</td><td><code>9d17a08</code> <code>059cb6e</code> <code>4c31be1</code> <code>f430a94</code> <code>120fd4f</code> <code>1458872</code></td></tr>
+<tr><td><b>Time-to-first-token &amp; thinking</b></td><td>Sub-second TTFT, live thinking indicator and clarified reasoning activity.</td><td><code>97988e7</code> <code>84b6174</code></td></tr>
+<tr><td><b>Streaming, transport &amp; SSE reliability</b></td><td>HTTP/2 gateway reuse with upstream latency tracing, gateway connections retained across human turns, deferred connector schemas, trimmed session seeding, authenticated SSE replay across replicas and fail-closed execution state.</td><td><code>0c70712</code> <code>e89d8c3</code> <code>32506e3</code> <code>cd54abe</code> <code>d84e355</code> <code>e1bdd7e</code> <code>a2d4452</code></td></tr>
+<tr><td><b>Files &amp; artifacts</b></td><td>Expose, search, restore and delete files/artifacts; navigate saved answer history; reuse assets through MCP; readable artifact tags; previewable MIME inference.</td><td><code>001dce3</code> <code>de49277</code> <code>c4e9185</code> <code>f9c43dd</code> <code>5181b98</code> <code>3e598d9</code> <code>714f6f4</code></td></tr>
+<tr><td><b>Images</b></td><td>Image version history, preview-before-edit, scoped toolbar, persistent image generation/editing and reuse in Office documents.</td><td><code>930364f</code> <code>a57a395</code> <code>6d7e0f8</code> <code>e9ef167</code> <code>142abcf</code> <code>c4e3c07</code></td></tr>
+<tr><td><b>OpenUI media &amp; slides</b></td><td>Cited document images, web photos, slide decks, PDF/PPTX exports, hardened downloads and consistent OpenUI content export.</td><td><code>f0c916f</code> <code>130d17f</code> <code>5eb3e6c</code> <code>5d42140</code> <code>402e49d</code> <code>e68fec4</code> <code>c36221d</code></td></tr>
+<tr><td><b>Standalone dashboards</b></td><td>Export the current answer as a standalone interactive HTML dashboard.</td><td><code>61ef7c4</code></td></tr>
+<tr><td><b>Concurrency &amp; background work</b></td><td>Concurrent replies, background tasks, inline clarification, mono-agent orchestration and safe fan-out recovery.</td><td><code>2189c2a</code> <code>6fd076b</code> <code>4c28fae</code> <code>6f909cd</code> <code>77932dd</code> <code>d54bd07</code> <code>b7b4369</code> <code>75386ca</code> <code>a8e0ec0</code></td></tr>
+<tr><td><b>Execution safety, activity &amp; agent visibility</b></td><td>Worker progress visibility, lease-renewal checkpoints, scoped and ordered message broadcasts, Markdown activity summaries, producing-agent labels and no unused Studio streams.</td><td><code>15d929e</code> <code>b43c644</code> <code>f80f7bb</code> <code>ecb5e9e</code> <code>fa19c1f</code> <code>0ee2fe7</code> <code>e1143dc</code> <code>abe23f8</code></td></tr>
+<tr><td><b>Sharing &amp; handoff gating</b></td><td>Governed sharing with audience controls and permission-gated copilot handoff.</td><td><code>96e83ac</code> <code>923d5c7</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="semantic-model">
+<h2><span class="num">2</span>Semantic Model <span class="count">8 sub-features</span></h2>
+<p class="tagline">Richer ingestion and mapping, a faster run engine, HNSW graph search and model-health diagnostics.</p>
+<p class="summary">The semantic model gained mail/attachment ingestion, richer mapping and recipes, a faster and more reliable run engine, HNSW-powered graph search, an at-scale graph view and model-health diagnostics, with P0 worker safety and scope-safe cloning.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Data sources &amp; ingestion</b></td><td>Mail archive reader with derived files and run limits; CSV/PPTX attachments; workspace indexing made optional; per-source reading limits; several records per document/row; fill-from-concept expansion; in-place source switching.</td><td><code>c09876c</code> <code>a6b60b0</code> <code>75c32cd</code> <code>fd5bd68</code> <code>1ac14b1</code> <code>4b1841c</code> <code>798b0ad</code> <code>a58888d</code> <code>a07656f</code> <code>280e329</code> <code>397c969</code></td></tr>
+<tr><td><b>Mapping, recipes &amp; rules</b></td><td>Shared field mapping across document/sheet/derived sources; graphical rule editor and value shaper; recipes joining columns/fields; live data preview; searchable dropdowns; AI-read field definitions.</td><td><code>c74aa54</code> <code>5af31f7</code> <code>50bc6eb</code> <code>08b1786</code> <code>c8e7371</code> <code>ad6b9af</code> <code>1f23adc</code></td></tr>
+<tr><td><b>Run &amp; population</b></td><td>One-screen Run dialog with AI re-read; repopulate from scratch; step progress and reliable stop; concept-refresh progress; changed reader/runtime rebuild; P0 worker lease and finalization safety; serialized cutover, search ownership and task leases.</td><td><code>420772b</code> <code>98684d3</code> <code>d6f6aee</code> <code>d5aabc9</code> <code>43d6fac</code> <code>7980dee</code> <code>56aaa85</code> <code>ceee54c</code> <code>c84098f</code> <code>a94c8fa</code> <code>e33e49f</code></td></tr>
+<tr><td><b>Search &amp; graph query</b></td><td>HNSW vector indexes on cards and passages; traversal over named records, links and groups; passage-level long-text search; typed AGE graph with diagnostics; graph-window read logging; Yellowmind answers with DB instruction and selected read tools.</td><td><code>8884ef3</code> <code>9e37639</code> <code>4e30d29</code> <code>4bde3b8</code> <code>6d1f2e6</code> <code>39054e2</code> <code>946b93c</code></td></tr>
+<tr><td><b>Graph view &amp; citations</b></td><td>Readable record panel, search, legend, focus, layouts and analytics; at-scale outline and offline export; source documents in the inspector; citation drawer and graph modal; level-based exploration.</td><td><code>de99db0</code> <code>7fb05d2</code> <code>d32b783</code> <code>8c31e81</code> <code>ca84351</code> <code>cbdf72f</code></td></tr>
+<tr><td><b>Model health &amp; quality</b></td><td>Model health view with row journeys and suggested fixes; archive-reading limits surfaced as health issues; unfinished reads and unindexed files reported; audit fixes; document provenance; scope-safe cloning and permanent delete.</td><td><code>5e682f4</code> <code>b4e9d92</code> <code>02e8349</code> <code>764ed14</code> <code>28eb652</code> <code>b89b73f</code> <code>cc876f7</code> <code>3c8937c</code></td></tr>
+<tr><td><b>AI extraction</b></td><td>ISO dates, summarized/classified items and field-aware extraction; autonomous runtime AI extraction.</td><td><code>dc00668</code> <code>ec7f77b</code> <code>511027c</code> <code>d9af641</code></td></tr>
+<tr><td><b>Model editor &amp; UX</b></td><td>Compact canvas toolbar, source editing from the canvas, shared field mapping, suggested fields, scoped My-jobs queue, shared-with-me tab and a manual records table.</td><td><code>78a5dd0</code> <code>fe5f4cc</code> <code>9b86624</code> <code>9dc9825</code> <code>2473b78</code> <code>95336c8</code> <code>67ff1bd</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="connectors-mcp">
+<h2><span class="num">3</span>Connectors &amp; MCP <span class="count">6 sub-features</span></h2>
+<p class="tagline">M365 connectors, hardened MCP identity and a consolidated Platform MCP.</p>
+<p class="summary">M365 connectors (Outlook, Manus, Teams, SharePoint) were integrated under delegated authority, MCP identity and egress were hardened, and the platform consolidated Playbook, Agent/Team and Semantic into a single Platform MCP with a deployed browser Pyodide runtime.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>M365 connector integration</b></td><td>Outlook, Manus, Teams and SharePoint integrated; Teams and Outlook aligned to delegated two-credential authority.</td><td><code>2becfb2</code> <code>eb63321</code> <code>b646856</code></td></tr>
+<tr><td><b>MCP security &amp; identity</b></td><td>MCP security managed and request identity isolated; signed actor-bound auth with scoped internal principals; JWT-only first-party authority; dev-only insecure-HTTP grant and semantic bearer ingress.</td><td><code>498e5af</code> <code>8636570</code> <code>f6a49f4</code> <code>c0ba5af</code></td></tr>
+<tr><td><b>MCP authentication surfaces</b></td><td>Per-user JWT for playbook/agent MCPs; JWT auth and renewal for the semantic model MCP; one shared delegated-user guard (ADR-0024); Logical Search signed workspace scope bound and verified.</td><td><code>daee987</code> <code>c94a31f</code> <code>13a3689</code> <code>73d3b11</code> <code>bc035cc</code></td></tr>
+<tr><td><b>Inspection &amp; dynamic headers</b></td><td>Remote-only inspection; dynamic identity header resolution; secret-free responses; stdio inspection denied.</td><td><code>703941d</code> <code>f372896</code></td></tr>
+<tr><td><b>A2A caller authority</b></td><td>Forward caller X-MCP-&lt;slug&gt;-&lt;header&gt; to per-connector auth; advertise per-connector auth headers in the agent card.</td><td><code>120cc43</code> <code>08ec05f</code></td></tr>
+<tr><td><b>MCP servers &amp; consolidation</b></td><td>Platform MCP consolidating Playbook, Agent/Team and Semantic; deployed mcp-pyodide server.</td><td><code>65ec105</code> <code>a38ee63</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="auth-access">
+<h2><span class="num">4</span>Auth &amp; Access <span class="count">5 sub-features</span></h2>
+<p class="tagline">Hardened login, in-memory tokens, managed identity and scoped authority.</p>
+<p class="summary">Authentication was hardened end to end: rate limits and lockout, header-only JWT, browser-bound OAuth state, in-memory tokens with CSP, managed identity, governed sharing and scoped internal authority.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Login hardening</b></td><td>Rate limits, login lockout, header-only JWT, no account/registration enumeration, no emails in logs, no token in OAuth callback, browser-bound OAuth state and config-derived cookie paths.</td><td><code>520a852</code> <code>10bd47b</code> <code>d0612bb</code></td></tr>
+<tr><td><b>Token &amp; CSP</b></td><td>Access token kept in memory only; CSP enforced; empty JSON refresh lets a new tab restore its session.</td><td><code>f035a19</code> <code>152a862</code></td></tr>
+<tr><td><b>Azure identity &amp; storage</b></td><td>Managed identity authentication and storage configuration integrated.</td><td><code>b62aaee</code> <code>1706fe1</code></td></tr>
+<tr><td><b>Sharing &amp; permissions</b></td><td>Governed conversation sharing with audience controls; copilot handoff gated by feature visibility and permissions.</td><td><code>96e83ac</code> <code>923d5c7</code></td></tr>
+<tr><td><b>Scoped internal authority</b></td><td>Internal authority scoped and domain/job bound; connector credentials encrypted; cross-tab access-token handoff (ADR-0029).</td><td><code>90b8bc1</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="openui-artifacts">
+<h2><span class="num">5</span>OpenUI &amp; Artifacts <span class="count">5 sub-features</span></h2>
+<p class="tagline">OpenUI 1.0 renderer, interactive mini-apps and safe exports.</p>
+<p class="summary">The renderer moved to OpenUI 1.0 with per-agent Generative UI answers, reusable interactive mini-apps and saved typed selections, plus safe HTML/dashboard exports and reliable image/document artifact handling.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Renderer &amp; answers</b></td><td>Migrated renderer to OpenUI 1.0; per-agent Generative UI toggle; answers rendered with the thesys chat library and a report side panel; steered toward stat cards, charts, icon lists and tags.</td><td><code>8ff58d4</code> <code>372af9f</code> <code>6f997ae</code> <code>12eada8</code></td></tr>
+<tr><td><b>Interactive mini-apps</b></td><td>Reusable mini-app primitives and composition/theme; guided composed mini-apps; chart drill-down and sortable/filterable tables with saved typed selections; preserved typed submissions and status; SVG/dashboard primitive reuse.</td><td><code>62b97d2</code> <code>0d3e443</code> <code>0e31ad3</code> <code>4461025</code> <code>072c222</code> <code>5f71b64</code> <code>702c6af</code></td></tr>
+<tr><td><b>Drafts &amp; autosave</b></td><td>Private mini-app drafts autosaved with revision-conflict handling.</td><td><code>d45545e</code></td></tr>
+<tr><td><b>Safe exports</b></td><td>Export saved reactive dashboard views and HTML artifact views safely; configurable HTML artifacts with reliable startup; charts in document exports; visible captions in PDF/HTML exports; deduplicated scoped images.</td><td><code>a2636c3</code> <code>626c413</code> <code>010c5b0</code> <code>2f2e303</code> <code>1046bbf</code> <code>d04f3d8</code></td></tr>
+<tr><td><b>Sandbox media</b></td><td>Verify sandbox image uploads and support the configured interpreter; isolate mini-app restores; qualify integration.</td><td><code>ddebd7a</code> <code>5e65da2</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="workspaces-files-app-builder">
+<h2><span class="num">6</span>Workspaces, Files &amp; App Builder <span class="count">4 sub-features</span></h2>
+<p class="tagline">Upload quotas, Azure Blob Storage and App Builder studio work.</p>
+<p class="summary">Workspace file management gained upload limits, admin storage quotas, Azure Blob Storage and hardened transfers; App Builder studio work landed with a starter manifest, preview chrome and public routes.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Uploads &amp; quotas</b></td><td>Configurable upload limits and admin storage quotas; validated stored sizes and abandoned-transfer recovery; concurrent upload isolation; presigned PUT replay prevented; accurate quota-failure reporting.</td><td><code>1557540</code> <code>f6f7c75</code> <code>6491a7d</code> <code>915cc2e</code> <code>5aaa4da</code></td></tr>
+<tr><td><b>Storage</b></td><td>Azure Blob Storage support and storage configuration refactor.</td><td><code>1706fe1</code></td></tr>
+<tr><td><b>File &amp; image management</b></td><td>Improved file management and uploads; persisted image version history; preview before edit; scoped image toolbar; persistent image generation with OpenUI and slide exports.</td><td><code>8ba54b7</code> <code>930364f</code> <code>a57a395</code> <code>6d7e0f8</code> <code>e9ef167</code></td></tr>
+<tr><td><b>App Builder studio</b></td><td>Starter manifest and studio UX with preview chrome and public routes; app name generator and categories UX.</td><td><code>5cf7e55</code> <code>a6e17aa</code> <code>274bb92</code> <code>9a300c2</code> <code>d180d6d</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="adk-runtime-performance">
+<h2><span class="num">7</span>ADK, Runtime &amp; Performance <span class="count">9 sub-features</span></h2>
+<p class="tagline">ADK 2.11 migration, guarded root delegation and optimized runtimes.</p>
+<p class="summary">google-adk 2.11 was migrated with guarded root delegation (WP00-WP04); background fan-out and sealed follow-ups were completed; conversation and semantic runtimes were optimized; and the observability SDK and CI/CD pipeline were stabilized.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>ADK 2.11 migration</b></td><td>Qualified and pinned google-adk 2.11.0 with compat fixtures and recorded limitations; duplicate tool-call activity from partial streaming fixed.</td><td><code>53b6ec7</code> <code>b96f503</code> <code>15b783d</code></td></tr>
+<tr><td><b>Root delegation (WP00-WP04)</b></td><td>Root-execution policy persistence, shared root editor UI with allowlist resolver and effective-pool endpoint, trusted runtime scope and compiler facade, and the library delegation vertical slice; fenceable Stop ids, live abort and review fixes.</td><td><code>7e6cb28</code> <code>a608cb5</code> <code>650eea9</code> <code>1291391</code> <code>27bbaa3</code> <code>a5dad8b</code></td></tr>
+<tr><td><b>Background fan-out &amp; follow-ups</b></td><td>Checkpointed root delegation and fenced background runtime; persisted coordinators and owned producers; guarded hydration; sealed follow-up lifecycle; native follow-up scheduler and publication.</td><td><code>fc1d9f0</code> <code>e07a8e3</code> <code>35741c2</code> <code>cb5dac0</code> <code>389ecb8</code> <code>f47474c</code></td></tr>
+<tr><td><b>LangGraph execution</b></td><td>Functional-API executor fixing super-step lockstep; await bound to nearest send ancestor; unroutable waits fail; ask_user support.</td><td><code>a5b555b</code> <code>a64cedd</code></td></tr>
+<tr><td><b>Conversation runtime performance</b></td><td>Retained gateway connections across human turns; HTTP/2 transport reuse with upstream latency tracing; deferred connector schemas; trimmed session seeding and bootstrap reads.</td><td><code>e89d8c3</code> <code>0c70712</code> <code>cd54abe</code> <code>d84e355</code></td></tr>
+<tr><td><b>ADK &amp; semantic runtime performance</b></td><td>Reduced durable append round trips without weakening transactions; combined authoritative session state reads; bulk HNSW index build; carry unchanged records forward.</td><td><code>f37dbce</code> <code>e15d50e</code> <code>c9732f6</code> <code>679de0a</code></td></tr>
+<tr><td><b>Performance measurement</b></td><td>Instrumented classic SSE and added load benchmarks; browser SSE capacity workload; SSE measurement logs gated behind an opt-in flag.</td><td><code>522a1d3</code> <code>dc39f2d</code> <code>ad83d28</code></td></tr>
+<tr><td><b>Observability SDK &amp; logging</b></td><td>Unified Grafana/Loki/Alloy stack (P00-P09); dev pretty-printer; webhook audit and unused endpoint removal; P11 legacy retirement.</td><td><code>79c93eb</code> <code>5efb68f</code> <code>a87f0ed</code> <code>02261ef</code></td></tr>
+<tr><td><b>CI/CD &amp; deployment</b></td><td>Observability SDK canonicalization; backend/pg integration stage fixes; ADK requirement fixes; observability stage import fixes.</td><td><code>184ad4b</code> <code>1044bec</code> <code>5f5d7d2</code> <code>b976267</code></td></tr>
+</tbody></table>
+</section>
+<section class="feature" id="platform-tooling-localization">
+<h2><span class="num">8</span>Platform, Tooling &amp; Localization <span class="count">5 sub-features</span></h2>
+<p class="tagline">Graphify-first investigations, scoped docs and Arabic RTL.</p>
+<p class="summary">Developer tooling moved to graphify-based investigation with a guided installer and atomic task recovery; documentation was restructured into scoped context; Arabic RTL localization was added and the engineering baseline was verified.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Developer harness</b></td><td>Replaced code-review-graph and hindsight with graphify; graphify query made the default first step; counted query invocations in health receipts.</td><td><code>5f415bd</code> <code>012ee98</code> <code>277e976</code></td></tr>
+<tr><td><b>OpenCode workflow</b></td><td>Guided installer and background handoff workflow; atomic task recovery and guarded context reuse; per-session integration verification; shell execution delegated to native permissions; checkpoints made advisory.</td><td><code>a3049d6</code> <code>3026c29</code> <code>4f77b07</code> <code>3b2c082</code> <code>d621208</code></td></tr>
+<tr><td><b>Documentation &amp; context</b></td><td>Scoped agent-context replaced guideline monoliths; verified engineering baseline and feature pages; harness ADRs separated; stale docs cleaned.</td><td><code>ce7d478</code> <code>208dd2d</code> <code>5e6d7ce</code> <code>2edb70a</code> <code>739c5ec</code></td></tr>
+<tr><td><b>Localization</b></td><td>Arabic language with full RTL support; conversation Arabic locale restored; compact locale formatting.</td><td><code>af4d0f2</code> <code>66501b7</code> <code>bbf5d4b</code></td></tr>
+<tr><td><b>Governance &amp; decisions</b></td><td>ADRs 0023-0035 accepted covering delegated identity, two-header assertion auth, JWT-only callbacks, logical-search scope, OpenUI artifacts and classic durable SSE.</td><td><code>23c9fdd</code> <code>b6ca77e</code></td></tr>
+</tbody></table>
+</section>
+
+<section class="feature accent" id="security-fixes">
+<h2><span class="num">9</span>Security Fixes <span class="count">8 sub-features</span></h2>
+<p class="tagline">P0/P1 remediation across connector secrets, MCP egress, actor-bound auth and uploads.</p>
+<p class="summary">P0/P1 remediation closed connector secret disclosure and stdio inspection, enforced the MCP egress policy, introduced signed actor-bound auth with scoped internal principals, and hardened uploads, authentication and logical-search scope.</p>
+<table class="grid"><thead><tr><th>Sub-feature</th><th>What changed</th><th>Representative commits</th></tr></thead><tbody>
+<tr><td><b>Gate A — connector secrets &amp; stdio (SEC-01, SEC-02)</b></td><td>Denied stdio MCP inspection and eliminated connector secret disclosure; closed stdio binding, export, error and voice leak paths; multi-@ scrub; deterministic import denial; discriminating OAuth-active denial tests; mirrored ERR_3102 connector transport code.</td><td><code>f372896</code> <code>ce1908e</code> <code>4fd414e</code> <code>441b9ea</code> <code>a233fa9</code></td></tr>
+<tr><td><b>Gate B — semantic authorization &amp; cloning (SEC-03, SEC-04, SEC-05)</b></td><td>Centralized semantic source authorization; scope-safe semantic model cloning; clone-audit provenance correlated per revision; compact locale formatting restored.</td><td><code>c3c17fa</code> <code>3c8937c</code> <code>2fc6099</code> <code>bbf5d4b</code></td></tr>
+<tr><td><b>Gate C round-2</b></td><td>Closed findings on callers, SSE hops and internal endpoints.</td><td><code>ac49282</code></td></tr>
+<tr><td><b>SEC-06 / WP-05 — MCP egress policy</b></td><td>Gated MCP egress behind a destination policy and enforced it at inspection and runtime call sites.</td><td><code>4e2f5d2</code> <code>ed5b283</code></td></tr>
+<tr><td><b>SEC-07/SEC-08, WP-06/WP-07 — actor-bound auth &amp; internal principals</b></td><td>Signed actor-bound MCP auth and scoped internal principals; JWT-only authority for first-party MCPs; JWT mode required for production and the internal egress exception.</td><td><code>8636570</code> <code>f6a49f4</code> <code>4ecb83a</code></td></tr>
+<tr><td><b>Identity isolation</b></td><td>Isolated agent and playbook MCP identity; scoped internal authority and encrypted connector credentials; Logical Search signed workspace scope bound and verified.</td><td><code>fc5ad92</code> <code>90b8bc1</code> <code>bc035cc</code></td></tr>
+<tr><td><b>Upload &amp; storage hardening</b></td><td>Prevented presigned PUT replay overwrites; validated stored upload sizes and recovered abandoned transfers; isolated concurrent upload storage and confirmations.</td><td><code>915cc2e</code> <code>f6f7c75</code> <code>6491a7d</code></td></tr>
+<tr><td><b>Frontend auth hardening</b></td><td>Access token kept in memory only with CSP; OAuth state bound to the browser; no registration enumeration, no token in callback URL, no emails in logs.</td><td><code>f035a19</code> <code>d0612bb</code> <code>10bd47b</code></td></tr>
+</tbody></table>
+</section>
+
+<details id="appendix"><summary>Appendix — full change log (441 commits, collapsed)</summary>
+<table class="grid"><thead><tr><th>Date</th><th>Commit</th><th>Subject</th></tr></thead><tbody>
+<tr><td><span class="date">2026-10-21</span></td><td><code>ef5f412</code></td><td>Merge branch 'security/p0p1-remediation' of https://github.com/YellowsysOrg/YellowStorm-poc into security/p0p1-remediation</td></tr>
+<tr><td><span class="date">2026-10-21</span></td><td><code>658343a</code></td><td>semantic runtime fix</td></tr>
+<tr><td><span class="date">2026-10-21</span></td><td><code>8ba54b7</code></td><td>feat(workspace): improve file management and uploads</td></tr>
+<tr><td><span class="date">2026-10-21</span></td><td><code>a38ee63</code></td><td>feat(mcp): add deployed mcp-pyodide server from main</td></tr>
+<tr><td><span class="date">2026-10-21</span></td><td><code>65ec105</code></td><td>feat(mcp): consolidate Playbook, Agent/Team and Semantic into one Platform MCP</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>012ee98</code></td><td>docs(instructions): make graphify query the default first step for code investigations</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>ad83d28</code></td><td>fix(perf): gate SSE measurement logs behind opt-in flag</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>5f2a282</code></td><td>chore(git): configure graphify output merge driver</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>f6a49f4</code></td><td>feat(security): use JWT-only authority for first-party MCPs</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>1c777ca</code></td><td>feat(front): add accessible connector field and option guidance</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>277e976</code></td><td>feat(harness): count graphify query invocations in health receipts</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>5f415bd</code></td><td>feat(harness): replace code-review-graph and hindsight with graphify</td></tr>
+<tr><td><span class="date">2026-10-20</span></td><td><code>b646856</code></td><td>feat(mcp): align Teams and Outlook with delegated two-credential authority</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>dc39f2d</code></td><td>test(perf): add browser SSE capacity workload</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>bc035cc</code></td><td>feat(security): bound and verify Logical Search signed workspace scope</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>184ad4b</code></td><td>fix(build): canonicalize observability SDK packages</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>522a1d3</code></td><td>feat(perf): instrument classic SSE and add load benchmarks</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>66501b7</code></td><td>fix(front): restore conversation Arabic locale</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>7495772</code></td><td>fix(front): isolate landing page provider test config</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>b6ca77e</code></td><td>governance</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>5129161</code></td><td>fix(ci): harden classic conversation verification</td></tr>
+<tr><td><span class="date">2026-10-19</span></td><td><code>abfd3e1</code></td><td>fix(ci): restore classic conversation verification baseline</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>61ef7c4</code></td><td>feat(conversation): export standalone interactive HTML dashboards</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>3e598d9</code></td><td>fix(conversation): render readable artifact tags in composer and messages</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>a3140d5</code></td><td>merge(security): integrate scoped P1 authority remediation</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>90b8bc1</code></td><td>fix(security): scope internal authority and encrypt connector credentials</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>ddebd7a</code></td><td>fix(openui): verify sandbox image uploads and support configured interpreter</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>c4e9185</code></td><td>feat(conversation): refine artifacts and navigate saved answer history</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>de49277</code></td><td>feat(conversation): search and restore authorized message targets</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>626c413</code></td><td>feat(openui): export saved HTML artifact views safely</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>b6ff201</code></td><td>docs(conversation): finalize single-tab background-run qualification</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>6cb32c0</code></td><td>test(conversation): qualify files and artifacts across users</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>eb2aaa9</code></td><td>feat(harness): narrow lesson recall and bound test output guidance</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>052f4d0</code></td><td>docs(harness): evaluate uncurated Hindsight on a code repair</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>f9c43dd</code></td><td>feat(conversation): delete files and artifacts safely</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>abe23f8</code></td><td>fix(conversation): avoid unused Studio stream connections</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>5181b98</code></td><td>feat(conversation): reuse assets through MCP and register outputs</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>57ae856</code></td><td>docs(conversation): record second-user preview reload verification</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>86bf797</code></td><td>mcp</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>001dce3</code></td><td>feat(conversation): expose files and artifacts to users and agents</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>fc5ad92</code></td><td>fix(security): isolate agent and playbook MCP identity</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>815e9bc</code></td><td>feat(harness): prioritize durable Hindsight lessons and recover memory</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>010c5b0</code></td><td>feat(openui): add configurable HTML artifacts with reliable startup</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>db3d588</code></td><td>docs(conversation): record final signed-in remediation checks</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>bde56c0</code></td><td>ci(conversation): enforce security regressions and document qualification</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>e1bdd7e</code></td><td>fix(conversation): authenticate and replay SSE across replicas</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>a2d4452</code></td><td>fix(conversation): fail closed and preserve failed execution state</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>ecb5e9e</code></td><td>fix(conversation): scope message actions and order turn broadcasts</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>8ef6529</code></td><td>chore: commit all pending workspace changes</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>a2636c3</code></td><td>feat(openui): export saved reactive dashboard views</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>702c6af</code></td><td>feat(openui): reuse SVG and dashboard primitives</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>5e65da2</code></td><td>fix(openui): isolate mini-app restores and qualify integration</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>0e31ad3</code></td><td>feat(openui): guide generation of composed interactive mini-apps</td></tr>
+<tr><td><span class="date">2026-10-18</span></td><td><code>0d3e443</code></td><td>feat(openui): add reusable mini-app composition and theme</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>54375a0</code></td><td>feat(openui): bridge document tasks to saved mini-app results</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>d45545e</code></td><td>feat(openui): autosave private mini-app drafts with revision conflicts</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>73d3b11</code></td><td>feat(auth): migrate playbook and agent-crud MCP surfaces to the shared delegated-user guard (ADR-0024)</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>62b97d2</code></td><td>feat(openui): add reusable interactive mini-app primitives</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>8ff58d4</code></td><td>feat(openui): migrate renderer to OpenUI 1.0</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>2f2e303</code></td><td>feat(openui): include rendered charts in document exports</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>13a3689</code></td><td>∩╗┐feat(auth): one shared delegated-user guard for trusted MCPs (ADR-0024)</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>23c9fdd</code></td><td>docs(decisions): accept ADR-0023 two-header assertion auth</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>c0ba5af</code></td><td>feat(connectors): development-only insecure-HTTP grant and semantic bearer ingress</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>e89d8c3</code></td><td>perf(conversation): retain gateway connections across human turns</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>32506e3</code></td><td>perf(conversation): profile native stream delivery boundaries</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>0c70712</code></td><td>perf(conversation): reuse HTTP2 gateway transport and trace upstream latency</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>cd54abe</code></td><td>perf(conversation): defer connector schemas and separate admission timing</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>f37dbce</code></td><td>perf(adk): reduce durable append round trips without weakening transactions</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>e15d50e</code></td><td>perf(adk): combine authoritative session state reads</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>d84e355</code></td><td>perf(conversation): trim session seeding and bootstrap reads</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>84b6174</code></td><td>feat(conversation): clarify reasoning activity and parallelize connector resolution</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>c43e90d</code></td><td>test(conversation): qualify Responses replay and API switching</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>ff74d12</code></td><td>Merge branch 'security/p0p1-remediation' of https://github.com/YellowsysOrg/YellowStorm-poc into security/p0p1-remediation</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>fa19c1f</code></td><td>fix(conversation): render activity summaries as Markdown</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>1458872</code></td><td>fix(conversation): preserve reasoning effort and native summaries</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>120fd4f</code></td><td>fix(conversation): carry Responses context across isolated turns</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>f430a94</code></td><td>feat(conversation): configure Responses history replay and summaries</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>af0ff8d</code></td><td>last agent tag model</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>4c31be1</code></td><td>fix(conversation): honor composer model except explicit agent tags</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>7d67a37</code></td><td>fix: include Playbook MCP in local platform restarts</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>d05b8b6</code></td><td>chore: reconcile migration order and record local API verification</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>4cc7a3b</code></td><td>docs: record model API selector verification limits</td></tr>
+<tr><td><span class="date">2026-10-17</span></td><td><code>059cb6e</code></td><td>feat(models): select conversation API per model</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>9d17a08</code></td><td>Use native Responses for the conversation parent with capacity enforcement</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>40f5132</code></td><td>Merge branch 'security/p0p1-remediation' of https://github.com/YellowsysOrg/YellowStorm-poc into security/p0p1-remediation</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>eb63321</code></td><td>integrate Outlook, Manus, Teams, and SharePoint</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>498e5af</code></td><td>feat(connectors): manage MCP security and isolate request identity</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>5809c64</code></td><td>fix(harness): warn instead of blocking setup for running hosts</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>2becfb2</code></td><td>feat(mcp): integrate outlook manus teams and sharepoint</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>39d3c24</code></td><td>semantic-model-extraction</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>2edb70a</code></td><td>docs(agents): separate harness ADRs and require scoped decision lookup</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>3857073</code></td><td>last doc</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>99389a9</code></td><td>semantic-model-suggesttions</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>9dc9825</code></td><td>feat(semantic-model): suggest reviewed document and workspace fields</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>4461025</code></td><td>feat(openui): add chart drill-down with saved typed selections</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>072c222</code></td><td>feat(openui): add sortable filterable tables with saved selections</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>186823c</code></td><td>fix(harness): complete maintenance without background task support</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>d04f3d8</code></td><td>fix(openui): deduplicate scoped images and isolate load failures</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>5f71b64</code></td><td>feat(openui): preserve typed interactive submissions and status</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>4ecb83a</code></td><td>fix(security): require JWT mode for production config and for the internal egress exception</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>8b13c02</code></td><td>test(adk): assert scoped principal headers on MCP JWT renewal</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>ac49282</code></td><td>fix(security): close Gate C round-2 findings on callers, SSE hops and internal endpoints</td></tr>
+<tr><td><span class="date">2026-10-16</span></td><td><code>ed5b283</code></td><td>feat(security): enforce the MCP egress policy at inspection and runtime call sites (SEC-06 / WP-05 wiring)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>8636570</code></td><td>feat(security): signed actor-bound MCP auth and scoped internal principals (SEC-07/SEC-08, WP-06/WP-07)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>915cc2e</code></td><td>fix(uploads): prevent presigned PUT replay overwrites</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>f6f7c75</code></td><td>fix(workspaces): validate stored upload sizes and recover abandoned transfers</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>930364f</code></td><td>feat(conversation): browse persisted image version history</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>4e2f5d2</code></td><td>feat(security): gate MCP egress behind a destination policy (SEC-06 / WP-05)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>8848c75</code></td><td>docs(workspaces): clarify upload isolation and remaining hardening</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>a57a395</code></td><td>feat(conversation): preview selected images before edit and reuse</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>6491a7d</code></td><td>fix(workspaces): isolate concurrent upload storage and confirmations</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>1557540</code></td><td>feat(workspaces): configure upload limits and admin storage quotas</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>1046bbf</code></td><td>fix(openui): include visible captions in PDF and HTML exports</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>2fc6099</code></td><td>fix(security): correlate clone-audit provenance per revision (SEC-05 review finding)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>5aaa4da</code></td><td>fix(images): report workspace storage quota failures accurately</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>6d7e0f8</code></td><td>feat(conversation): add scoped image action toolbar</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>c36221d</code></td><td>feat(conversation): export saved OpenUI content consistently</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>f80f7bb</code></td><td>fix(conversation): checkpoint partial answers during lease renewal</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>e68fec4</code></td><td>fix(conversation): harden OpenUI downloads, previews and image paste</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>703941d</code></td><td>fix(connector): resolve dynamic identity headers during MCP inspection</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>bbf5d4b</code></td><td>fix(security): restore compact locale formatting, keep the clone scope wording (SEC-05 follow-up)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>3c8937c</code></td><td>feat(security): Gate B WP-04 - scope-safe semantic model cloning (SEC-05)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>c3c17fa</code></td><td>feat(security): Gate B WP-03 - centralize semantic source authorization (SEC-03, SEC-04)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>441b9ea</code></td><td>fix(security): Gate A round-3 review fixes - discriminating OAuth-active denial tests (SEC-01)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>4fd414e</code></td><td>fix(security): Gate A re-review fixes - multi-@ scrub, deterministic import denial, missing regressions (SEC-01, SEC-02)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>ce1908e</code></td><td>fix(security): Gate A review fixes - close remaining stdio binding, export, error and voice leak paths (SEC-01, SEC-02)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>d740d8b</code></td><td>docs(connector): document remote-only inspection and secret-free responses</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>a233fa9</code></td><td>fix(security): mirror ERR_3102 connector transport code in frontend (SEC-02 follow-up)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>f372896</code></td><td>fix(security): Gate A - deny stdio MCP inspection and eliminate connector secret disclosure (SEC-01, SEC-02)</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>09b3bf3</code></td><td>fix(semantic-model): follow live population progress state</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>4cce55e</code></td><td>test(semantic-runtime): enforce isolated no-skip P0 release gate</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>c84098f</code></td><td>fix(semantic-runtime): serialize cutover and cancellation races</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>a94c8fa</code></td><td>fix(semantic-runtime): fence search ownership and index writes</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>e33e49f</code></td><td>fix(semantic-runtime): serialize task lease guard operations</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>0fca84e</code></td><td>feat(conversation): edit external images and refresh sandbox inputs</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>03c30c7</code></td><td>docs(agents): explain verified root cause in bug-fix delivery</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>c4e3c07</code></td><td>feat(conversation): reuse generated images in MCP Office documents</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>142abcf</code></td><td>feat(conversation): edit generated images with OpenUI persistence</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>d9af641</code></td><td>refactor(semantic-model): make runtime AI extraction autonomous</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>e9ef167</code></td><td>feat(conversation): generate persistent images with OpenUI and slide exports</td></tr>
+<tr><td><span class="date">2026-10-15</span></td><td><code>d32b783</code></td><td>fix(semantic-model): show source documents in graph inspector</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>33cfe33</code></td><td>merge: restore P0 worker safety on baseline/semantic-model-001</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>70b50d6</code></td><td>age provenance documents</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>c8ed17c</code></td><td>merge: reconcile P0 safety with baseline/semantic-model-001 updates</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>28eb652</code></td><td>fix(semantic-model): expose document provenance to search agents</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>d621208</code></td><td>refactor(harness): remove edit reservations and make checkpoints advisory</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>3cc0ef4</code></td><td>last</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>7980dee</code></td><td>feat(semantic-model): add P0 worker lease and finalization safety</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>a026f29</code></td><td>fix(semantic-model): prevent population save deadlock</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>f548c8f</code></td><td>fix(harness): recover dead file claims without losing task history</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>46e42b6</code></td><td>Merge branch 'semantic-ux/phase-1' into baseline/semantic-model-001</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>0ea2161</code></td><td>fix(semantic-model): coordinate inspectors and unify trust navigation</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>f47680e</code></td><td>Merge branch 'semantic-ux/phase-1' of https://github.com/YellowsysOrg/YellowStorm-poc into semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>cf246b5</code></td><td>merge 2026-14-10</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>b62aaee</code></td><td>feat: integrate Azure identity for managed identity authentication and update storage configuration</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>af4d0f2</code></td><td>feat(localization): add Arabic language with RTL support</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>a3c4362</code></td><td>semantic model - worker 0</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>a3049d6</code></td><td>feat(opencode): add guided installer and background handoff workflow</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>03b94e1</code></td><td>docs(opencode): standardize feature format and index maintenance</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>402e49d</code></td><td>fix(conversation): export Wikimedia slide photos reliably</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>5d42140</code></td><td>feat(conversation): export OpenUI slides as PDF and PPTX images</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>5e6d7ce</code></td><td>docs(agent-context): batch-1 feature pages (auth-stack, playbook-flow)</td></tr>
+<tr><td><span class="date">2026-10-14</span></td><td><code>5eb3e6c</code></td><td>feat(conversation): render OpenUI presentation slide decks</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>130d17f</code></td><td>feat(conversation): request web photos for OpenUI travel guides</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>f0c916f</code></td><td>feat(conversation): render cited document images in OpenUI</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>714f6f4</code></td><td>fix(conversation): infer previewable artifact MIME from filename</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>2473b78</code></td><td>feat(semantic-model): add scoped My jobs queue controls</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>5cc5a33</code></td><td>docs(opencode): initialize feature context and maintainer workflow</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>cc3d0e0</code></td><td>refactor(opencode): keep durable guards and make integrations advisory</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>3b2c082</code></td><td>fix(opencode): delegate shell execution to native permissions</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>0cb5803</code></td><td>fix(opencode): allow focused diagnostics during integration failures</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>817c4c1</code></td><td>docs(opencode): package developer harness and manual onboarding</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>9c35803</code></td><td>fix(opencode): streamline native startup and parallel health checks</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>4f77b07</code></td><td>feat(opencode): verify integrations per session before edits</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>2d441a7</code></td><td>docs(agent-context): record stale-doc cleanup in baseline gaps</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>739c5ec</code></td><td>docs: remove unlinked session scratch reports from docs/</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>c866c88</code></td><td>docs: remove superseded back docs and tracked QA screenshot; repoint conversation index link</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>208dd2d</code></td><td>docs(agent-context): verified engineering baseline (overview, component map, ADK, contracts, gaps)</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>20ba93a</code></td><td>doc</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>747274b</code></td><td>docs(agents): require architecture approval and knowledge updates</td></tr>
+<tr><td><span class="date">2026-10-13</span></td><td><code>ce7d478</code></td><td>docs(agents): replace guideline monoliths with scoped context</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>3026c29</code></td><td>Add atomic OpenCode task recovery and guarded context reuse</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>9a6fee0</code></td><td>Tune OpenCode harness for fast QA, private sessions and reusable context</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>4fa7390</code></td><td>semantic fixes</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>daee987</code></td><td>Add per-user JWT auth to playbook and agent MCPs</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>fa65c95</code></td><td>fix(front): render sidebar logos with local API CSP</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>96e83ac</code></td><td>Enable governed conversation sharing with audience controls</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>00e2d1e</code></td><td>Show what mail archive reading left out, and how much of a field a search finds</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>67ff1bd</code></td><td>Replace typed records with a manual table in the semantic model designer</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>3db4071</code></td><td>Show what mail archive reading left out, and how much of a field a search finds</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>4559f26</code></td><td>Turn the archive reading finding into a model health issue</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>b4e9d92</code></td><td>Report what reading a mail archive left out or cut, and log each archive read</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>5d9c2cc</code></td><td>Add a mail and attachment reading pane to the semantic model admin settings</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>7e5abea</code></td><td>Accept the e-mail archive reading limits in the admin run limits</td></tr>
+<tr><td><span class="date">2026-10-12</span></td><td><code>7a8ee09</code></td><td>Make the e-mail archive reading limits admin run limits</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>4241e01</code></td><td>cleaning</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>c94a31f</code></td><td>Add JWT authentication and renewal for semantic model MCP</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>372af9f</code></td><td>Turn on OpenUI answers per agent with a Generative UI toggle</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>12eada8</code></td><td>Steer OpenUI answers toward stat cards, charts, icon lists and tags</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>6f997ae</code></td><td>Render OpenUI answers with the thesys chat library and a report side panel</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>41a09f4</code></td><td>Add Codex coding agent and mail-model graph query workbook</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>13df624</code></td><td>Drop semantica and torch from semantic extraction</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>4bed291</code></td><td>Render OpenUI answers in Conversation for openui- agents</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>199e4c4</code></td><td>Rank records named by a written reference first, and log graph window reads from the right route</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>b3f8f89</code></td><td>Record the first run of the mail_model graph queries and freeze expected values</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>70ab3bc</code></td><td>Add a 20-query graph-search evaluation set for mail_model</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>cbdf72f</code></td><td>Data graph: export the current view as a standalone HTML file</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>9e27a1e</code></td><td>Sync generated event registries with semantic.graph_window.read</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>39054e2</code></td><td>Log graph window reads with scope, size, outcome and duration</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>87c1cee</code></td><td>Keep a loaded document when another citation opens it again</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>e1143dc</code></td><td>Show &quot;Assistant&quot; while a live reply has not named its agent yet</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>ca84351</code></td><td>Data graph: explore records by levels, with expand/collapse badges</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>09e6fe2</code></td><td>Warm ADK's lazy provider imports at startup</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>696f124</code></td><td>Show &quot;Request prepared&quot; once an agent activity row finishes</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>6284cb2</code></td><td>Stop repeating declared tool descriptions in agent instructions</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>96b7f00</code></td><td>Speed up conversation session seeding</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>358831f</code></td><td>Reuse MCP toolsets per conversation and harden the toolset cache</td></tr>
+<tr><td><span class="date">2026-10-11</span></td><td><code>97988e7</code></td><td>Cut conversation time-to-first-token and show a live thinking indicator</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>b43c644</code></td><td>Show trusted temporary worker activity in conversation UI</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>c9732f6</code></td><td>Search index: build each generation's HNSW indexes once, in bulk</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>75386ca</code></td><td>Recover fan-out validation failures without inventing source references</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>a8e0ec0</code></td><td>Respect foreground fan-out when background execution is disabled</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>d54bd07</code></td><td>Show compact clarification choices and persistent execution activity</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>679de0a</code></td><td>Search index: carry unchanged records forward instead of rebuilding every card</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>77932dd</code></td><td>Improve inline clarification and contextual next-step experience</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>15d929e</code></td><td>fix(conversation): preserve worker capabilities and show task progress</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>6aa3a6d</code></td><td>Semantic jobs: show queue position and warn when no worker is consuming</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>d0612bb</code></td><td>Auth: bind Microsoft OAuth state to the browser, derive auth cookie paths from config</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>6fd076b</code></td><td>Improve concurrent conversation awareness and assess smart orchestration</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>10bd47b</code></td><td>Auth: no registration enumeration, no token in OAuth callback URL, no emails in approval logs, lint fixes</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>2189c2a</code></td><td>Enable concurrent ordinary conversation replies</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>b7b4369</code></td><td>Fix live clarification and add mono-agent orchestration skill</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>4c28fae</code></td><td>Improve conversation background work experience</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>6f909cd</code></td><td>background tasks #1</td></tr>
+<tr><td><span class="date">2026-10-10</span></td><td><code>520a852</code></td><td>Auth: rate limits, login lockout, header-only JWT, no account enumeration, no emails in logs</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>152a862</code></td><td>Auth: send an empty JSON object on refresh so a new tab can restore its session</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>a73d2f7</code></td><td>Semantic runtime: start-local stops leftover workers before starting new ones</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>5e682f4</code></td><td>Semantic models: Model health view with row journeys, cause-grouped issues and suggested fixes</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>00902c2</code></td><td>Semantic models: a concept refresh sends only the derivations it feeds, and the run panel follows its scope</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>a4f08a6</code></td><td>Merge branch 'semantic-ux/phase-1' of https://github.com/YellowsysOrg/YellowStorm-poc into semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>c3a6c7c</code></td><td>last fixes</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>7b55680</code></td><td>Refactor: Update STORAGE_DIMENSION to use environment variable and clean up comments; add Optional import in evaluation schema</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>2aeeb1d</code></td><td>Semantic models: choose per field what the AGE graph shows</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>a84f06b</code></td><td>Semantic runtime: serve runs bounded by a user source limit, replace records on a rerun of the same revision</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>a33b6dc</code></td><td>Semantic runtime: bound run sources by the admin limit, accept sheets read without mapped columns</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>07e1312</code></td><td>Semantic models: workspace-scoped reads, bounded graph window, large-reading cache, search stall recovery, live model check</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>13f2266</code></td><td>Merge branch 'semantic-ux/phase-1' of https://github.com/YellowsysOrg/YellowStorm-poc into semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>634be9a</code></td><td>Security P0: scoped semantic graph reads, creator-scoped evaluations, ADK actor binding</td></tr>
+<tr><td><span class="date">2026-10-09</span></td><td><code>f035a19</code></td><td>Front auth: keep the access token in memory only, enforce a CSP</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>ceee54c</code></td><td>Semantic runtime: bulk SQL graph projection, resumable chunked search index cache reuse</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>d6f6aee</code></td><td>Semantic models: run step progress, faster search index, reliable stop, run panel reopen</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>56aaa85</code></td><td>Semantic runtime: partitioned revision tables, search index progress, configurable save batches</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>7234186</code></td><td>feat : Enhance Celery broker configuration with SSL support and update requirements for Redis</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>366ab7f</code></td><td>fix: correct vectorstore cleanup and ADK settings loading</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>04f6540</code></td><td>semantic model - run settings</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>5efb68f</code></td><td>Observability: pretty-printer for dev console log envelopes (pretty.mjs, back start:dev:pretty, ADK dev-pretty.cmd)</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>a87f0ed</code></td><td>Webhook audit: harden back/ADK webhooks, remove unused ADK webhook endpoints</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>1ac14b1</code></td><td>Semantic sources: reading limits set on the source, admin keeps the ceilings</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>a6b60b0</code></td><td>Semantic runtime: read CSV and PowerPoint attachments of mail archives</td></tr>
+<tr><td><span class="date">2026-10-08</span></td><td><code>397c969</code></td><td>Sheet mapping editor: folded panes like &quot;fill from another concept&quot;, archive workspace indexing choice</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>fd5bd68</code></td><td>Semantic model: data sources explorer with mail archive connections; workspace indexing of archives made optional</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>2981ae8</code></td><td>Merge branch 'semantic-ux/phase-1' of https://github.com/YellowsysOrg/YellowStorm-poc into semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>bda9c98</code></td><td>conversation cot</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>cdbbca2</code></td><td>Semantic model: ring the concepts a run is refreshing with a bright spinning border</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>d5aabc9</code></td><td>Semantic model: confirm concept refresh with an AI re-read choice, show its progress, keep workers consuming after long runs</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>64a783b</code></td><td>Revert &quot;Semantic models: admin switch for the permission check of agent tool calls&quot;</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>1706fe1</code></td><td>feat: add Azure Blob Storage support and refactor storage configuration</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>fbae286</code></td><td>Semantic models: admin switch for the permission check of agent tool calls</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>02e8349</code></td><td>Semantic model: keep every source's value for a field, report unfinished document reads and unindexed files</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>764ed14</code></td><td>Semantic model: fix audit bugs (run fingerprint with limits, corrections replay, hidden exact hits, earlier-index text, link fan-out, capability probes)</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>103f22e</code></td><td>last merge 2</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>088434d</code></td><td>last merge</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>8c31e81</code></td><td>Chat citations for semantic model records: record drawer, source documents and graph modal</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>30f35a3</code></td><td>Merge pull request #437 from YellowsysOrg/feat/merge06-106</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>5f5d7d2</code></td><td>fix adk requirement ci cd</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>5507618</code></td><td>fix: copy scripts folder before npm run build in backend Dockerfile</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>0d18986</code></td><td>Merge pull request #436 from YellowsysOrg/feat/merge06-106</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>e96eb19</code></td><td>fix native-qualification-host.ts pg integration test</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>7fb05d2</code></td><td>Graph view at scale: light outline, configurable drawing limit and offline HTML export</td></tr>
+<tr><td><span class="date">2026-10-07</span></td><td><code>3ea5373</code></td><td>fix node template pg integration test</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>1044bec</code></td><td>ci/cd fix backend test &amp; pg integration stage-observability</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>89702b4</code></td><td>Merge remote-tracking branch 'origin/main' into feat/merge06-106</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>b976267</code></td><td>ci/cd Stage observability &amp; unit test import</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>7de2e4e</code></td><td>deploiement</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>de99db0</code></td><td>Graph view: readable record panel, search, legend, focus, layouts and overview analytics</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>d8ee42d</code></td><td>Rule editor and concept panel: one-line fields, per-field read, folded concept parts</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>875b0b3</code></td><td>Rule editor: fold each part of &quot;fill from another concept&quot; into a pane</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>9e37639</code></td><td>Semantic search: find records through the record a question names, linked names, stemming and index fallback</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>4e30d29</code></td><td>Semantic search: walks over several links, multi-link fields and groups, and connect_records</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>8f2ac18</code></td><td>ci: fix tsc not found by running npm ci and add setup-python</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>c453585</code></td><td>ci: install Node.js for build-sdks.mjs script</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>a6aaa26</code></td><td>ci: fix YAML syntax error in GitHub workflows</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>7c01692</code></td><td>Merge pull request #435 from YellowsysOrg/feat/merge06-10</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>c7524cc</code></td><td>back ts config</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>2b31d46</code></td><td>Merge branch 'adk11-migration' into feat/merge06-10</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>34f9e91</code></td><td>merge semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>0a5e033</code></td><td>chore: remove verified dead code across the stack</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>9776f3e</code></td><td>translate</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>95336c8</code></td><td>Semantic model: shared-with-me tab, shared badge and share notifications</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>420772b</code></td><td>Semantic model: one-screen Run dialog, and an AI re-read option for updates</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>24350d0</code></td><td>fix(back): regenerate build output after dist</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>3e88095</code></td><td>fix: allow agent retyping with explicit Root unenrollment</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>0ee2fe7</code></td><td>fix: show the producing agent on conversation answers</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>001b80b</code></td><td>Semantic model: rebuild the graph only, and a graph status tooltip</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>6d1f2e6</code></td><td>Semantic search: typed AGE graph, exact link counts, completeness and empty-result diagnostics</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>ab687f4</code></td><td>Merge pull request #433 from YellowsysOrg/feature/app-builder-template</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>b4ecabd</code></td><td>feat(app-builder): guard internal service</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>63991de</code></td><td>Merge remote-tracking branch 'origin' into feature/app-builder-template</td></tr>
+<tr><td><span class="date">2026-10-06</span></td><td><code>dfec7c9</code></td><td>feat(app-data): nest cli dist souces</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>8884ef3</code></td><td>Semantic search: HNSW vector indexes on cards and passages</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>75c32cd</code></td><td>Semantic model: attachment text, parallel AI calls, detailed run progress, 25k-mail archives</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>1a07a81</code></td><td>docs: close local qualification with accepted capacity limit</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>03d67bf</code></td><td>docs: qualify disposable delegated sandbox and cleanup</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>d24eacf</code></td><td>docs: record governed root qualification and restoration</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>3f4fd89</code></td><td>test: verify standalone owned citation navigation</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>f3a3077</code></td><td>fix: preserve owned citation identity and registered page</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>a9cf78b</code></td><td>fix: hydrate selected worker sources before native dispatch</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>296c881</code></td><td>fix: capture scoped connector citations in owned workers</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>31ef9fa</code></td><td>test: qualify native events with production validation</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>a5299bd</code></td><td>fix: preserve native background events and failed work status</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>5240535</code></td><td>fix: allow first governed revision publication</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>93807fb</code></td><td>fix: allow scope owners to select themselves as collaborators</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>aefa4c9</code></td><td>feat: configure connector access for delegated workers</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>c4e65de</code></td><td>Semantic chat: query_records reads the records linked to given records; retire search_records</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>a3e05e3</code></td><td>test: qualify governed native inputs and epoch Stop</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>b293a7a</code></td><td>fix: resume sealed background fanout inputs</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>605d38d</code></td><td>Merge pull request #432 from YellowsysOrg/rs/a2a-mcp-caller-headers</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>e5e4e55</code></td><td>docs: logger README reconciled with the P11-retired write path</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>08ec05f</code></td><td>a2a: advertise per-connector MCP auth headers in the agent card</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>02261ef</code></td><td>feat: P11 legacy retirement - PostgreSQL logging sinks removed</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>ef25b29</code></td><td>Merge pull request #431 from YellowsysOrg/rs/a2a-mcp-caller-headers</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>f47474c</code></td><td>test: qualify native followup scheduler and publication</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>d80ee92</code></td><td>feat(app-builder): correct deploy</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>389ecb8</code></td><td>fix: authorize sealed followup lifecycle events</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>120cc43</code></td><td>a2a: forward caller X-MCP-&lt;slug&gt;-&lt;header&gt; to per-connector MCP auth</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>84c2a1a</code></td><td>feat: bind governed Root execution to signed published authority</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>c872226</code></td><td>fix: restore backend declarations required for qualification</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>73b258d</code></td><td>docs: ADK image build PASS - wheel-installed SDK emits envelopes in-container</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>e661ae9</code></td><td>docs: record T28 local container-build evidence (code-runtime PASS, ADK in flight)</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>5f17d16</code></td><td>fix: staging keeps consumer lockfiles in sync with the staged SDK tgz</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>4572002</code></td><td>fix: policy baseline shrink works - dedupe keys, replace instead of merge</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>833628c</code></td><td>Records table: refresh one concept, filter and resize columns; one click selects a concept</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>7eac185</code></td><td>fix: P05 review fixes - async-gen identity deps, pre-auth header bind removal</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>c8908de</code></td><td>fix runtimehost unit test</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>63395db</code></td><td>upgrade</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>48f9fa7</code></td><td>feat(app-template): unit test</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>af846f5</code></td><td>feat(app-template): ai capability resolve model</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>32acbac</code></td><td>feat(app-template): update runtime APP_RUNTIME_BIND_TOKEN</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>9a300c2</code></td><td>feat(app-builder): app name generator</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>8102e58</code></td><td>merge from semanticux-phase-1 commit</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>5cf7e55</code></td><td>feat(app-builder): starter manifest &amp; unit test front</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>4da9610</code></td><td>feat: complete P06 adoption (code-runtime, semantic-model-runtime, ADK celery)</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>d7e916b</code></td><td>Merge remote-tracking branch 'origin' into feature/app-builder-template</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>7acd946</code></td><td>fix: enforce pinned governance authority for citation reads</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>79c93eb</code></td><td>feat: unified observability logging stack (Grafana/Loki/Alloy, P00-P09)</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>43180a7</code></td><td>test: qualify HTTP ownership and cross-process model capacity</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>cb5dac0</code></td><td>feat: complete guarded background fanout and sealed follow-up runtime</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>ebb1746</code></td><td>feat(app-builder): docs module readme</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>f08af61</code></td><td>feat(app-builder): template ceph cleanup</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>e3954a0</code></td><td>feat(app-builder): template studio preview</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>d1143d0</code></td><td>feat(app-builder): preview browser chrome</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>a6e17aa</code></td><td>feat(app-builder): studio session ux</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>274bb92</code></td><td>feat(app-builder): studio public routes</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>bb51760</code></td><td>refactor(agent): use configured Yellowmind instructions and tools</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>b96f503</code></td><td>adk 2.11 mig</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>946b93c</code></td><td>Semantic search: Yellowmind answers model chats with its DB instruction and selected read tools; honest, more forgiving search</td></tr>
+<tr><td><span class="date">2026-10-05</span></td><td><code>35741c2</code></td><td>feat: hydrate owned background fanout items through guarded API</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>e07a8e3</code></td><td>feat: persist fenced fanout coordinators and owned producers</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>ace8616</code></td><td>optimizations</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>fc1d9f0</code></td><td>feat: checkpoint root delegation and fenced background runtime</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>24db54e</code></td><td>Documents: several records per document by rules, one record per match (beside the AI's items)</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>a58888d</code></td><td>Spreadsheet sources: several records per row by splitting a column (lists, JSON arrays, address lists, lines, delimiters)</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>a07656f</code></td><td>Fill from concept: several records per source record by expanding a field (lists, JSON arrays, address lists, lines, delimiters), item fields, links back</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>280e329</code></td><td>Switch a canvas source to another workspace, document or spreadsheet in place, keeping its mappings</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>ad6b9af</code></td><td>Semantic model dropdowns: height-capped, scrolling lists with search once they hold more than 8 items</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>80ff4d5</code></td><td>Recipe preview reads sample documents on request; fill-from-concept gets presets and its own AI limits</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>c8e7371</code></td><td>Data preview applies recipes, joins and cell rules; values say what they were built from; sheet recipes can chain</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>c0e237a</code></td><td>Agent config: code-review-graph with embeddings, graph-first rule starts from minimal context</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>6337e30</code></td><td>Search settings: admin panes for embedding/passages and search, per-field passage overrides</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>93e91fd</code></td><td>Graph search settings: stop words, admin index/search settings sent to the runtime, per-field passage overrides</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>5aa8444</code></td><td>docs: ADK 2.11 root delegation implementation handoff (WP00-WP04 done, WP05-WP10 remaining)</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>08b1786</code></td><td>Recipes join several columns or fields into one value, for documents, sheets and records</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>a5dad8b</code></td><td>WP04 review fixes: depth coercion, child usage gate, execution-scoped run ids</td></tr>
+<tr><td><span class="date">2026-10-04</span></td><td><code>1291391</code></td><td>WP04: library delegation vertical slice</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>c74aa54</code></td><td>Derived sources get the shared field mapping: copy, extract from a source field with rules/AI, recipe, fixed</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>3c8d81e</code></td><td>WP03 re-review fix: admit root scope before creating the workflow task</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>27bbaa3</code></td><td>WP03 review fixes: fenceable Stop ids, live abort wiring, digest/dedup hardening</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>5af31f7</code></td><td>Sheet fields get the document field mapping: read directly, extract from a cell with rules/AI, take from a field</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>15b783d</code></td><td>Fix duplicate tool-call activity from ADK 2.11 partial streaming events</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>4bde3b8</code></td><td>Graph search: long text fields searched to their end through passages</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>cf47522</code></td><td>Fix None-args tool call crash in mono path</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>650eea9</code></td><td>WP03: trusted runtime scope, compiler facade and evidence foundation</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>40cedc7</code></td><td>Sheet recipe editor: offer the field's own column before the sheet is read</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>8b9de50</code></td><td>Sheet fields get the document recipe editor: take it from, cut, keep, shape, clean-up</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>b38fadf</code></td><td>E-mail reader: corps falls back to the full text when an e-mail adds nothing of its own</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>e945525</code></td><td>E-mail archive: full message body (corps) replaces the 500-char preview (apercu)</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>a608cb5</code></td><td>WP02: shared root editor UI, allowlist resolver, effective-pool endpoint</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>76ce714</code></td><td>Sidebar: opening a semantic model collapses the main sidebar</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>7e6cb28</code></td><td>WP01: root-execution policy persistence, allowlist junctions, conversation root binding</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>b89b73f</code></td><td>Semantic models: choose what a clone copies (sources, built data, shares)</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>53b6ec7</code></td><td>WP00: qualify google-adk 2.11.0 ΓÇö pin, compat fixtures, recorded limitations</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>cc876f7</code></td><td>Semantic models: delete a model permanently, with a data-loss warning</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>923d5c7</code></td><td>feat(conversation): gate platform copilot handoff behind feature visibility and permissions</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>ce3315f</code></td><td>Semantic model data: query_records and describe_model for filters, counts and stats</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>1f23adc</code></td><td>Mapping rules: AI-read fields get a semantic definition and a chosen agent</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>5d1b02b</code></td><td>Mapping rules: computed fields reuse keep, value look and clean-up; pick files for the preview; panes start collapsed</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>fe5f4cc</code></td><td>Model editor: edit a source from its canvas node; a workspace mapping shows its own files, subfolders included</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>73527b6</code></td><td>Model editor: add a source from a concept; a click on the empty canvas closes the side panels</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>9b86624</code></td><td>Model editor: every form reads alike, help behind tooltips</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>78a5dd0</code></td><td>Model editor: compact canvas toolbar and a lighter details panel</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>8f52e6e</code></td><td>Model editor: repopulate from scratch from the Run dialog</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>98684d3</code></td><td>Population: repopulate a model from scratch</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>c75e88a</code></td><td>Population: the build version also covers the worker code</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>50a4900</code></td><td>Population: a changed reader reads its tables again</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>4f0bcd3</code></td><td>Readers: a changed reader prepares its tables again</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>6073d3f</code></td><td>Model assistant: an edited field is reported in the summary</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>43d6fac</code></td><td>Population: a changed runtime builds again</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>34b6767</code></td><td>Review list: only links that should exist are reported</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>0ffce93</code></td><td>E-mail reader: an address repeated as its name gives no name</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>e6b85bd</code></td><td>AI extraction: a date in brackets is read as ISO too</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>dc00668</code></td><td>AI extraction: dates are stored as ISO</td></tr>
+<tr><td><span class="date">2026-10-03</span></td><td><code>3a43384</code></td><td>AI extraction: a fact's date may be written as ISO</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>ec7f77b</code></td><td>AI extraction: an item may be summed up and classified</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>511027c</code></td><td>AI extraction is told what each field means</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>4b1841c</code></td><td>Semantic model: plain-text files can be mapped as documents</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>bd664ed</code></td><td>Discovery: a failed analysis can be retried</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>8dd1dc4</code></td><td>Discovery: one profile per file, not per content</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>ea5d824</code></td><td>Derived files: keep an e-mail found in two archives once</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>798b0ad</code></td><td>Semantic model: several records per document</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>c09876c</code></td><td>Semantic model: e-mail archive reader, derived files, configurable run limits</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>3676a0e</code></td><td>semantic model presets</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>fc31bf8</code></td><td>playbook cleaning + semantic polishing</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>d180d6d</code></td><td>feat(app-builder): categories ui ux</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>50bc6eb</code></td><td>Semantic mapping: value shaper and graphical rule editor</td></tr>
+<tr><td><span class="date">2026-10-02</span></td><td><code>292afc7</code></td><td>semantic model - mapping extraction</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>35b213a</code></td><td>Merge pull request #418 from YellowsysOrg/semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>5849b88</code></td><td>Merge remote-tracking branch 'origin/main' into semantic-ux/phase-1</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>851469c</code></td><td>playbook fix + semantic</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>e183271</code></td><td>Merge pull request #419 from YellowsysOrg/rs/fix-parallel-super-step</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>a64cedd</code></td><td>LangGraph: bind an await to its nearest send ancestor + fail unroutable waits</td></tr>
+<tr><td><span class="date">2026-10-01</span></td><td><code>a5b555b</code></td><td>LangGraph: Functional-API executor (fixes super-step lockstep) + ask_user</td></tr>
+</tbody></table></details>
+
+<footer>Generated from Git history on branch <code>security/p0p1-remediation</code> at <code>ef5f412</code>. Period 2026-10-01 → 2026-10-21.</footer>
+</div>
+</body>
+</html>

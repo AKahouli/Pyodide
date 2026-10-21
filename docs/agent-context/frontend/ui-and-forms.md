@@ -25,6 +25,28 @@ When adding a new editable field to an autosaved editor, update all layers in on
 
 **Conversation artifacts:** When viewing an artifact, [ArtifactRow](../../../YellowStorm/front/src/modules/conversation/components/activity/ConversationAssistantBubble.tsx) uses the supplied MIME only when `isViewableFile` accepts it; otherwise it infers from the filename via `getMimeTypeFromFilename`, then falls back to the supplied MIME, then `application/octet-stream`. This supports Markdown, text, CSV, XLSX, PPT/PPTX, PDF, and DOCX filenames; a DOCX filename can override a misleading `application/zip` MIME, while an unknown ZIP filename retains `application/zip`. DOCX rendering remains owned by the existing `DocxRenderer`. Focused behavior coverage is in [ConversationAssistantBubble.test.tsx](../../../YellowStorm/front/src/modules/conversation/components/activity/ConversationAssistantBubble.test.tsx).
 
+### Connector editor guidance
+
+The connector editor uses supplementary help tooltips rather than persistent
+instruction paragraphs for editable fields, including nested branding, mapping,
+skill selection and worker controls. Persistent labels, validation errors,
+credential state and save-before-inspection notices remain visible. Help triggers
+must support keyboard focus and pointer access; option help describes the choice
+without inserting interactive help buttons inside list options. Dynamic items use
+actual descriptions or truthful selection context, not invented capabilities.
+
+`MultiSelect` exposes optional tooltip guidance; callers that do not opt in retain
+inline descriptions and existing behavior. In tooltip mode Command highlight, not
+DOM focus, selects option guidance while search retains focus. Unique option IDs
+distinguish duplicate labels, with label keywords preserving filtering. Native
+color-picker internals are browser-owned; the color/hex fields receive guidance.
+Slot-based tooltip triggers require ref-capable controls: the shared Switch
+forwards its ref to the Radix root. Suppressed MultiSelect help retains a
+consistently controlled open state instead of switching between boolean/undefined.
+Advanced fieldsets and dynamic rows must shrink or wrap on narrow localized views
+rather than force min-content horizontal overflow. Tooltips never replace
+connector authorization, revision fencing or actionable error messages.
+
 ## Internationalisation (i18n)
 
 **No hardcoded user-facing string. Ever.** Every label, placeholder, tooltip, toast, validation message, and aria-label goes through i18n.

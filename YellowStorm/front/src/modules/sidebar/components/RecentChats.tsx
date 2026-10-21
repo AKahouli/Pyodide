@@ -20,6 +20,7 @@ import { ShareDialog } from '@/modules/conversation/components/ShareDialog';
 import { ConversationItem } from './ConversationItem';
 import { decodeConversationDrag, hasConversationDrag } from './drag-types';
 import { groupByDay, disambiguateTitles, type HistoryRow } from './chatGroups';
+import { conversationPinKey, usePinnedConversations } from '../hooks/usePinnedConversations';
 
 /**
  * Day-grouped chat list shared by the sidebar rail and the All chats page.
@@ -30,14 +31,18 @@ export const RecentChats = memo(function RecentChats({
   loading,
   showAllChatsLink = false,
   compact = false,
+  includeSavedPins = false,
 }: {
   rows: HistoryRow[];
   loading?: boolean;
   showAllChatsLink?: boolean;
   compact?: boolean;
+  includeSavedPins?: boolean;
 }) {
   const { t } = useModuleTranslation('sidebar');
   const navigate = useNavigate();
+  const { pins, togglePin, unpin, renamePin } = usePinnedConversations();
+  const pinnedKeys = useMemo(() => new Set(pins.map(conversationPinKey)), [pins]);
 
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
@@ -70,16 +75,18 @@ export const RecentChats = memo(function RecentChats({
     async (id: string) => {
       const wasCurrentConversation = currentConversationId === id;
       await deleteConversation(id);
+      unpin({ kind: 'v1', id });
       if (wasCurrentConversation) navigate('/');
     },
-    [currentConversationId, deleteConversation, navigate],
+    [currentConversationId, deleteConversation, navigate, unpin],
   );
 
   const handleRename = useCallback(
     async (id: string, newTitle: string) => {
       await updateConversation(id, { title: newTitle });
+      renamePin({ kind: 'v1', id }, newTitle);
     },
-    [updateConversation],
+    [updateConversation, renamePin],
   );
 
   const handleShare = useCallback((id: string, title: string) => {
@@ -107,9 +114,10 @@ export const RecentChats = memo(function RecentChats({
     async (sessionId: string) => {
       const wasCurrent = currentV2SessionId === sessionId;
       await removeV2(sessionId);
+      unpin({ kind: 'v2', id: sessionId });
       if (wasCurrent) navigate('/studio');
     },
-    [currentV2SessionId, removeV2, navigate],
+    [currentV2SessionId, removeV2, navigate, unpin],
   );
 
   const handleHistoryDrop = useCallback(
@@ -124,14 +132,25 @@ export const RecentChats = memo(function RecentChats({
     [moveConversationToProject, t],
   );
 
-  const dayGroups = useMemo(() => groupByDay(disambiguateTitles(rows)), [rows]);
-  const displayedGroups = compact ? [{ bucket: 'today' as const, rows: disambiguateTitles(rows) }] : dayGroups;
+  const displayedGroups = useMemo(() => {
+    const live = new Map(rows.map((row) => [conversationPinKey(row), row]));
+    const pinned = disambiguateTitles(pins.flatMap((pin) => {
+      const row = live.get(conversationPinKey(pin));
+      return row ? [row] : includeSavedPins ? [pin] : [];
+    }));
+    const recent = disambiguateTitles(rows.filter((row) => !pinnedKeys.has(conversationPinKey(row))));
+    return [
+      ...(pinned.length ? [{ bucket: 'pinned' as const, rows: pinned }] : []),
+      ...(compact ? [{ bucket: 'today' as const, rows: recent }] : groupByDay(recent)),
+    ];
+  }, [rows, pins, pinnedKeys, compact, includeSavedPins]);
   const dayLabels = useMemo(
     () => ({
       today: t('recentChats.today'),
       yesterday: t('recentChats.yesterday'),
       last7: t('recentChats.last7'),
       older: t('recentChats.older'),
+      pinned: t('recentChats.pinned'),
     }),
     [t],
   );
@@ -163,6 +182,7 @@ export const RecentChats = memo(function RecentChats({
 
   return (
     <div
+      data-history-list
       className={cn(!compact && 'min-h-full', isOver && 'rounded-md bg-primary/5 ring-1 ring-primary/40')}
       onDragOver={onDragOver}
       onDragEnter={onDragOver}
@@ -171,8 +191,8 @@ export const RecentChats = memo(function RecentChats({
     >
       {displayedGroups.map(({ bucket, rows: groupRows }) => (
         <div key={bucket}>
-          {!compact && <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
-            {dayLabels[bucket]}
+          {groupRows.length > 0 && (!compact || pinnedKeys.size > 0) && <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
+            {compact && bucket !== 'pinned' ? t('recentChats.label') : dayLabels[bucket]}
           </div>}
           <SidebarMenu className='pe-1'>
             {groupRows.map((row) =>
@@ -180,19 +200,26 @@ export const RecentChats = memo(function RecentChats({
                 <ConversationItem
                   key={`v2-${row.id}`}
                   id={row.id}
+                  pinned={pinnedKeys.has(conversationPinKey(row))}
+                  onTogglePin={() => togglePin(row)}
                   title={row.displayTitle}
                   to={row.to}
                   icon={<Sparkles className='h-4 w-4 text-primary' />}
                   isActive={currentV2SessionId === row.id}
                   streaming={(v2Streaming && currentV2SessionId === row.id) || v2BackgroundStreamingIds.includes(row.id)}
                   draggable={false}
-                  onRename={(newTitle) => renameV2(row.id, newTitle)}
+                  onRename={async (newTitle) => {
+                    await renameV2(row.id, newTitle);
+                    renamePin(row, newTitle);
+                  }}
                   onDelete={() => handleDeleteV2(row.id)}
                 />
               ) : (
                 <ConversationItem
                   key={row.id}
                   id={row.id}
+                  pinned={pinnedKeys.has(conversationPinKey(row))}
+                  onTogglePin={() => togglePin(row)}
                   title={row.displayTitle}
                   projectId={row.conv?.projectId ?? null}
                   isGroup={row.conv?.isGroup}
@@ -219,7 +246,7 @@ export const RecentChats = memo(function RecentChats({
         </SidebarMenu>
       )}
 
-      {!loading && rows.length === 0 && (
+      {!loading && displayedGroups.every((group) => group.rows.length === 0) && (
         <p className='px-2 py-1 text-xs text-muted-foreground'>{t('recentChats.empty')}</p>
       )}
 

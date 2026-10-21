@@ -116,11 +116,45 @@ database and an embedding profile; without one, search answers exact keys only:
 
 - `SEMANTIC_EMBEDDING_BASE_URL`: OpenAI-compatible LiteLLM origin (no `/v1`).
 - `SEMANTIC_EMBEDDING_API_KEY`: a LiteLLM key for this service.
-- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions).
-- `SEMANTIC_EMBEDDING_DIMENSION` (2560): the model's vector size. It must equal the
-  `halfvec(...)` width of the embedding columns, so changing it means a migration too.
+- `SEMANTIC_EMBEDDING_MODEL`: deployment-configured LiteLLM embedding alias.
+- `SEMANTIC_EMBEDDING_DIMENSION`: optional compatibility assertion, not a storage-size
+  setting. Omit it or set exactly `3072`. Storage/profile width is fixed at 3072; any
+  conflicting value fails with `embedding_dimension_unsupported` before profile creation
+  or build admission. Provider responses must match exactly; dimension is part of fingerprints.
 - Optional: `SEMANTIC_EMBEDDING_TIMEOUT_SECONDS` (30),
   `SEMANTIC_EMBEDDING_BATCH_SIZE` (32), `SEMANTIC_SEARCH_MIN_SIMILARITY` (0.4).
+
+Migration `038_graph_search_embedding_3072.sql` upgrades the historical 2560-wide
+document/passage parents, all attached partitions and embedding cache to fixed `halfvec(3072)`.
+Stop runtime API/search workers and other writers, then run from this directory:
+`conda run -n meta python scripts/migrate.py` with `SEMANTIC_RUNTIME_DATABASE_URL` set.
+The existing runner atomically applies the SQL and checksum; do not edit old migrations.
+User-approved disposable search data is cleared: only `semantic_graph_search.entity_documents`,
+`entity_passages` and `embedding_cache` (including their partition rows) are truncated,
+without CASCADE. Old index generations become failed (`embedding_storage_changed`), with
+leases released, so no cleared generation remains READY or eligible as a search fallback.
+Population/generated records, mappings, workspace files and population `active_bindings`
+are untouched. Those bindings serve data revisions, not search index generations; there
+is no separate search current-pointer table to clear. Existing embedding indexes are rebuilt
+at the new width, including explicit old-width expression casts. Complete attached index
+trees are recreated and reattached bottom-up (replaying a parent `ON ONLY` alone would
+leave an invalid index); standalone index names/options/predicates remain intact.
+No mixed-dimension storage,
+profile routing, vector truncation/padding or automatic rebuild is introduced.
+
+After migration/restart, request fresh indexes through `POST /v1/semantic-model-search/indexes`.
+Semantic search needs rebuilt indexes; source/generated data need not be repopulated.
+Provider compatibility remains a separate rollout gate: a provider returning 4096 by default
+and HTTP 400 for explicit 3072 is not compatible. Responses must contain exactly 3072 finite,
+nonzero values; mismatches fail closed, without truncation/padding. Do not claim runtime
+compatibility until the provider is corrected. `halfvec` HNSW supports up to 4000 dimensions
+(pgvector >= 0.7). A post-commit rollback requires coordinated storage migration/rebuild,
+not an environment-only change; the discarded old search vectors are not recoverable from this DB.
+
+Focused migration regression (destructive **only to disposable test schemas**):
+`conda run -n meta pytest tests/test_graph_search_embedding_migration.py -q -o pythonpath=.`.
+The DB case requires both `SEMANTIC_RUNTIME_TEST_DATABASE_URL` and explicit
+`SEMANTIC_RUNTIME_TEST_ALLOW_SCHEMA_RESET=1`; otherwise only the static case runs.
 
 Indexes are built by a third worker on queue `semantic-model-search.index`
 (`scripts/start-workers.ps1 -Only search`); a draft build and a publish request

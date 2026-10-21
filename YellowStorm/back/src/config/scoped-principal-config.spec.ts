@@ -2,8 +2,7 @@ import { configValidationSchema } from './config.schema';
 import * as Joi from 'joi';
 
 describe('R01 independent principal startup configuration', () => {
-  const keys = ['AGENT_MCP_BACKEND_SERVICE_TOKEN', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
-    'SEMANTIC_MODEL_MCP_SERVICE_TOKEN', 'ADK_RUNTIME_MCP_RENEWAL_TOKEN', 'APP_RUNTIME_BIND_TOKEN',
+  const keys = ['ADK_RUNTIME_MCP_RENEWAL_TOKEN', 'APP_RUNTIME_BIND_TOKEN',
     'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN', 'ADK_ROOT_RUNTIME_SERVICE_TOKEN',
     'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN'];
   const validate = (values: Record<string, unknown>) => configValidationSchema.validate(values, { allowUnknown: true, abortEarly: false });
@@ -37,7 +36,19 @@ describe('R01 independent principal startup configuration', () => {
 
   it('allows unconfigured development principals, but no whitespace-only or padded configured secret', () => {
     expect(validate({ NODE_ENV: 'test' }).error).toBeUndefined();
-    expect(validate({ NODE_ENV: 'test', AGENT_MCP_BACKEND_SERVICE_TOKEN: '    ' }).error).toBeDefined();
-    expect(validate({ NODE_ENV: 'test', AGENT_MCP_BACKEND_SERVICE_TOKEN: 'padded ' }).error).toBeDefined();
+    expect(validate({ NODE_ENV: 'test', ADK_RUNTIME_MCP_RENEWAL_TOKEN: '    ' }).error).toBeDefined();
+    expect(validate({ NODE_ENV: 'test', ADK_RUNTIME_MCP_RENEWAL_TOKEN: 'padded ' }).error).toBeDefined();
+  });
+
+  it('has no retired MCP machine credential fields or production requirements', () => {
+    const retired = ['AGENT_MCP_BACKEND_SERVICE_TOKEN', 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN', 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN'];
+    for (const key of retired) expect(() => configValidationSchema.extract(key)).toThrow();
+    const valid = Object.fromEntries(keys.map((key, index) => [key, `synthetic-${index}-${'x'.repeat(32)}`]));
+    const result = validate({ NODE_ENV: 'production', ...valid });
+    expect(result.error?.details.filter(detail => retired.some(key => detail.path.includes(key))) ?? []).toEqual([]);
+    // Old deployment variables are unknown configuration, not runtime authority:
+    // they cannot force equality/padding failures for the active credential set.
+    expect(validate({ NODE_ENV: 'test', ADK_RUNTIME_MCP_RENEWAL_TOKEN: 'active-secret',
+      ...Object.fromEntries(retired.map(key => [key, 'active-secret'])) }).error).toBeUndefined();
   });
 });

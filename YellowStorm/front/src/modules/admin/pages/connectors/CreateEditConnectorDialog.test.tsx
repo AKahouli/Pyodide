@@ -3,12 +3,22 @@ import { useState, type ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, expect, it, beforeEach } from 'vitest';
 import type { ConnectorOAuthStatusResponse, ConnectorResponse, McpInspectResult } from '../../types';
-import { getConnectorAppOAuthStatus, inspectMcp } from '../../api';
+import { getConnectorAppOAuthStatus, getConnectorCategories, inspectMcp } from '../../api';
+import en from '../../locales/en.json';
+import fr from '../../locales/fr.json';
+import ar from '../../locales/ar.json';
+import { getAdminConnectedApps } from '@/modules/connected-app/api';
 import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
 import type { ConnectorSecurityPolicy } from './connector-form-schema';
-import { serializeConnectorSecretFields } from './connector-form-schema';
+import { securityPolicyChanged, serializeConnectorSecretFields } from './connector-form-schema';
 
 const hasPermission = vi.hoisted(() => vi.fn(() => true));
+it('detects workspace authorization changes without treating absent and false as different authority', () => {
+  const policy: ConnectorSecurityPolicy = { version: 1, profile: 'internal_jwt', audience: 'mcp-logical-search', actorDelegation: 'verified_user', allowPrivateNetwork: true, allowInsecureHttp: false, requiredPermissions: [] };
+  expect(securityPolicyChanged({ ...policy, workspaceAuthorization: true }, policy)).toBe(true);
+  expect(securityPolicyChanged(policy, { ...policy, workspaceAuthorization: true })).toBe(true);
+  expect(securityPolicyChanged({ ...policy, workspaceAuthorization: false }, policy)).toBe(false);
+});
 vi.mock('../../hooks/usePermissions', () => ({ usePermissions: () => ({ hasPermission }) }));
 beforeEach(() => {
   hasPermission.mockReturnValue(true);
@@ -67,6 +77,99 @@ const connector: ConnectorResponse = {
 };
 
 describe('CreateEditConnectorDialog tool table', () => {
+  it('has localized concrete guidance for the editable field inventory and static options', () => {
+    const fields = ['slug', 'name', 'description', 'category', 'icon', 'color', 'iconMode', 'iconClear', 'url', 'transport', 'source', 'app', 'audience', 'private', 'http', 'permissions', 'token', 'clearCredential', 'strategy', 'headerName', 'headerKey', 'mappingValue', 'envKey', 'removeMapping', 'serverConfig', 'dynamicName', 'dynamicSource', 'dynamicEnabled', 'dynamicRemove', 'toolEnabled', 'toolSelect', 'resultKind', 'citationMode', 'itemsPath', 'resultField', 'skills', 'active', 'hidden', 'system', 'inspect', 'connect', 'disconnect', 'addHeaderMapping', 'addEnvMapping', 'addDynamic'];
+    const options = ['option.public', 'option.configured', 'option.internal_jwt', 'option.credential', 'option.connected_app', 'option.none', 'option.streamable_http', 'option.sse', 'option.http_header_bearer', 'option.custom_headers', 'option.env_vars', 'option.categoryAdd', 'option.categoryNone', 'option.appNone', 'result.generic', 'result.web_search', 'result.web_fetch', 'result.document_search', 'result.file_read', 'result.database_query', 'citation.none', 'citation.source_only', 'citation.text_fragment', 'citation.document_evidence', 'dynamic.workspace', 'dynamic.user_id', 'dynamic.user_email', 'dynamic.user_first_name', 'dynamic.user_last_name', 'dynamic.user_full_name', 'access.inherit', 'access.allow', 'access.block', 'kind.inherit', 'kind.leaf', 'kind.orchestration', 'kind.unknown'];
+    for (const key of [...fields, ...options]) {
+      for (const locale of [en, fr, ar]) {
+        const text = (locale as Record<string, string>)[`connectors.help.${key}`];
+        expect(text, key).toBeTruthy();
+        expect(text.length, key).toBeGreaterThan(locale === ar ? 20 : 35);
+        if (locale === ar) expect(text, key).toMatch(/[\u0600-\u06ff]/);
+        expect(text).not.toContain('connectors.help.');
+      }
+    }
+  });
+
+  it('explains keyboard-highlighted static Select options without changing their names', async () => {
+    const user = userEvent.setup();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={vi.fn()} />);
+    await user.click(screen.getByLabelText('connectors.form.fields.transportType.label'));
+    const sse = screen.getByRole('option', { name: 'SSE (Server-Sent Events)' });
+    await user.keyboard('{End}');
+    expect(sse).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('connectors.help.option.sse');
+    expect(sse).toHaveAccessibleDescription('connectors.help.option.sse');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('uses actual dynamic category descriptions on pointer and keyboard without exposing stored secrets', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getConnectorCategories).mockResolvedValueOnce([{ id: 'category-run-help', name: 'Operations', description: 'Tools for incident response and service operations.', isSystem: false, createdBy: '', createdAt: '', updatedAt: '' }]);
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, categoryId: 'category-run-help', credentialConfigured: true }} onSave={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'connectors.help.categoryLabel' })).toHaveTextContent('Operations'));
+    await user.click(screen.getByRole('combobox', { name: 'connectors.help.categoryLabel' }));
+    const option = screen.getByRole('option', { name: 'Operations' });
+    act(() => option.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Tools for incident response and service operations.');
+    expect(screen.queryByLabelText('connectors.form.auth.accessToken')).not.toBeInTheDocument();
+    await user.hover(option);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Tools for incident response and service operations.');
+  });
+
+  it('shows provider descriptions, never provider secrets, in dynamic connected-app option help', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getAdminConnectedApps).mockResolvedValueOnce([{
+      id: 'app-help-run', appKey: 'help-provider', displayName: 'Help Provider', description: 'Connect your account to use the configured provider.', clientId: 'private-client-id', clientSecret: 'run-owned-secret-never-in-help', authorizationUrl: 'https://provider.example.test/authorize', tokenUrl: 'https://provider.example.test/token', scopes: [], pkceEnabled: true, enabled: true, sortOrder: 0, connectedUserCount: 0, createdAt: '', updatedAt: '',
+    }]);
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'connected_app', connectedAppKey: 'help-provider' }} onSave={vi.fn()} />);
+    const app = screen.getByRole('combobox', { name: 'connectors.form.auth.connectedAppLabel' });
+    await waitFor(() => expect(app).toHaveTextContent('Help Provider'));
+    await user.click(app);
+    const option = screen.getByRole('option', { name: 'Help Provider' });
+    await user.hover(option);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Connect your account to use the configured provider.');
+    expect(document.body).not.toHaveTextContent('run-owned-secret-never-in-help');
+    expect(document.body).not.toHaveTextContent('private-client-id');
+  });
+
+  it('renders field and operational guidance throughout the expanded editor without displaying it at rest', () => {
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={vi.fn()} />);
+    for (const key of ['slug', 'name', 'url', 'transport', 'source', 'description', 'category', 'icon', 'color', 'permissions', 'private', 'serverConfig', 'addDynamic', 'inspect', 'resultKind', 'citationMode', 'skills', 'active', 'hidden', 'system']) {
+      expect(screen.getByRole('button', { name: `connectors.help.${key}` })).toBeVisible();
+    }
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(screen.getByText('connectors.form.fields.serverConfig.preservedHelper')).toBeVisible();
+  });
+
+  it('allows the advanced fieldset to shrink and stacks dynamic header names on mobile', () => {
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, dynamicHeaders: [{ headerName: 'X-User-Id', source: 'user_id', enabled: true }] }} onSave={vi.fn()} />);
+    const header = screen.getByPlaceholderText('connectors.help.dynamicPlaceholder');
+    expect(header.closest('fieldset')).toHaveClass('min-w-0');
+    expect(header.closest('details')).toHaveClass('min-w-0');
+    expect(header).toHaveClass('col-span-3', 'sm:col-span-1');
+    expect(header.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_auto_auto]', 'sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]');
+  });
+
+  it('opens field guidance on keyboard focus and pointer hover without hiding operational warnings', async () => {
+    const user = userEvent.setup();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={vi.fn()} />);
+    expect(screen.queryByText('connectors.form.auth.securityProfileHelper')).not.toBeInTheDocument();
+    const profileHelp = screen.getByRole('button', { name: 'connectors.form.auth.securityProfile' });
+    act(() => profileHelp.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('connectors.form.auth.securityProfileHelper');
+    expect(profileHelp).toHaveAccessibleDescription('connectors.form.auth.securityProfileHelper');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    act(() => profileHelp.blur());
+    const headerHelp = screen.getByRole('button', { name: 'connectors.form.dynamicHeaders.helper' });
+    await user.hover(headerHelp);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('connectors.form.dynamicHeaders.helper');
+    await user.hover(screen.getByRole('button', { name: 'connectors.form.inspect.action' }));
+    screen.getAllByText('connectors.form.inspect.saveFirst').forEach((node) => expect(node).toBeVisible());
+  });
+
   it('restores focus to the current opener after Escape, including reopening', async () => {
     const user = userEvent.setup();
     function Harness() {
@@ -89,6 +192,116 @@ describe('CreateEditConnectorDialog tool table', () => {
   });
 
   const internalPolicy: ConnectorSecurityPolicy = { version: 1, profile: 'internal_jwt', audience: 'custom-recipient', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: ['connectors.read'] };
+
+  it('explicitly toggles workspace scope with revision fencing and requires saving before inspection', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: internalPolicy, securityRevision: 8 }} onSave={onSave} />);
+    const scope = screen.getByRole('switch', { name: 'connectors.form.security.workspaceAuthorization' });
+    expect(scope).toHaveAccessibleDescription('connectors.form.security.workspaceAuthorizationHelper');
+    await user.click(scope);
+    expect(scope).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ expectedSecurityRevision: 8, mcpSecurityPolicy: { ...internalPolicy, workspaceAuthorization: true } }));
+    await user.click(scope);
+    expect(scope).not.toBeChecked();
+  });
+
+  it.each([
+    { profile: 'public' as const },
+    { actorDelegation: 'none' as const },
+    { audience: '' },
+  ])('disables workspace opt-in without eligible authority %j', (override) => {
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: { ...internalPolicy, ...override } }} onSave={vi.fn()} />);
+    expect(screen.getByRole('switch', { name: 'connectors.form.security.workspaceAuthorization' })).toBeDisabled();
+  });
+
+  it('revokes configured workspace authority with a valid nondelegated policy', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', workspaceAuthorization: true }, securityRevision: 8 }} onSave={onSave} />);
+    await user.click(screen.getByRole('switch', { name: 'connectors.form.security.workspaceAuthorization' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ expectedSecurityRevision: 8, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', workspaceAuthorization: false, actorDelegation: 'none', audience: undefined } }));
+  });
+
+  it('hides workspace authority from editors without security permission', () => {
+    hasPermission.mockReturnValue(false);
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: internalPolicy }} onSave={vi.fn()} />);
+    expect(screen.queryByRole('switch', { name: 'connectors.form.security.workspaceAuthorization' })).not.toBeInTheDocument();
+  });
+
+  it('retains explicit workspace authorization when moving configured assertions to internal JWT and changing credentials', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const policy = { ...internalPolicy, profile: 'configured' as const, workspaceAuthorization: true };
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'credential', mcpSecurityPolicy: policy, securityRevision: 7 }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.securityProfile.configured').closest('button')!);
+    await user.click(screen.getByRole('option', { name: 'connectors.form.securityProfile.internalJwt' }));
+    await user.click(screen.getByText('connectors.form.auth.savedCredential').closest('button')!);
+    await user.click(screen.getByRole('option', { name: 'connectors.form.auth.noAuthSource' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpSecurityPolicy: { ...policy, profile: 'internal_jwt' }, expectedSecurityRevision: 7 }));
+  });
+
+  it('preserves workspace opt-in on unrelated policy edits and omits unchanged policy on metadata saves', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const policy = { ...internalPolicy, workspaceAuthorization: true };
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'credential', mcpSecurityPolicy: policy, securityRevision: 7 }} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText('connectors.form.fields.name.placeholder'), ' renamed');
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ mcpSecurityPolicy: undefined, expectedSecurityRevision: 7 }));
+    await user.click(screen.getByLabelText('connectors.form.security.allowInsecureHttp'));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ mcpSecurityPolicy: { ...policy, allowInsecureHttp: true } }));
+  });
+
+  it.each(['public', 'configured'] as const)('explicitly clears workspace authorization when %s removes delegation', async (profile) => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: { ...internalPolicy, workspaceAuthorization: true }, securityRevision: 7 }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.securityProfile.internalJwt').closest('button')!);
+    await user.click(screen.getByRole('option', { name: `connectors.form.securityProfile.${profile}` }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpSecurityPolicy: expect.objectContaining({ profile, actorDelegation: 'none', workspaceAuthorization: false }) }));
+  });
+
+  it('explicitly clears configured workspace authorization on incompatible transport', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const policy = { ...internalPolicy, profile: 'configured' as const, workspaceAuthorization: true };
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: policy, securityRevision: 7 }} onSave={onSave} />);
+    await user.click(screen.getByLabelText('connectors.form.fields.transportType.label'));
+    await user.click(screen.getByRole('option', { name: /SSE/ }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpTransportType: 'sse', mcpSecurityPolicy: { ...policy, workspaceAuthorization: false, actorDelegation: 'none', audience: undefined } }));
+  });
+
+  it('preserves configured workspace delegation across compatible credential changes', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const policy = { ...internalPolicy, profile: 'configured' as const, workspaceAuthorization: true };
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'credential', mcpSecurityPolicy: policy, securityRevision: 7 }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.auth.savedCredential').closest('button')!);
+    await user.click(screen.getByRole('option', { name: 'connectors.form.auth.connectedAccount' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ authSourceType: 'connected_app', mcpSecurityPolicy: undefined }));
+    // A policy edit serializes the retained flag and delegation, not inferred defaults.
+    await user.click(screen.getByLabelText('connectors.form.security.allowPrivateNetwork'));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ mcpSecurityPolicy: { ...policy, allowPrivateNetwork: true } }));
+  });
+
+  it('never infers workspace authorization from the Logical Search audience', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', audience: 'mcp-logical-search' }, securityRevision: 7 }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.securityProfile.configured').closest('button')!);
+    await user.click(screen.getByRole('option', { name: 'connectors.form.securityProfile.internalJwt' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave.mock.calls[0][0].mcpSecurityPolicy).not.toHaveProperty('workspaceAuthorization');
+  });
 
   it('starts with secondary sections collapsed and no unrelated connected account dropdown', () => {
     renderCollapsed(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={vi.fn()} />);

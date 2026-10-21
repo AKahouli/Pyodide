@@ -89,8 +89,9 @@ Protos owned: `grpc/proto/chatbot.proto`, `a2a_admin.proto`, `playbook-flow.prot
 | `mcp-playbook` | FastMCP Streamable HTTP adapter (`:8025`); calls NestJS Playbook-assistant REST (`server.py:55-57,187-221`); NestJS authoritative for access/validation/execution; Bearer or JWT ingress; Yellowmind allowlist enforced |
 | `mcp-agent` | Agent vertical adapter (see `mcp/mcp-agent/README.md`) |
 | `mcp-semantic-model` | Semantic-model adapter (see module/README) |
-| `mcp-outlook` | Microsoft Graph Outlook/calendar connector; ingress auth is separate from the server-side Graph provider credential |
-| `mcp-team` | Microsoft Graph Teams connector; source repository is `YellowsysOrg/mcp-teams` because the requested `mcp-team` URL is unavailable |
+| `mcp-platform` | **Consolidation target (ADR-0035, proposed/in progress)**: one modular FastMCP deployment (`:8030`, stateless Streamable HTTP) mounting Playbook, Agent/Team and Semantic tool modules over a shared JWT-only foundation (single `mcp-platform` audience, ADR-0033); replaces the three rows above after migration verifies |
+| `mcp-outlook` | Microsoft Graph Outlook/calendar connector; JWT ingress (`Authorization`) plus the acting user's delegated Graph token in `X-M365-Access-Token`, stateless streamable HTTP, refusing tool calls when that delegated credential is absent, duplicated or equal to the assertion (ADR-0026) |
+| `mcp-team` | Microsoft Graph Teams connector; JWT ingress (`Authorization`) plus the acting user's delegated Graph token in `X-M365-Access-Token`, stateless streamable HTTP, refusing tool calls when that delegated credential is absent, duplicated or equal to the assertion (ADR-0026); original source repository is `YellowsysOrg/mcp-teams` because the requested `mcp-team` URL is unavailable |
 | `mcp-sharepoint` | Microsoft Graph SharePoint/OneDrive connector with bounded Ceph run storage; JWT ingress (`Authorization`) plus the acting user's delegated Graph token in `X-M365-Access-Token`, refusing tool calls when that delegated credential is absent, duplicated or equal to the assertion (ADR-0026) |
 | `mcp-manus` | Firecracker sandbox connector; uses the upstream `sandbox_mcp` runtime and required internal API-key ingress |
 

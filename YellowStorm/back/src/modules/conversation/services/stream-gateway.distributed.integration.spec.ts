@@ -51,6 +51,11 @@ describeIntegration('classic distributed SSE PostgreSQL', () => {
     const received = await frames;
     expect(received.map(frame => (frame.data as { component: { id: string } }).component.id)).toEqual(['1', '2', '3']);
     expect(received.map(f => Number(f.id!.split(':')[2]))).toEqual([...received.map(f => Number(f.id!.split(':')[2]))].sort((x, y) => x-y));
+    expect(a.getMeasurementSnapshot().histograms).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'lock', count: 1 }),
+      expect.objectContaining({ operation: 'queue_commit', count: 3 }),
+    ]));
+    expect(b.getMeasurementSnapshot().counters.delivered).toBe(3);
     b.onModuleDestroy();
     a.sendToUser(user, chunk(4));
     const resumed = await firstValueFrom(a.registerConnection(user, id(), new Subject(), received[2].id)!.pipe(filter(f => f.type === 'stream_chunk'), take(1)));

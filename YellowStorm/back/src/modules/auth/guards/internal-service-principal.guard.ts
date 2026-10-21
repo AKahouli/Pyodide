@@ -8,7 +8,7 @@ import { timingSafeEqual } from 'crypto';
  *
  * | Principal          | Allowed endpoint group                    | Env secret                        |
  * | ------------------ | ----------------------------------------- | --------------------------------- |
- * | semantic-model-mcp | internal semantic assistant, MCP token    | SEMANTIC_MODEL_MCP_SERVICE_TOKEN  |
+ * | adk-runtime        | MCP assertion renewal                     | ADK_RUNTIME_MCP_RENEWAL_TOKEN      |
  * | app-runtime        | app-runtime bind + tool invoke            | APP_RUNTIME_BIND_TOKEN            |
  *
  * Identity comes from possession of the per-service secret — never from a
@@ -17,17 +17,14 @@ import { timingSafeEqual } from 'crypto';
  * End-user authorization continues to flow through the WP-06 actor
  * assertion; the principal only proves WHICH service is calling.
  */
-export type InternalServicePrincipal = 'mcp-agent' | 'mcp-playbook' | 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime'
+export type InternalServicePrincipal = 'app-runtime' | 'adk-runtime'
   | 'semantic-runtime' | 'adk-root-runtime' | 'adk-playbook-artifact';
 
 const PRINCIPAL_TOKEN_ENV: Record<InternalServicePrincipal, string> = {
   'semantic-runtime': 'SEMANTIC_RUNTIME_BACKEND_SERVICE_TOKEN',
   'adk-root-runtime': 'ADK_ROOT_RUNTIME_SERVICE_TOKEN',
   'adk-playbook-artifact': 'ADK_PLAYBOOK_ARTIFACT_SERVICE_TOKEN',
-  'mcp-agent': 'AGENT_MCP_BACKEND_SERVICE_TOKEN',
-  'mcp-playbook': 'PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN',
   'adk-runtime': 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
-  'semantic-model-mcp': 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN',
   'app-runtime': 'APP_RUNTIME_BIND_TOKEN',
 };
 
@@ -99,14 +96,9 @@ export function internalServicePrincipalGuardFor(principal: InternalServicePrinc
   return ScopedInternalServicePrincipalGuard;
 }
 
-/** The semantic MCP server's principal: semantic assistant + MCP token renewal only. */
-export const SemanticMcpServiceGuard = internalServicePrincipalGuardFor('semantic-model-mcp');
-
 /** The app runtime's principal: bind and tool-invoke only (WP07.3). */
 export const AppRuntimeServiceGuard = internalServicePrincipalGuardFor('app-runtime');
 export const AdkRuntimeMcpRenewalGuard = internalServicePrincipalGuardFor('adk-runtime');
-export const AgentMcpServiceGuard = internalServicePrincipalGuardFor('mcp-agent');
-export const PlaybookMcpServiceGuard = internalServicePrincipalGuardFor('mcp-playbook');
 export const SemanticRuntimeServiceGuard = internalServicePrincipalGuardFor('semantic-runtime');
 export const AdkRootRuntimeServiceGuard = internalServicePrincipalGuardFor('adk-root-runtime');
 export const AdkPlaybookArtifactServiceGuard = internalServicePrincipalGuardFor('adk-playbook-artifact');
@@ -116,7 +108,7 @@ export function assertUnambiguousSecurityHeaders(request: {
   headers: Record<string, string | string[] | undefined>; rawHeaders?: string[];
 }): void {
   const names = ['x-yellowstorm-service-principal', 'x-yellowstorm-service-token',
-    'x-yellowstorm-mcp-assertion', 'x-yellowstorm-execution-authority', 'x-yellowstorm-user-id', 'authorization', 'x-internal-token'];
+    'x-yellowstorm-mcp-assertion', 'x-yellowstorm-execution-authority', 'x-yellowstorm-user-id', 'authorization', 'x-internal-token', 'x-correlation-id'];
   for (const name of names) {
     const value = request.headers[name];
     const count = (request.rawHeaders ?? []).filter((_, index, raw) => index % 2 === 0 && raw[index].toLowerCase() === name).length;

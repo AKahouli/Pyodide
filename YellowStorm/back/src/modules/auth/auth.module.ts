@@ -12,7 +12,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
 import {
   AdkPlaybookArtifactServiceGuard, AdkRootRuntimeServiceGuard, AdkRuntimeMcpRenewalGuard,
-  AgentMcpServiceGuard, AppRuntimeServiceGuard, PlaybookMcpServiceGuard, SemanticMcpServiceGuard,
+  AppRuntimeServiceGuard,
 } from './guards/internal-service-principal.guard';
 import { AdkNativeActorGuard } from './guards/adk-native-actor.guard';
 import { PgSessionStore } from './persistence/pg-session.store';
@@ -57,9 +57,6 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     JwtAuthGuard,
     InternalServiceGuard,
     AppRuntimeServiceGuard,
-    AgentMcpServiceGuard,
-    PlaybookMcpServiceGuard,
-    SemanticMcpServiceGuard,
     AdkRuntimeMcpRenewalGuard,
     AdkRootRuntimeServiceGuard,
     AdkPlaybookArtifactServiceGuard,
@@ -69,7 +66,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     PgSessionStore,
   ],
-  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AppRuntimeServiceGuard, AgentMcpServiceGuard, PlaybookMcpServiceGuard, SemanticMcpServiceGuard, AdkRuntimeMcpRenewalGuard, AdkRootRuntimeServiceGuard, AdkPlaybookArtifactServiceGuard, AdkNativeActorGuard, JwtModule],
+  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AppRuntimeServiceGuard, AdkRuntimeMcpRenewalGuard, AdkRootRuntimeServiceGuard, AdkPlaybookArtifactServiceGuard, AdkNativeActorGuard, JwtModule],
 })
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- Nest module: configuration lives in the decorator
 export class AuthModule {}

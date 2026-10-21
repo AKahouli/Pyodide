@@ -25,17 +25,12 @@ class SemanticModelBackendError(RuntimeError):
 
 class YellowStormSemanticModelClient:
     def __init__(self, base_url: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024,
-                 transport: httpx.AsyncBaseTransport | None = None, service_token: str = "") -> None:
-        if not service_token:
-            # WP07.2: backend assistant routes authenticate the
-            # semantic-model-mcp service principal with its scoped secret.
-            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
+                 transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
-        self._service_token = service_token
         self._max_response_bytes = max_response_bytes
 
     async def close(self) -> None:
@@ -54,18 +49,7 @@ class YellowStormSemanticModelClient:
         return await self._request("DELETE", path, user_id)
 
     async def _request(self, method: str, path: str, user_id: str, payload: dict[str, Any] | None = None) -> Any:
-        # Service identity comes from the scoped semantic-model-mcp principal
-        # (WP07.2); the backend-issued MCP JWT travels as the signed actor
-        # assertion (WP06.4). Never logged.
-        assertion = verified_mcp_jwt.get()
-        headers = {
-            "X-Yellowstorm-Service-Principal": "semantic-model-mcp",
-            "X-Yellowstorm-Service-Token": self._service_token,
-            "X-YellowStorm-User-Id": user_id,
-            **self._actor_headers(),
-        }
-        if assertion:
-            headers["X-YellowStorm-Mcp-Assertion"] = assertion
+        headers = self._actor_headers()
         try:
             response = await self._client.request(
                 method,
@@ -96,12 +80,10 @@ class YellowStormSemanticModelClient:
     @staticmethod
     def _actor_headers() -> dict[str, str]:
         context = require_actor_context()
-        return {
-            "X-YellowStorm-User-Id": context.user_id,
-            "X-YellowStorm-Agent-Id": context.agent_id,
-            "X-YellowStorm-Conversation-Id": context.conversation_id,
-            "X-Correlation-Id": context.correlation_id,
-        }
+        assertion = verified_mcp_jwt.get()
+        if not assertion:
+            raise SemanticModelBackendError("SEMANTIC_MODEL_MCP_UNAUTHORIZED", "Missing verified MCP assertion", 401)
+        return {"X-YellowStorm-Mcp-Assertion": assertion, "X-Correlation-Id": context.correlation_id}
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> Any:

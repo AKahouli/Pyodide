@@ -23,18 +23,6 @@
     }
   },
   "mcp": {
-    "code-review-graph": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--from",
-        "code-review-graph==2.3.9",
-        "code-review-graph",
-        "serve"
-      ],
-      "enabled": true,
-      "timeout": 60000
-    },
     "chrome-devtools": {
       "type": "local",
       "enabled": true,
@@ -87,7 +75,8 @@
           "context7-mcp": "allow",
           "archify": "allow",
           "find-skills": "allow",
-          "crg-navigation": "allow"
+          "graphify-navigation": "allow",
+          "ponytail": "allow"
         },
         "chrome-devtools_*": "deny"
       }

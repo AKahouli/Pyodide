@@ -16,6 +16,87 @@ Autonomous AI ownership migration: `e9ef1676c` / `baseline/semantic-model-001`, 
 
 ## Purpose and workflows
 
+### Cross-workspace document discovery and index connection diagnostics
+
+3072 embedding migration (2026-10-21): user-approved disposable search reset uses
+runtime migration 038. Only search documents/passages/cache are cleared; generation
+state becomes failed with `embedding_storage_changed`, while generated records,
+mappings and population bindings survive. Fixed storage width is 3072; conflicting
+environment overrides fail before build admission. Embedding requests explicitly
+send `dimensions: 3072` for both documents and queries, and returned width is still
+validated (no truncation/padding). The current provider accepted that explicit
+width in a synthetic live probe. Real-PostgreSQL rollback/topology/preservation
+regressions passed 2/2, followed by successful local application: all 35 embedding
+columns are `halfvec(3072)` and all 16 vector indexes valid. Preserved source-table
+counts and exact population bindings were checked before/after. Fresh index rebuild
+is required; migration alone does not qualify search readiness.
+
+Indexed storage-name correlation (2026-10-21): the indexer receives the Workspace
+storage filename (`assetId` plus the backend-sanitized original name), while the
+mapper displays the original name. Runtime resolution uses the reauthorized current
+asset ID to construct that exact storage filename first, then supports existing
+unprefixed/whitespace legacy names. Workspace/uploader fences and ambiguous-result
+denial remain in force; no wildcard suffix lookup or readiness bypass is used.
+Sanitization mirrors backend UTF-16 truncation. Focused logical-index/document/
+field-discovery regressions passed 88 tests (10 failed before the fix).
+A remote indexer needs a reachable backend webhook, not its own loopback URL.
+
+Multi-source asset grants use a SHA-256 digest of the canonical admission, rather
+than embedding the admission and full job command in every header. Consumption
+still loads and authorizes the live canonical task, exact admission and source
+version. Issuance explicitly projects the five execution-proof fields. Old-format
+grants fail closed; deploy backend instances together. No header limit is raised.
+
+Population admission timestamps (2026-10-20): the application signs integer-second
+issuance time while PostgreSQL persists fractional transaction-clock creation time.
+Small independent-clock/transaction offsets caused correctly bound jobs to be
+rejected before metadata access, unlike interactive previews. Asset authorization
+allows at most one second of creation-time skew below signed issuance time; creation
+after signed expiry, malformed windows and windows over 300 seconds still reject.
+Live lease/capability, exact command/source/version and current access checks are
+unchanged. Larger skew remains fail-closed and requires clock/deployment correction.
+The focused asset-grant suite passed 34 tests; this is not live-job qualification.
+
+Population health preserves sanitized source reason codes from singular `detail`
+as well as supported existing diagnostics, with at most 25 source examples per
+group. Model health displays these under the existing localized code label;
+Last Result retains its serving summary and health navigation. Field attribution
+is included only when the gap explicitly names a field, never guessed from every
+field in a concept. Previously persisted revisions that dropped reasons cannot
+recover them retroactively. Regression checks: runtime summary 2, backend health
+12 and frontend health 17 tests (English/French/Arabic) passed; affected backend
+and frontend TypeScript checks passed.
+
+Interactive document preview and field suggestions use a distinct metadata
+handoff (user-approved 2026-10-20): after current model/source/workspace checks,
+Nest builds exact-document metadata and overwrites any caller-provided authority
+before sending the existing service-key-authenticated runtime request. The runtime
+requires actor/model/source equality and validates metadata before index access.
+Only these interactive routes supply the explicit metadata callback; job delivery
+continues to require execution-bound asset grants. This fixes interactive preview
+calling job-only metadata delivery without a task, which raised
+`asset_execution_authority_missing`. Focused runtime suites passed 85 tests and
+backend client/source-mapping/asset-grant suites passed 119; live preview after a
+coordinated backend/runtime restart remains separate qualification.
+
+2026-10-20: non-tabular datasource discovery now obtains authoritative source
+metadata through the existing execution-bound asset-grant path before previewing.
+Previously its second pure preview used the default-deny verifier, so a PDF in a
+different workspace failed even after admission. Grant issuance and metadata use
+recheck current actor/source/task authorization; queued grant claims do not grant
+access. No document-body download is needed for this check. Authorized same- and
+cross-workspace cases plus revocation at both boundaries are regression-covered;
+the focused asset-delivery/discovery/runtime-error suite passed 61 tests.
+
+Population `InvalidCatalogNameError` / PostgreSQL `3D000` at pool connection is a
+database-name/deployment failure, not a missing schema or revoked workspace grant.
+Compare the worker's `SEMANTIC_INDEX_DATABASE_URL` host/port/database with the
+actual Logical Search deployment and verify its dedicated reader can SELECT the
+five logical index tables. Database existence alone does not prove table access.
+Keep runtime job-store and AGE projection DSNs separate; never substitute an
+administrator credential for a missing read-only grant. Worker restart and live
+job retry are required to qualify an environment correction.
+
 ### Diagnostic and search-index localization
 
 Localization repair (2026-10-17): `runtimeError` and `searchIndexRetry` are module-root

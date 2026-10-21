@@ -167,13 +167,15 @@ async def _read_capabilities(connection: Any) -> dict[str, Any]:
 
 
 async def resolve_document_candidates(connection: Any, *, workspace_id: Any, file_name: Any,
-                                      uploader_user_id: Any = None,
+                                      uploader_user_id: Any = None, asset_id: Any = None,
                                       limit: int = MAX_CANDIDATES) -> dict[str, Any]:
     """Resolve candidate logical documents by verified Workspace metadata (P4.2).
 
     No asset ID, version or content hash exists in the logical tables, so
-    identity is resolved through ``(workspace_id, file_name)`` with an optional
-    uploader correlation. The result is explicit: one candidate is ``resolved``,
+    identity is correlated through ``(workspace_id, file_name)`` with an optional
+    uploader fence. A reauthorized asset ID selects its deterministic upload name
+    first, then legacy display/whitespace names. Names never grant access.
+    The result is explicit: one candidate is ``resolved``,
     several are ``ambiguous`` (never auto-picked), none is ``unresolved``.
     ``uploaderUserId`` is a correlation hint only, not an access grant (P4.3).
     """
@@ -189,15 +191,21 @@ async def resolve_document_candidates(connection: Any, *, workspace_id: Any, fil
         params.append(uploader_user_id)
         sql += " AND user_id = $3"
     sql += f" ORDER BY id LIMIT {limit}"
-    rows = await connection.fetch(sql, *params)
-    if not rows and " " in file_name:
-        # The indexer stores names with spaces replaced by underscores, and a run of
-        # spaces and underscores ("UP_ REVERSE") as a single one ("UP_REVERSE").
-        for stored in dict.fromkeys((file_name.replace(" ", "_"), re.sub(r"[\s_]+", "_", file_name))):
-            params[1] = stored
-            rows = await connection.fetch(sql, *params)
-            if rows:
-                break
+    names = [file_name]
+    if " " in file_name:
+        names.extend((file_name.replace(" ", "_"), re.sub(r"[\s_]+", "_", file_name)))
+    if asset_id is not None:
+        _require_identity(asset_id, "asset_id")
+        # Mirror Workspace DocumentSupport.uploadFilename, including JS UTF-16 slicing.
+        stored = re.sub(r"[/\\:\x00]", "_", file_name).strip(" \t\n\r\f\v.")
+        stored = re.sub(r"[ _\t\n\r\f\v]+", "_", stored)
+        stored = stored.encode("utf-16-le", "surrogatepass")[:510][-460:].decode("utf-16-le", "surrogatepass")
+        names.insert(0, f"{asset_id}-{stored}")
+    for stored in dict.fromkeys(names):
+        params[1] = stored
+        rows = await connection.fetch(sql, *params)
+        if rows:
+            break
     candidates = [
         {"documentPk": str(row["id"]), "workspaceId": row["workspace_id"],
          "fileName": row["file_name"], "uploaderUserId": row["user_id"]}

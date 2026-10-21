@@ -1723,6 +1723,7 @@ export interface McpSecurityPolicy {
   profile: 'configured' | 'internal_jwt' | 'public';
   audience?: string;
   actorDelegation: 'none' | 'verified_user';
+  workspaceAuthorization?: boolean;
   allowPrivateNetwork: boolean;
   allowInsecureHttp: boolean;
   requiredPermissions: string[];

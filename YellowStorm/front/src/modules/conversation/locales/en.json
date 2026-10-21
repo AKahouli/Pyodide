@@ -1,4 +1,5 @@
 {
+  "openui.viewAnswer": "View answer",
   "assets.delete": "Delete",
   "assets.deleteTitle": "Delete this item?",
   "assets.deleteDescription": "Delete \"{{name}}\" from this conversation? The agent will no longer be able to open or reuse it. Previously downloaded files and separate copies remain available.",

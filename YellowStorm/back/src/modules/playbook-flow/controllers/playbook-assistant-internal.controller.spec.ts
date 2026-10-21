@@ -2,6 +2,35 @@ import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { PlaybookAssistantInternalController } from './playbook-assistant-internal.controller';
 
 describe('PlaybookAssistantInternalController', () => {
+  it('fails closed when the canonical platform agent is unavailable', async () => {
+    const assistant = { startCurrentTurnGeneration: jest.fn() };
+    const controller = new PlaybookAssistantInternalController(
+      {} as never, assistant as never, {} as never, {} as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue(null) } as never,
+    );
+    await expect(controller.startCurrentTurnGeneration({
+      'x-yellowstorm-user-id': 'user-1',
+      'x-yellowstorm-agent-id': 'spoofed-agent',
+      'x-yellowstorm-conversation-id': 'conversation-1',
+      'x-correlation-id': 'message-1',
+    }, {})).rejects.toThrow('Platform Copilot agent is unavailable');
+    expect(assistant.startCurrentTurnGeneration).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, '', 'x'.repeat(201)])('still rejects invalid conversation context %s', async (conversationId) => {
+    const assistant = { startCurrentTurnGeneration: jest.fn() };
+    const controller = new PlaybookAssistantInternalController(
+      {} as never, assistant as never, {} as never, {} as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
+    );
+    await expect(controller.startCurrentTurnGeneration({
+      'x-yellowstorm-user-id': 'user-1',
+      'x-yellowstorm-conversation-id': conversationId,
+      'x-correlation-id': 'message-1',
+    }, {})).rejects.toThrow('Missing or invalid trusted conversation identity');
+    expect(assistant.startCurrentTurnGeneration).not.toHaveBeenCalled();
+  });
+
   it('reads the canonical trusted identity header on every internal endpoint', () => {
     const methods = [
       'openContext',
@@ -31,6 +60,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
 
     await expect(controller.startExecution('user-1', 'request-1', 'playbook-1', {} as never))
@@ -45,6 +75,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue([]) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
 
     await expect(controller.searchPlaybooks('user-1', {} as never))
@@ -59,6 +90,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: ['reader'] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
 
     await expect(controller.searchPlaybooks('user-1', {} as never))
@@ -73,6 +105,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.execute']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
 
     await expect(controller.startExecution('user-1', 'request-1', 'playbook-1', {} as never))
@@ -87,6 +120,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
 
     await expect(controller.startConstruction('user-1', 'playbook-1', {} as never))
@@ -101,6 +135,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
     const headers = {
       'x-yellowstorm-user-id': 'user-1',
@@ -118,18 +153,19 @@ describe('PlaybookAssistantInternalController', () => {
     );
   });
 
-  it('starts current-turn generation without resolving playbook.create', async () => {
+  it.each([undefined, 'spoofed-agent', 'x'.repeat(201)])('uses canonical agent for generation regardless of caller agent %s', async (agentHeader) => {
     const assistantService = { startCurrentTurnGeneration: jest.fn().mockResolvedValue({ playbookId: 'playbook-1' }) };
     const controller = new PlaybookAssistantInternalController(
       {} as never,
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: ['creator'] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
     const headers = {
       'x-yellowstorm-tenant-id': 'default',
       'x-yellowstorm-user-id': 'user-1',
-      'x-yellowstorm-agent-id': 'agent-1',
+      'x-yellowstorm-agent-id': agentHeader,
       'x-yellowstorm-conversation-id': 'conversation-1',
       'x-correlation-id': 'ai-message-1',
     };
@@ -155,6 +191,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: ['creator'] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.update']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
     const headers = {
       'x-yellowstorm-user-id': 'user-1',
@@ -178,6 +215,7 @@ describe('PlaybookAssistantInternalController', () => {
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
       { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+      { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('agent-1') } as never,
     );
     const headers = {
       'x-yellowstorm-user-id': 'user-1',
