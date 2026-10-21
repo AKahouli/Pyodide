@@ -26,7 +26,7 @@ import { ITeamResponse, ITeamWithAgentsResponse } from '../interfaces/team.inter
 @ApiTags('Team CRUD Internal')
 @Public()
 @Controller('internal/agent-crud')
-@McpRouteAudience('mcp-agent')
+@McpRouteAudience('mcp-agent', 'mcp-platform')
 @UseGuards(DelegatedActorGuard)
 export class TeamCrudInternalController {
   constructor(private readonly teamService: TeamService) {}

@@ -38,7 +38,7 @@ const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODEL
 @ApiTags('Semantic Model Assistant Internal')
 @Public()
 @Controller('internal/semantic-model-assistant')
-@McpRouteAudience('mcp-semantic-model')
+@McpRouteAudience('mcp-semantic-model', 'mcp-platform')
 @UseGuards(DelegatedActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
 export class SemanticModelAssistantInternalController {
   constructor(private readonly assistant: SemanticModelAssistantService) {}

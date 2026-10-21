@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+﻿import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sign } from 'jsonwebtoken';
 import { McpJwtService } from './mcp-jwt.service';
@@ -114,7 +114,7 @@ describe('McpJwtService current-policy boundary', () => {
     const claims = JSON.parse(Buffer.from(issued.token.split('.')[1], 'base64url').toString());
     expect(claims).toMatchObject({ sub: 'user-1', connectorId: 'connector-1', securityRevision: 1, aud: 'recipient' });
     expect(claims.exp - claims.iat).toBe(300);
-    expect(await service.verifyMcpAssertion(issued.token, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    expect(await service.verifyMcpAssertion(issued.token, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1', aud: 'recipient' });
     const renewed = await service.renew('connector-1', issued.token);
     expect(renewed.token).not.toBe(issued.token);
     expect(JSON.parse(Buffer.from(renewed.token.split('.')[1], 'base64url').toString()).sub).toBe('user-1');
@@ -137,7 +137,7 @@ describe('McpJwtService current-policy boundary', () => {
     expect(bound.headers['X-YellowStorm-Mcp-Assertion']).toBeUndefined();
     expect(bound.env).toEqual({ YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1' });
     const proof = bound.headers.Authorization.slice(7);
-    expect(await service.verifyMcpAssertion(proof, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    expect(await service.verifyMcpAssertion(proof, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1', aud: 'recipient' });
     workspaces.readableWorkspaceScope.mockResolvedValueOnce(['a'.repeat(24)]);
     const renewed = await service.renew('connector-1', proof);
     expect(JSON.parse(Buffer.from(renewed.token.split('.')[1], 'base64url').toString()).workspaceScope.ids).toEqual(['a'.repeat(24)]);
@@ -194,14 +194,21 @@ describe('McpJwtService current-policy boundary', () => {
   it('verifies the ADR-0024 delegated credential without an audience fence, keeping connector and revision authority', async () => {
     const { token } = await service.issue('connector-1', 'user-1');
     // No per-route audience: the same credential is accepted on any internal route.
-    expect(await service.verifyDelegatedActor(token)).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    expect(await service.verifyDelegatedActor(token)).toEqual({ sub: 'user-1', connectorId: 'connector-1', aud: 'recipient' });
     // Connector/revision authority is unchanged: a stale policy stops working.
     row.securityRevision = 2;
     expect(await service.verifyDelegatedActor(token)).toBeNull();
     // The audience-bound path (renewal) still requires its trusted audience.
     row.securityRevision = 1;
-    expect(await service.verifyMcpAssertion(token, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    expect(await service.verifyMcpAssertion(token, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1', aud: 'recipient' });
     expect(await service.verifyMcpAssertion(token, '')).toBeNull();
+  });
+  it('verifies against a route-declared audience set during the platform migration', async () => {
+    const { token } = await service.issue('connector-1', 'user-1');
+    expect(await service.verifyMcpAssertion(token, ['recipient', 'mcp-platform']))
+      .toEqual({ sub: 'user-1', connectorId: 'connector-1', aud: 'recipient' });
+    expect(await service.verifyMcpAssertion(token, ['mcp-platform'])).toBeNull();
+    expect(await service.verifyMcpAssertion(token, [])).toBeNull();
   });
   it('rejects expired proof and cannot bootstrap from arbitrary unsigned identity', async () => {
     const now = Math.floor(Date.now() / 1000);

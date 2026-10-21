@@ -33,7 +33,7 @@ import { hasPermission, Permissions } from '@modules/authorization/constants/per
 @Public()
 @ApiTags('Playbook Assistant Internal')
 @Controller('internal/playbook-assistant')
-@McpRouteAudience('mcp-playbook')
+@McpRouteAudience('mcp-playbook', 'mcp-platform')
 @UseGuards(DelegatedActorGuard)
 export class PlaybookAssistantInternalController {
   private readonly logger = new Logger(PlaybookAssistantInternalController.name);

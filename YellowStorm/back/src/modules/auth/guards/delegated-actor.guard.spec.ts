@@ -1,4 +1,4 @@
-import type { ExecutionContext } from '@nestjs/common';
+﻿import type { ExecutionContext } from '@nestjs/common';
 import { DelegatedActorGuard } from './delegated-actor.guard';
 
 jest.mock('@modules/connector/services/mcp-jwt.service', () => ({ McpJwtService: class McpJwtService {} }));
@@ -37,7 +37,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it('derives the actor from the signed assertion, pins it and loads that user\'s permissions', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     users.findById.mockResolvedValue({ status: 'active', email: 'agent-user@example.com' });
     const request: TestRequest = {
       headers: {
@@ -51,15 +51,15 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
 
     await expect(guard().canActivate(context(request))).resolves.toBe(true);
 
-    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('signed-jwt', 'mcp-semantic-model');
+    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('signed-jwt', ['mcp-semantic-model']);
     expect(request.headers['x-yellowstorm-user-id']).toBe(userId);
     expect(authorization.getUserRoles).toHaveBeenCalledWith(userId);
     expect(authorization.getUserPermissions).toHaveBeenCalledWith(['role-1']);
     expect(request.user).toEqual({ _id: userId, permissions: ['semantic-models.read'] });
   });
 
-  it('attributes every delegated call with actor, calling principal and correlation id (ADR-0024 §6)', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+  it('attributes every delegated call with actor, calling principal and correlation id (ADR-0024 Â§6)', async () => {
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     users.findById.mockResolvedValue({ status: 'active', email: 'agent-user@example.com' });
 
     await guard().canActivate(context({
@@ -94,7 +94,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it('rejects a user-id header that disagrees with the signed assertion', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     users.findById.mockResolvedValue({ status: 'active' });
 
     await expect(guard().canActivate(context({
@@ -116,7 +116,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it('does not attribute a rejected delegated call', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     users.findById.mockResolvedValue({ status: 'active', email: 'agent-user@example.com' });
 
     await expect(guard().canActivate(context({
@@ -137,7 +137,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it('rejects a verified assertion whose subject is not a platform user id', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: 'not-an-object-id', connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: 'not-an-object-id', connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     await expect(guard().canActivate(context({
       headers: { 'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'request-1' },
     }))).rejects.toThrow(/Invalid MCP delegated actor assertion/);
@@ -145,7 +145,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it('rejects a missing or invalid correlation id', async () => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     await expect(guard().canActivate(context({
       headers: { 'x-yellowstorm-mcp-assertion': 'signed-jwt' },
     }))).rejects.toThrow(/Missing or invalid correlation id/);
@@ -155,7 +155,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
   });
 
   it.each([null, { status: 'inactive' }, { status: 'suspended' }])('rejects unavailable accounts before loading permissions', async (user) => {
-    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1' });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-1', aud: 'mcp-semantic-model' });
     users.findById.mockResolvedValue(user);
     await expect(guard().canActivate(context({
       headers: { 'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'request-1' },
@@ -177,7 +177,7 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
       'x-yellowstorm-mcp-assertion': 'foreign-jwt', 'x-correlation-id': 'request-1',
       'x-yellowstorm-mcp-audience': 'mcp-agent',
     } }))).rejects.toThrow(/Invalid MCP delegated actor assertion/);
-    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('foreign-jwt', 'mcp-semantic-model');
+    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('foreign-jwt', ['mcp-semantic-model']);
     expect(users.findById).not.toHaveBeenCalled();
   });
 
@@ -193,5 +193,21 @@ describe('DelegatedActorGuard (ADR-0024)', () => {
       'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'one,two',
     } }))).rejects.toThrow(/Ambiguous security header/);
     expect(mcpJwt.verifyMcpAssertion).not.toHaveBeenCalled();
+  });
+
+  it('accepts a route-declared migration audience and attributes its own principal', async () => {
+    reflector.getAllAndOverride.mockReturnValue(['mcp-semantic-model', 'mcp-platform'] as never);
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId, connectorId: 'connector-9', aud: 'mcp-platform' });
+    users.findById.mockResolvedValue({ status: 'active', email: 'agent-user@example.com' });
+
+    await guard().canActivate(context({
+      headers: { 'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'request-1' },
+      method: 'POST',
+      route: { path: '/internal/semantic-model-assistant/query-records' },
+    }));
+
+    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('signed-jwt', ['mcp-semantic-model', 'mcp-platform']);
+    const record = (audit.logSuccess as jest.Mock).mock.calls[0][0];
+    expect(record.metadata.servicePrincipal).toBe('mcp-platform');
   });
 });

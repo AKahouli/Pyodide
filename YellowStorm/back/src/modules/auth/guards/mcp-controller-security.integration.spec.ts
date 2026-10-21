@@ -80,6 +80,14 @@ describe('MCP controller security boundary over HTTP', () => {
     { audience: 'mcp-semantic-model', principal: 'semantic-model-mcp', path: '/internal/semantic-model-assistant/models' },
     { audience: 'mcp-agent', principal: 'mcp-agent', path: '/internal/agent-crud/teams' },
   ];
+  // Migration matrix: every consolidated surface also accepts the shared
+  // mcp-platform audience until the three legacy MCP deployments retire.
+  const platformTargets = [
+    { audience: 'mcp-platform', principal: 'mcp-platform', path: '/internal/agent-crud/agents' },
+    { audience: 'mcp-platform', principal: 'mcp-platform', path: '/internal/playbook-assistant/playbooks' },
+    { audience: 'mcp-platform', principal: 'mcp-platform', path: '/internal/semantic-model-assistant/models' },
+    { audience: 'mcp-platform', principal: 'mcp-platform', path: '/internal/agent-crud/teams' },
+  ];
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const agent = { getAllForUserResponse: jest.fn(async () => [{ id: 'agent' }]) };
   const team = { findAllForUser: jest.fn(async () => [{ id: 'team' }]) };
@@ -124,7 +132,7 @@ describe('MCP controller security boundary over HTTP', () => {
         { provide: AuthorizationService, useValue: {
           getUserRoles: jest.fn(async () => [{ id: 'role' }]), getUserPermissions: jest.fn(async () => permissions),
         } },
-        { provide: PgConnectorStore, useValue: { findById: jest.fn(async (id: string) => targets.some(target => target.audience === id) ? {
+        { provide: PgConnectorStore, useValue: { findById: jest.fn(async (id: string) => [...targets, ...platformTargets].some(target => target.audience === id) ? {
           id, isActive: active, mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
           mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user',
             allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
@@ -161,6 +169,19 @@ describe('MCP controller security boundary over HTTP', () => {
     expect(Array.isArray(response.body)).toBe(true);
     expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId,
       metadata: expect.objectContaining({ servicePrincipal: target.principal, connectorId: target.audience }),
+    }));
+  });
+  it.each(platformTargets)('accepts the shared platform audience on $path during migration', async target => {
+    await app.get(McpJwtService).assertConnectorAccess({ id: target.audience, isActive: active,
+      mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: target.audience,
+        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
+    } as never, userId);
+    const response = await request(app.getHttpServer()).get(target.path)
+      .set(headers(target, assertion(target.audience))).expect(200);
+    expect(Array.isArray(response.body)).toBe(true);
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId,
+      metadata: expect.objectContaining({ servicePrincipal: 'mcp-platform', connectorId: target.audience }),
     }));
   });
   it.each(targets)('does not trust a caller-selected service identity on $principal', async target => {

@@ -1,4 +1,4 @@
-# Authentication and rate limiting
+﻿# Authentication and rate limiting
 
 Read only the sections needed for the changed behavior. Paths such as `src/`, `drizzle/` and `package.json` are relative to `YellowStorm/back/`; `front/` means `YellowStorm/front/`. Verify descriptive inventories and known debt against current source before relying on them.
 
@@ -6,18 +6,18 @@ Read only the sections needed for the changed behavior. Paths such as `src/`, `d
 
 - **Access token**: short-lived (~15m), `Authorization: Bearer <jwt>`. Payload: `userId`, `sessionId`, `permissions[]`, `roleNames[]`.
 - **Refresh token**: long-lived (~7d), HTTP-only `refresh_token` cookie (`httpOnly`, `secure` in prod, `sameSite` configurable). Rotated on every refresh.
-- `POST /api/v1/auth/refresh` — frontend axios 401-retry queue depends on this.
+- `POST /api/v1/auth/refresh` â€” frontend axios 401-retry queue depends on this.
 - Sessions persisted server-side; `JwtStrategy` validates token + active session.
 
-**Global guard** via `APP_GUARD: JwtAuthGuard` — every route authenticated by default. Opt-out with `@Public()`.
+**Global guard** via `APP_GUARD: JwtAuthGuard` â€” every route authenticated by default. Opt-out with `@Public()`.
 
 **Current user:** `@CurrentUser()` decorator (from `request.user`). Never read raw JWT claims in controllers.
-- `@RequirePermissions('playbook.read')` — `PermissionsGuard`.
-- `@Roles('admin')` — `RolesGuard`. Prefer permission checks.
+- `@RequirePermissions('playbook.read')` â€” `PermissionsGuard`.
+- `@Roles('admin')` â€” `RolesGuard`. Prefer permission checks.
 
 **Secrets:** bcrypt (rounds from `AUTH_BCRYPT_ROUNDS`, default 12). Never log tokens, hashes, cookies, or include secrets in responses/Swagger.
 
-**Widget public-API family (separate from JWT):** `widget-chat` exposes a second, public, non-JWT API family for embedded and integration consumers. Widget tokens are agent-bound, optionally expiring, optionally origin-allowlisted, and are stored **only as SHA-256 hashes** — never log, return, or persist the plaintext token after the one-time creation response. Auth is enforced by `WidgetTokenGuard`, not `JwtAuthGuard`; routes are `@Public()` and may declare a deployment mode (`embed` vs REST integration) that determines whether the consumer receives manual SSE or a synchronous JSON response. There is also a separate synchronous external REST contract at `POST /integrations/agents/:agentId/messages` whose token's agent must equal the route's `:agentId`. When adding widget routes, reuse `WidgetTokenGuard` and the existing deployment-mode shapes rather than introducing a third auth model.
+**Widget public-API family (separate from JWT):** `widget-chat` exposes a second, public, non-JWT API family for embedded and integration consumers. Widget tokens are agent-bound, optionally expiring, optionally origin-allowlisted, and are stored **only as SHA-256 hashes** â€” never log, return, or persist the plaintext token after the one-time creation response. Auth is enforced by `WidgetTokenGuard`, not `JwtAuthGuard`; routes are `@Public()` and may declare a deployment mode (`embed` vs REST integration) that determines whether the consumer receives manual SSE or a synchronous JSON response. There is also a separate synchronous external REST contract at `POST /integrations/agents/:agentId/messages` whose token's agent must equal the route's `:agentId`. When adding widget routes, reuse `WidgetTokenGuard` and the existing deployment-mode shapes rather than introducing a third auth model.
 
 ## 14. Rate Limiting
 
@@ -34,6 +34,10 @@ from verified authority, not the service-name header. See proposed
 scope and coordinated deployment requirements. Verification/review is tracked
 separately; this is not production certification.
 
+During the platform-MCP migration (proposed ADR-0035) these routes also accept the
+shared `mcp-platform` audience until the three legacy MCP deployments retire; audit
+attribution names the verified audience principal.
+
 Playbook callback construction does not require or trust
 `X-YellowStorm-Agent-Id`. The backend resolves its active reserved Platform
 Copilot agent using the existing AgentService resolver. Conversation ownership,
@@ -42,7 +46,7 @@ bound request identity remain enforced; missing canonical agent fails closed.
 The MCP forwards conversation/correlation context and the signed actor assertion,
 not an actor-selecting user or agent header.
 
-**Other scoped internal principals (WP-07):** service identity comes from possession of a per-service secret, checked with constant-time comparison — never a plain service-name header. `auth/guards/internal-service-principal.guard.ts` fixes one principal per guard class:
+**Other scoped internal principals (WP-07):** service identity comes from possession of a per-service secret, checked with constant-time comparison â€” never a plain service-name header. `auth/guards/internal-service-principal.guard.ts` fixes one principal per guard class:
 
 | Principal | Env secret / headers | Endpoint group |
 | --- | --- | --- |
@@ -115,7 +119,7 @@ refused rather than silently dropped, even when it also carries unrelated
 metadata headers. Agent runtime, conversation-v2 runtime and saved-connector
 inspection all enforce this, and a declared provider credential that does not
 resolve fails closed (no assertion-only downgrade, no stored-identity fallback)
-— a `connected_app` connector never falls back to a saved static header. Provider
+â€” a `connected_app` connector never falls back to a saved static header. Provider
 and MCP credentials never stand in for one another. Receivers must reject a
 provider token presented as the ingress assertion and vice versa; `mcp-sharepoint`
 also runs its `streamable-http` transport stateless so no session retains either
@@ -161,7 +165,7 @@ does not confirm any environment's rollout state.
 platform-trusted MCP surface: the actor comes only from the signed assertion, a
 naked user-id header is never an identity source, and the absence of an assertion
 fails closed. It applies no per-route audience fence, so a trusted MCP may act for
-the verified user on any internal route — always bounded by that user's own
+the verified user on any internal route â€” always bounded by that user's own
 permissions. The semantic-model, playbook and agent-crud surfaces use it; for
 agent-crud that is the agent and team routes under `internal/agent-crud` served for
 connector `agent-mcp`. Every migrated connector must carry `internal_jwt` +

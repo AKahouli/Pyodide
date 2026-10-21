@@ -171,8 +171,8 @@ export class McpJwtService {
    * Connector-scoped callers (renewal, inspection, runtime binding) keep the
    * trusted expected audience here: the connector and this route must agree.
    */
-  async verifyMcpAssertion(token: string | undefined, expectedAudience: string): Promise<{ sub: string; connectorId: string } | null> {
-    if (!expectedAudience) return null;
+  async verifyMcpAssertion(token: string | undefined, expectedAudience: string | string[]): Promise<{ sub: string; connectorId: string; aud: string } | null> {
+    if (!expectedAudience || (Array.isArray(expectedAudience) && !expectedAudience.length)) return null;
     return this.verifyAssertion(token, expectedAudience);
   }
 
@@ -188,7 +188,7 @@ export class McpJwtService {
     return this.verifyAssertion(token);
   }
 
-  private async verifyAssertion(token: string | undefined, expectedAudience?: string): Promise<{ sub: string; connectorId: string } | null> {
+  private async verifyAssertion(token: string | undefined, expectedAudience?: string | string[]): Promise<{ sub: string; connectorId: string; aud: string } | null> {
     if (!token || !this.publicKey || !this.issuer) return null;
     try {
       const claims = this.jwt.verify(token, {
@@ -196,22 +196,29 @@ export class McpJwtService {
         algorithms: ['RS256'],
         issuer: this.issuer,
         // Omitted for the ADR-0024 delegated credential; jsonwebtoken then does
-        // not enforce an audience at all.
-        ...(expectedAudience ? { audience: expectedAudience } : {}),
+        // not enforce an audience at all. Route-declared sets pass the allowed
+        // audience list (jsonwebtoken accepts string[] at runtime).
+        ...(expectedAudience
+          ? { audience: Array.isArray(expectedAudience) ? [...expectedAudience] as [string, ...string[]] : expectedAudience }
+          : {}),
         // Backend minting allows at most five minutes; reject anything longer
         // even if it carries a valid signature.
         maxAge: '300s',
-      }) as { sub?: unknown; connectorId?: unknown; securityRevision?: unknown; iat?: number; exp?: number; jti?: unknown };
+      }) as { sub?: unknown; connectorId?: unknown; securityRevision?: unknown; iat?: number; exp?: number; jti?: unknown; aud?: string | string[] };
       if (typeof claims?.sub !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(claims.sub)) return null;
       if (typeof claims.connectorId !== 'string' || typeof claims.jti !== 'string'
         || !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp)
         || claims.iat! > Math.floor(Date.now() / 1000) || claims.exp! <= claims.iat! || claims.exp! - claims.iat! > 300) return null;
       const connector = await this.load(claims.connectorId);
       const policy = await this.assertConnectorAccess(connector, claims.sub);
+      const policyAudience = policy.audience;
+      const audienceMatches = Array.isArray(expectedAudience)
+        ? policyAudience !== undefined && expectedAudience.includes(policyAudience)
+        : policyAudience === expectedAudience;
       if ((policy.profile !== 'internal_jwt' && !policy.workspaceAuthorization) || policy.actorDelegation !== 'verified_user'
-        || (expectedAudience !== undefined && policy.audience !== expectedAudience)
+        || (expectedAudience !== undefined && !audienceMatches)
         || claims.securityRevision !== (connector.securityRevision ?? 1)) return null;
-      return { sub: claims.sub, connectorId: connector.id };
+      return { sub: claims.sub, connectorId: connector.id, aud: Array.isArray(claims.aud) ? String(claims.aud[0]) : String(claims.aud) };
     } catch {
       return null;
     }

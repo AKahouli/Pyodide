@@ -16,8 +16,21 @@ const ROUTE_PRINCIPALS: Record<string, string> = {
   'mcp-agent': 'mcp-agent',
   'mcp-playbook': 'mcp-playbook',
   'mcp-semantic-model': 'semantic-model-mcp',
+  'mcp-platform': 'mcp-platform',
 };
-export const McpRouteAudience = (audience: 'mcp-agent' | 'mcp-playbook' | 'mcp-semantic-model') => SetMetadata(AUDIENCE_METADATA, audience);
+export type McpRouteAudienceValue = 'mcp-agent' | 'mcp-playbook' | 'mcp-semantic-model' | 'mcp-platform';
+/**
+ * Declare the trusted assertion audience(s) for an internal MCP surface in code.
+ * Multiple audiences exist only for the platform-MCP migration: legacy per-server
+ * audiences and the shared `mcp-platform` audience are accepted until the old
+ * deployments retire, then each list collapses back to one entry.
+ */
+export const McpRouteAudience = (...audiences: McpRouteAudienceValue[]) => {
+  if (!audiences.length || audiences.some((audience) => !ROUTE_PRINCIPALS[audience])) {
+    throw new Error('McpRouteAudience requires trusted audiences');
+  }
+  return SetMetadata(AUDIENCE_METADATA, audiences);
+};
 
 interface DelegatedRequest {
   headers: Headers;
@@ -72,10 +85,12 @@ export class DelegatedActorGuard implements CanActivate {
     if (typeof assertion !== 'string' || !assertion.trim()) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing MCP delegated actor assertion');
     }
-    const audience = this.reflector.getAllAndOverride<string>(AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
-    if (!audience || !ROUTE_PRINCIPALS[audience]) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing trusted MCP route audience');
-    const verified = await this.mcpJwt.verifyMcpAssertion(assertion.trim(), audience);
-    if (!verified || !isObjectId(verified.sub)) {
+    const routeAudiences = this.reflector.getAllAndOverride<string[] | string>(AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
+    const allowed = (Array.isArray(routeAudiences) ? routeAudiences : routeAudiences ? [routeAudiences] : [])
+      .filter((audience) => Boolean(ROUTE_PRINCIPALS[audience]));
+    if (!allowed.length) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing trusted MCP route audience');
+    const verified = await this.mcpJwt.verifyMcpAssertion(assertion.trim(), allowed);
+    if (!verified || !isObjectId(verified.sub) || !ROUTE_PRINCIPALS[verified.aud]) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP delegated actor assertion');
     }
     if (headerUserId !== undefined && headerUserId !== verified.sub) {
@@ -102,7 +117,7 @@ export class DelegatedActorGuard implements CanActivate {
       action: 'mcp.delegated_call',
       targetType: 'internal_mcp_route',
       metadata: {
-        servicePrincipal: ROUTE_PRINCIPALS[audience],
+        servicePrincipal: ROUTE_PRINCIPALS[verified.aud],
         connectorId: verified.connectorId,
         correlationId,
         method: request.method ?? null,
