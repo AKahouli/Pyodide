@@ -1,6 +1,14 @@
 # Semantic Model Graph Search and MCP: implementation plan (adjusted)
 
 **Date:** 1 October 2026
+**Storage update (21 October 2026):** Migration `038` changes existing embedding columns
+and attached partitions to fixed `halfvec(3072)`; runtime storage/profile width is fixed
+at 3072, and a conflicting `SEMANTIC_EMBEDDING_DIMENSION` fails before build admission.
+User-approved disposable search documents/passages/cache are cleared and old search
+generations invalidated. Population/generated records and their serving bindings survive;
+search indexes must be rebuilt, not source data repopulated. No mixed-dimension storage or
+profile routing is introduced. The 2560-wide examples below describe the original design.
+See the runtime README for migration/rebuild steps and the unresolved provider3072 rollout gate.
 **Branch / commit checked:** `semantic-ux/phase-1` @ `cb82c41a6`. That commit retired the old chat search path.
 **Supersedes:** `yellowmind_age_graph_search_proof_plan.md`. This version replaces its assumptions with what the code and the development databases show.
 **What was checked:**

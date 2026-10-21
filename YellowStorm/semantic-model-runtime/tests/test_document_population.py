@@ -51,6 +51,20 @@ def index_stubs(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_index_correlation_uses_reauthorized_asset_identity(monkeypatch, index_stubs):
+    async def candidates(_connection, **kwargs):
+        assert kwargs == {"workspace_id": SOURCE["workspaceId"], "file_name": SOURCE["originalName"],
+                          "asset_id": SOURCE["assetId"], "uploader_user_id": "u1"}
+        return {"resolution": "resolved", "candidates": [{"documentPk": "indexed"}]}
+
+    monkeypatch.setattr(document, "resolve_document_candidates", candidates)
+    mapped = entry()
+    mapped["source"]["originalName"] = "stale.pdf"
+    result = await document.resolve_indexed_document(object(), mapped, "u1", metadata)
+    assert result["candidate"]["documentPk"] == "indexed"
+
+
+@pytest.mark.asyncio
 async def test_extracts_mapped_fields_with_ocr_provenance(monkeypatch: pytest.MonkeyPatch, index_stubs):
     async def read(*_args, **_kwargs):
         return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{

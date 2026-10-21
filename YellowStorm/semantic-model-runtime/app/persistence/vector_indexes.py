@@ -33,10 +33,10 @@ VECTOR_TABLES = ("entity_documents", "entity_passages")
 HNSW_OPTIONS = "m = 16, ef_construction = 64"
 
 # A graph held in memory while it is built is what makes a bulk build fast: past maintenance_work_mem
-# pgvector keeps building on disk, several times slower. Bytes per indexed row: the 2,560-dimension halfvec
-# (5 KB), the element's neighbours and page overhead. The memory asked for is the estimate with headroom, within
+# pgvector keeps building on disk, several times slower. Bytes per indexed row: the 3,072-dimension halfvec
+# (6 KB), the element's neighbours and page overhead. The memory asked for is the estimate with headroom, within
 # [MIN_MEMORY_MB, max]; ``SEMANTIC_SEARCH_VECTOR_INDEX_MAX_MEMORY_MB`` caps what a build may take.
-BYTES_PER_ROW = 6_500
+BYTES_PER_ROW = 7_500
 MIN_MEMORY_MB = 128
 DEFAULT_MAX_MEMORY_MB = 2048
 # The server grants what max_parallel_workers allows; the build scales almost linearly with them.

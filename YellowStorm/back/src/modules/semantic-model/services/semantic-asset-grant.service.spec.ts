@@ -33,6 +33,38 @@ async function setup(purpose: 'discovery' | 'population' = 'discovery', scopes: 
 }
 
 describe('SemanticAssetGrantService live execution authority', () => {
+  it('keeps a sixteen-source metadata grant bounded independently of the admitted command', async () => {
+    const f = await setup('population', Array.from({ length: 16 }, (_, sheet) => ({ sheet, padding: 'x'.repeat(8000) })));
+    expect(Buffer.byteLength(f.admission)).toBeGreaterThan(99000);
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    expect(Buffer.byteLength(token)).toBeLessThan(4096);
+    const body = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).body;
+    expect(body.admission).toBeUndefined();
+    expect(body.admissionDigest).toBe(createHash('sha256').update(f.admission).digest('hex'));
+    expect(await f.service.check(token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
+  it('does not copy extra request-body fields into signed grants', async () => {
+    const f = await setup();
+    const { token } = await f.service.issue({ ...proof, extra: 'x'.repeat(100000) } as AssetExecutionProof,
+      source.workspaceId, source.assetId, 'metadata');
+    const body = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).body;
+    expect(body.extra).toBeUndefined();
+    expect(Buffer.byteLength(token)).toBeLessThan(4096);
+    expect(await f.service.check(token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
+  it('rejects grants when another valid admission replaces the canonical admission', async () => {
+    const f = await setup();
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    const admission = JSON.parse(Buffer.from(f.admission.split('.')[1], 'base64url').toString()).body;
+    const signer = f.service as unknown as { seal(type: string, body: unknown): string };
+    f.task.command.payload.assetAdmission = signer.seal('semantic-asset-admission', { ...admission, key: 'replacement' });
+    await expect(f.service.check(token, source.workspaceId, source.assetId, 'metadata')).rejects.toThrow('admission changed');
+    const replacement = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    expect(await f.service.check(replacement.token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
   it('binds a five-minute grant to exact operation, source and live claim digest', async () => {
     const f = await setup();
     const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'read');

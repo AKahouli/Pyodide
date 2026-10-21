@@ -16,7 +16,7 @@ type Admission = { actor: string; model: string | null; purpose: 'discovery' | '
   nonce: string; key: string; command: string; iat: number; exp: number };
 export interface AssetExecutionProof { jobId: string; taskId: number; leaseEpoch: number; leaseOwner: string; capability: string }
 export interface AssetTarget { datasetId?: string; fileName?: string; options?: Record<string, unknown> }
-type Grant = AssetExecutionProof & Source & { operation: AssetOperation; admission: string; exp: number;
+type Grant = AssetExecutionProof & Source & { operation: AssetOperation; admissionDigest: string; exp: number;
   target?: AssetTarget; namespace?: string };
 interface LiveTask { command: Record<string, unknown>; actor: string; model: string | null; jobType: string; createdAt: Date | string }
 
@@ -207,7 +207,12 @@ export class SemanticAssetGrantService {
     if (!['metadata', 'read', 'derived-put', 'dataset-put', 'dataset-get'].includes(operation)) throw new UnauthorizedException('Invalid asset operation');
     const { source, admission } = await this.authorize(proof, workspaceId, assetId, operation);
     const scope = this.storageScope(proof, source, admission, operation, target);
-    return { token: this.seal('semantic-asset-grant', { ...proof, ...source, ...scope, admission, operation, exp: Math.floor(Date.now() / 1000) + 300 } satisfies Grant) };
+    return { token: this.seal('semantic-asset-grant', {
+      jobId: proof.jobId, taskId: proof.taskId, leaseEpoch: proof.leaseEpoch,
+      leaseOwner: proof.leaseOwner, capability: proof.capability,
+      ...source, ...scope, admissionDigest: createHash('sha256').update(admission).digest('hex'),
+      operation, exp: Math.floor(Date.now() / 1000) + 300,
+    } satisfies Grant) };
   }
 
   async check(token: string, workspaceId: string, assetId: string, operation: AssetOperation, target: AssetTarget = {}): Promise<string> {
@@ -219,7 +224,8 @@ export class SemanticAssetGrantService {
       : operation.startsWith('dataset-') && (grant.target?.datasetId !== target.datasetId || !target.datasetId))
       throw new UnauthorizedException('Asset target does not match grant');
     const checked = await this.authorize(grant, workspaceId, assetId, operation);
-    if (checked.admission !== grant.admission || checked.source.version !== grant.version) throw new UnauthorizedException('Asset grant admission changed');
+    if (createHash('sha256').update(checked.admission).digest('hex') !== grant.admissionDigest
+      || checked.source.version !== grant.version) throw new UnauthorizedException('Asset grant admission changed');
     const scope = this.storageScope(grant, checked.source, checked.admission, operation, grant.target || {});
     if (scope.namespace !== grant.namespace) throw new UnauthorizedException('Asset namespace changed');
     return this.open<Admission>(checked.admission, 'semantic-asset-admission').actor;

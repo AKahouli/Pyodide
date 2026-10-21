@@ -24,7 +24,7 @@ from .settings import IndexBuildSettings
 
 # Must match the halfvec(...) width of the embedding columns in the migrations;
 # another size needs its own storage.
-STORAGE_DIMENSION = int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", "2560"))
+STORAGE_DIMENSION = 3072
 # Qwen3-Embedding is trained with an instruction on the query side only.
 QUERY_INSTRUCTION = ("Instruct: Given a search request, retrieve the business records "
                      "that match it\nQuery: ")
@@ -92,6 +92,9 @@ class EmbeddingProfile:
 
 def profile_from_env() -> EmbeddingProfile | None:
     """The configured profile, or None when embeddings are not set up here."""
+    configured = os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", str(STORAGE_DIMENSION))
+    if configured != str(STORAGE_DIMENSION):
+        raise EmbeddingError("embedding_dimension_unsupported")
     base_url = os.environ.get("SEMANTIC_EMBEDDING_BASE_URL", "").strip().rstrip("/")
     model = os.environ.get("SEMANTIC_EMBEDDING_MODEL", "").strip()
     if not base_url or not model:
@@ -121,7 +124,7 @@ async def embed(profile: EmbeddingProfile, texts: list[str], *, query: bool = Fa
         return []
     prefix = QUERY_INSTRUCTION if query else DOCUMENT_PREFIX
     body = {"model": profile.model, "input": [prefix + text for text in texts],
-            "encoding_format": "float"}
+            "encoding_format": "float", "dimensions": profile.dimension}
     headers = {"Authorization": f"Bearer {profile.api_key}"} if profile.api_key else {}
     owned = client is None
     client = client or httpx.AsyncClient(timeout=profile.timeout_seconds)
