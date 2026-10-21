@@ -97,6 +97,8 @@ export interface WorkspaceShareRecord {
  * and timestamps keep their old behavior.
  */
 export interface IndexingStatePatch {
+  /** Atomic merge into existing metadata; unrelated concurrent entries survive. */
+  metadataMerge?: Record<string, string>;
   status?: string | undefined;
   indexingStatus?: string | undefined;
   indexingError?: string | undefined;

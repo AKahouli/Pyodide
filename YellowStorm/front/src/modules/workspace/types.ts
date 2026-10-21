@@ -11,6 +11,18 @@ export type DocumentStatus = 'pending' | 'uploading' | 'processing' | 'completed
 
 export type IndexingStatus = 'none' | 'pending' | 'processing' | 'ready' | 'failed';
 
+export interface IndexingProgress {
+  currentStep: number;
+  totalSteps: number;
+  steps: Array<{ number: number; name: string; key: string; task_id?: string }>;
+  stepStatus?: 'PROCESSING' | 'FINISH' | 'FAIL';
+  processingStatus: 'PROCESSING' | 'FINISH' | 'FAIL';
+  message?: string;
+  processingTaskName?: string;
+  processingTaskId?: string;
+  processingTaskKey?: string;
+}
+
 export type WorkspaceArtifactType = 'decision_flow';
 export type WorkspaceArtifactStatus = 'queued' | 'generating' | 'ready' | 'failed';
 export type DecisionFlowNodeType = 'start' | 'information' | 'decision' | 'result' | 'end';
@@ -96,6 +108,7 @@ export interface WorkspaceDocument {
   indexingError?: string;
   indexingTaskName?: string;
   indexingTaskId?: string;
+  indexingProgress?: IndexingProgress | null;
   lastIndexedAt?: string;
   parentId?: string;
   isFolder: boolean;
@@ -151,6 +164,7 @@ export interface WorkspaceFile {
   indexingStatus?: IndexingStatus;
   indexingError?: string;
   lastIndexedAt?: string;
+  indexingProgress?: IndexingProgress | null;
   /** Discriminates uploaded documents ('doc') from website links ('url'). */
   type?: 'doc' | 'url';
   /** Original website URL when type === 'url'. */

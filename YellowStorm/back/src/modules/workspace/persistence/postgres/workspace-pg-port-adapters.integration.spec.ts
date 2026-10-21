@@ -129,6 +129,21 @@ describeIntegration('workspace PG port adapters', () => {
     expect(after!.updatedAt.getTime()).toBeGreaterThan(after!.createdAt.getTime());
   });
 
+  it('merges concurrent indexing metadata updates without losing progress or source metadata', async () => {
+    const workspaceId = await createWorkspace();
+    const doc = await insertDocument(workspaceId, { metadata: { sourceGroupId: 'source-1' } });
+    const progress = JSON.stringify({ currentStep: 6, totalSteps: 11 });
+    await Promise.all([
+      documentWrite.updateIndexingState(doc.id, { metadataMerge: { indexingProgress: progress } }),
+      documentWrite.updateIndexingState(doc.id, { metadataMerge: { indexing_id: 'workflow-1' } }),
+    ]);
+    expect((await documentRead.findById(doc.id))!.metadata).toEqual({
+      sourceGroupId: 'source-1', indexingProgress: progress, indexing_id: 'workflow-1',
+    });
+    await documentWrite.updateIndexingState(doc.id, { metadataMerge: { indexingProgress: '' } });
+    expect((await documentRead.findById(doc.id))!.metadata?.indexing_id).toBe('workflow-1');
+  });
+
   it('resolves share permissions per user', async () => {
     const wsId = await createWorkspace();
     await db.insert(schema.workspaceShares).values({

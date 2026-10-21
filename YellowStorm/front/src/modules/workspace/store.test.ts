@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PAGE_LIMIT } from './utils';
 import { setWorkspaceTranslator, useAllWorkspaces, useWorkspaceStore } from './store';
-import type { Workspace } from './types';
+import type { IndexingProgress, Workspace } from './types';
 
 const workspaceApiMock = vi.hoisted(() => ({
   getWorkspaceUploadSettings: vi.fn(),
@@ -441,17 +441,45 @@ describe('workspace store', () => {
               id: 'doc-1',
               originalName: 'a.pdf',
               indexingStatus: 'none',
+              metadata: { source: 'upload' },
             } as never,
           ],
         ],
       ]),
     });
 
-    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined);
+    const indexingProgress: IndexingProgress = {
+      currentStep: 6, totalSteps: 11, steps: [{ number: 6, name: 'Block embedding', key: 'embed-blocks' }],
+      stepStatus: 'FINISH', processingStatus: 'PROCESSING', message: 'Block embedding completed successfully.',
+    };
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined, undefined, undefined, undefined, undefined, indexingProgress);
 
     const state = useWorkspaceStore.getState();
     expect(state.pageFiles[0].indexingStatus).toBe('processing');
     expect(state.documents.get(1)?.[0].indexingStatus).toBe('processing');
+    expect(state.pageFiles[0].indexingProgress).toEqual(indexingProgress);
+    expect(state.documents.get(1)?.[0].indexingProgress).toEqual(indexingProgress);
+    expect(JSON.parse(state.documents.get(1)![0].metadata!.indexingProgress)).toEqual(indexingProgress);
+
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'failed', 'Block embedding failed.', undefined, undefined, undefined, undefined, undefined, { ...indexingProgress, stepStatus: 'FAIL', processingStatus: 'FAIL' });
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingStatus).toBe('failed');
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingProgress?.stepStatus).toBe('FAIL');
+
+    // Retry reset clears both views and persisted metadata without deleting other keys.
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'pending', undefined, undefined, undefined, undefined, undefined, undefined, null);
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingProgress).toBeUndefined();
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0].indexingProgress).toBeUndefined();
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0].metadata?.indexingProgress).toBeUndefined();
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0].metadata?.source).toBe('upload');
+
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined, undefined, undefined, undefined, undefined, indexingProgress);
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing');
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingProgress).toEqual(indexingProgress);
+    // Legacy terminal events carry no fresh step: retain the terminal result only.
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'failed', 'Worker stopped.');
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingStatus).toBe('failed');
+    expect(useWorkspaceStore.getState().pageFiles[0].indexingProgress).toBeUndefined();
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0].metadata?.indexingProgress).toBeUndefined();
   });
 
   it('startUpload bulk waits for complete and passes autoIndex=true', async () => {

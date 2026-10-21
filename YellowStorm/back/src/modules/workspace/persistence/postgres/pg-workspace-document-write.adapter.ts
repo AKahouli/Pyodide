@@ -49,6 +49,9 @@ export class PgWorkspaceDocumentWriteAdapter {
     if (Object.prototype.hasOwnProperty.call(patch, 'metadata')) {
       set.metadata = patch.metadata ?? null;
     }
+    if (patch.metadataMerge) {
+      set.metadata = sql`coalesce(${DOCUMENTS.metadata}, '{}'::jsonb) || ${JSON.stringify(patch.metadataMerge)}::jsonb`;
+    }
     if (Object.keys(set).length === 1) return; // only updatedAt — nothing to write
     // A worker may finish with a pre-deletion metadata snapshot; it cannot resurrect the source.
     await this.q.update(DOCUMENTS).set(set).where(and(eq(DOCUMENTS.id, id), sql`${DOCUMENTS.metadata}->>'assetDeletedAt' IS NULL`));

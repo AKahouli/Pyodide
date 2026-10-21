@@ -1,5 +1,24 @@
 # Workspace Module (Frontend)
 
+Workspace file rows show the indexing status, live step and server display message
+on the right beside the file size, with an expandable ordered schedule. Workspace
+totals count all files, indexed files, failures and processing/queued work across
+all folders, independently of the current folder or search. The existing unfiltered
+file-list response owns these totals and receives the same notification/poll updates.
+`WorkspaceFile.indexingProgress` hydrates from
+the existing file-list API; `useIndexingNotifications` updates it through the
+shared notification SSE stream and keeps the document cache in sync. The returned
+schedule and count drive the display, including initial step zero. Only the
+workflow status determines success: a failure at the final step remains failed,
+and steps after a failed operation remain pending. Files with no detailed progress
+retain a visible localized indexing status.
+An explicit null progress notification clears a previous run during retries.
+Legacy terminal notifications without detailed progress clear stale steps; the
+overall file result also takes precedence over stale progress returned by a list.
+Failed files without a detailed schedule show their server error beside the
+status, with the full reason available on hover. Step notifications update rows
+without popup toasts when the backend marks them silent.
+
 Admin → Workspace separates maximum per-file upload size, the default total quota
 for new conversation workspaces, and the quota of an existing workspace loaded by
 ID (including hidden conversation system workspaces). Values use MiB. Existing

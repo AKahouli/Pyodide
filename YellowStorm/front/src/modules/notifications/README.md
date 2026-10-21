@@ -8,6 +8,11 @@ reconnects the authenticated owner and reloads notifications/unread count. This
 does not pause agent execution or conversation streaming. Late responses from a
 previous owner cannot repopulate another user's notification state.
 
+Notifications with `data.silent: true` still update history, unread counts and
+SSE subscribers, but skip the popup toast. Indexing progress uses this marker for
+step updates; lifecycle notifications retain normal popup behavior. The provider's
+`showToasts` option continues to disable all popup toasts when false.
+
 ## Table of Contents
 
 - [Overview](#overview)

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { readIndexingProgress } from '../../indexing/interfaces/indexing.interface';
 import { isObjectId, normalizeObjectId } from '@common/postgres';
 import { 
   type WorkspaceDocumentRecord,  
@@ -191,6 +192,7 @@ export class ClassifierFileService {
       path: doc.path,
       indexingStatus: (doc.indexingStatus ?? 'none') as IClassifierFileResponse['indexingStatus'],
       indexingError: doc.indexingError,
+      indexingProgress: readIndexingProgress(doc.metadata),
       lastIndexedAt: doc.lastIndexedAt instanceof Date
         ? doc.lastIndexedAt.toISOString()
         : (doc.lastIndexedAt) ?? undefined,

@@ -20,6 +20,7 @@ import { RateLimit } from '../rate-limiter';
 import { timingSafeStringEquals } from '@common/utils';
 import { IndexingService } from './indexing.service';
 import { LoggerService } from '../logger';
+import type { IndexingProgress } from './interfaces/indexing.interface';
 
 interface IndexingWebhookBody {
   event_type: string;
@@ -85,15 +86,50 @@ export class IndexingWebhookController {
     // Validate required fields manually
     const dto = body as unknown as IndexingWebhookBody;
 
-    if (!dto.status || typeof dto.status !== 'string') {
-      throw new BadRequestException('Missing required field: status');
+    const status = dto.processing_status ?? dto.status;
+    if (typeof status !== 'string' || !['START', 'PROCESSING', 'FINISH', 'FAIL'].includes(status)) {
+      throw new BadRequestException('Invalid indexing status');
     }
 
-    if (!dto.metadata?.external_id || typeof dto.metadata.external_id !== 'string') {
-      throw new BadRequestException('Missing required field: metadata.external_id');
+    const documentId = dto.metadata?.external_id ?? dto.metadata?.document_id;
+    if (typeof documentId !== 'string' || !documentId) {
+      throw new BadRequestException('Missing document identifier in metadata');
     }
 
-    const documentId = dto.metadata.external_id;
+    let indexingProgress: IndexingProgress | undefined;
+    if (body.current_step != null || body.total_steps != null || body.steps != null) {
+      const { current_step, total_steps, steps, step_status, message } = body;
+      if (!Number.isSafeInteger(current_step) || !Number.isSafeInteger(total_steps)
+        || (current_step as number) < 0 || (total_steps as number) < 1
+        || (current_step as number) > (total_steps as number)
+        || (steps != null && (!Array.isArray(steps) || steps.length !== total_steps))
+        || (step_status != null && !['PROCESSING', 'FINISH', 'FAIL'].includes(String(step_status)))
+        || (message != null && typeof message !== 'string')) {
+        throw new BadRequestException('Invalid indexing progress');
+      }
+      const schedule: IndexingProgress['steps'] = [];
+      for (const [index, entry] of (steps as unknown[] ?? []).entries()) {
+        if (!entry || typeof entry !== 'object') throw new BadRequestException('Invalid indexing step');
+        const step = entry as Record<string, unknown>;
+        // Provider WebhookStep names; retain compatibility with the original UI shape.
+        const number = step.step_number ?? step.number;
+        const name = step.task_name ?? step.name;
+        const key = step.task_key ?? step.key;
+        if (number !== index + 1 || typeof name !== 'string' || typeof key !== 'string'
+          || typeof step.task_id !== 'string') throw new BadRequestException('Invalid indexing step');
+        schedule.push({ number: number as number, name, key, task_id: step.task_id });
+      }
+      for (const field of ['processing_task_name', 'processing_task_key', 'processing_task_id']) {
+        if (body[field] != null && typeof body[field] !== 'string') throw new BadRequestException(`Invalid ${field}`);
+      }
+      indexingProgress = {
+        currentStep: current_step as number, totalSteps: total_steps as number, steps: schedule,
+        stepStatus: (step_status ?? undefined) as IndexingProgress['stepStatus'], processingStatus: status,
+        message: (message ?? undefined) as string | undefined,
+        processingTaskName: dto.processing_task_name ?? undefined, processingTaskId: dto.processing_task_id ?? undefined,
+        processingTaskKey: (body.processing_task_key ?? undefined) as string | undefined,
+      };
+    }
 
     this.logger.log('Webhook received', {
       documentId,
@@ -106,13 +142,14 @@ export class IndexingWebhookController {
 
     await this.indexingService.handleWebhook(
       documentId,
-      dto.status,
+      status,
       dto.detected_language,
       {
         processingStatus: dto.processing_status,
         processingTaskName: dto.processing_task_name,
         processingTaskId: dto.processing_task_id || dto.task_id,
         errorMessage: dto.metadata.error_message_image,
+        indexingProgress,
       },
     );
     return {

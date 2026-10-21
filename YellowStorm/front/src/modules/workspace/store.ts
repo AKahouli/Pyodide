@@ -17,6 +17,7 @@ import type { ModuleTranslationKey, TranslationParams } from '@/modules/localiza
 import type {
   Workspace,
   WorkspaceDocument,
+  IndexingProgress,
   WorkspaceSetting,
   CreateWorkspaceData,
   UpdateWorkspaceData,
@@ -233,7 +234,7 @@ interface WorkspaceActions {
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
   renameDocument: (workspaceId: string, docId: string, name: string) => Promise<void>;
-  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
+  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number, indexingProgress?: IndexingProgress | null) => void;
 
   // Template operations
   fetchTemplates: () => Promise<void>;
@@ -974,13 +975,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }));
       },
 
-      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size) => {
+      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size, indexingProgress) => {
         const state = get();
+        // Null resets a retry; legacy terminal events must not retain an old live step.
+        const replaceProgress = indexingProgress !== undefined || indexingStatus === 'failed' || indexingStatus === 'ready';
         const newCache = new Map(state.documents);
         newCache.forEach((documents, page) => {
           const index = documents.findIndex((d) => d.id === documentId);
           if (index !== -1) {
             const updatedDocuments = [...documents];
+            const metadata = { ...documents[index].metadata };
+            if (indexingProgress) metadata.indexingProgress = JSON.stringify(indexingProgress);
+            else if (replaceProgress) delete metadata.indexingProgress;
             updatedDocuments[index] = {
               ...documents[index],
               indexingStatus: indexingStatus as WorkspaceDocument['indexingStatus'],
@@ -990,6 +996,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               indexingTaskId,
               detected_language,
               chunk_size,
+              ...(replaceProgress ? { indexingProgress: indexingProgress ?? undefined, metadata } : {}),
             };
             newCache.set(page, updatedDocuments);
           }
@@ -1004,6 +1011,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                   ...f,
                   indexingStatus: indexingStatus as WorkspaceFile['indexingStatus'],
                   indexingError,
+                  ...(replaceProgress ? { indexingProgress: indexingProgress ?? undefined } : {}),
                 }
               : f,
           ),

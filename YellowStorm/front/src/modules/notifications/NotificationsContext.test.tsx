@@ -2,6 +2,8 @@ import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NotificationsProvider, useNotifications } from './NotificationsContext';
+import { toast } from 'sonner';
+import type { Notification, SSEEvent } from './types';
 
 const actor = vi.hoisted(() => ({ id: 'u1', authenticated: true }));
 const pauseMock = vi.hoisted(() => vi.fn());
@@ -97,6 +99,7 @@ describe('NotificationsContext', () => {
   });
 
   beforeEach(() => {
+    vi.clearAllMocks();
     actor.id = 'u1'; actor.authenticated = true;
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     pauseMock.mockReset();
@@ -127,6 +130,40 @@ describe('NotificationsContext', () => {
       expect(getUnreadCountMock).toHaveBeenCalled();
       expect(screen.getByText('count-1')).toBeInTheDocument();
     });
+  });
+
+  it('keeps silent indexing progress in history while showing lifecycle toasts', async () => {
+    render(<Wrapper><Consumer /></Wrapper>);
+    await screen.findByText('count-1');
+    const onEvent = subscribeMock.mock.calls[0][0] as (event: SSEEvent) => void;
+    const notification: Notification = {
+      id: 'progress', title: 'Block embedding', message: 'Step completed.', type: 'info',
+      status: 'sent', destination: 'web', createdAt: '', updatedAt: '',
+      metadata: { sourceModule: 'indexing', priority: 'normal' }, data: { silent: true },
+    };
+    act(() => onEvent({ type: 'notification', data: notification }));
+    expect(screen.getByText('Block embedding')).toBeInTheDocument();
+    expect(screen.getByText('count-2')).toBeInTheDocument();
+    expect(toast.info).not.toHaveBeenCalled();
+
+    act(() => onEvent({ type: 'notification', data: { ...notification, id: 'success', title: 'Indexed', type: 'success', data: { silent: false } } }));
+    expect(toast.success).toHaveBeenCalledWith('Indexed', expect.objectContaining({ description: 'Step completed.' }));
+    act(() => onEvent({ type: 'notification', data: { ...notification, id: 'failure', title: 'Indexing failed', type: 'error', data: undefined } }));
+    expect(toast.error).toHaveBeenCalledWith('Indexing failed', expect.any(Object));
+    expect(screen.getByText('count-4')).toBeInTheDocument();
+  });
+
+  it('keeps showToasts=false authoritative for ordinary lifecycle notifications', async () => {
+    render(<NotificationsProvider showToasts={false}><Consumer /></NotificationsProvider>);
+    await screen.findByText('count-1');
+    const onEvent = subscribeMock.mock.calls[0][0] as (event: SSEEvent) => void;
+    act(() => onEvent({ type: 'notification', data: {
+      id: 'start', title: 'Indexing started', message: 'Queued.', type: 'info', status: 'sent', destination: 'web', createdAt: '', updatedAt: '',
+      metadata: { sourceModule: 'indexing', priority: 'normal' }, data: { silent: false },
+    } }));
+    expect(screen.getByText('Indexing started')).toBeInTheDocument();
+    expect(screen.getByText('count-2')).toBeInTheDocument();
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   it('marks notifications as read and updates unread count', async () => {

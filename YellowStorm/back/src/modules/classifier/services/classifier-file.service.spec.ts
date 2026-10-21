@@ -56,6 +56,14 @@ function makeService(doc: WorkspaceDocumentRecord, assignments: ClassifierAssign
 }
 
 describe('ClassifierFileService.listFiles sourceRootUrl', () => {
+  it('rehydrates indexing progress from existing metadata on file listing', async () => {
+    const doc = makeDoc();
+    const progress = { currentStep: 0, totalSteps: 3, steps: [], processingStatus: 'PROCESSING' };
+    doc.metadata = { ...doc.metadata, indexingProgress: JSON.stringify(progress) };
+    const { service } = makeService(doc);
+    const files = await service.listFiles('u1', WORKSPACE_ID, {} as never);
+    expect(files[0].indexingProgress).toEqual(progress);
+  });
   it('surfaces sourceRootUrl and normalizedSourceRootUrl from metadata', async () => {
     const { service } = makeService(makeDoc());
     const res = await service.listFiles('u1', WORKSPACE_ID, {} as any);

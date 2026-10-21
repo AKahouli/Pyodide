@@ -4,6 +4,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useWorkspaceStore } from '../store';
+import type { IndexingProgress } from '../types';
 import { notificationsService, type Notification, type SSEEvent } from '@/modules/notifications';
 
 interface IndexingNotificationData {
@@ -14,6 +15,9 @@ interface IndexingNotificationData {
   indexingError?: string;
   lastIndexedAt?: string;
   originalName: string;
+  indexingTaskName?: string;
+  indexingTaskId?: string;
+  indexingProgress?: IndexingProgress | null;
 }
 
 /**
@@ -35,7 +39,7 @@ export function useIndexingNotifications() {
       const data = notification.data as IndexingNotificationData | undefined;
       if (!data?.eventType || data.eventType !== 'indexing_status_change') return;
 
-      updateRef.current(data.documentId, data.indexingStatus, data.indexingError, data.lastIndexedAt);
+      updateRef.current(data.documentId, data.indexingStatus, data.indexingError, data.lastIndexedAt, data.indexingTaskName, data.indexingTaskId, undefined, undefined, data.indexingProgress);
     };
 
     const unsubscribe = notificationsService.subscribe(handleEvent);
