@@ -24,6 +24,24 @@ remain available for retry, including assignment failures without re-uploading.
 Only queued transfers can be cancelled. Upload destinations are captured before
 asynchronous work, and pending assignments prevent premature queue dismissal.
 
+## Indexing visibility
+
+`WorkspaceIndexingSummary` shows the workspace totals (files, indexed, failed,
+processing) above the file list, counted over every file of the workspace
+independently of the active folder or search.
+
+`FileIndexingDetails` shows the indexing state of a single file row:
+`FileIndexingStatusLine` carries the localized status and the elapsed attempt
+time measured by the server, and `FileIndexingSteps` carries the step schedule
+reported by the indexing service (document download, PDF conversion, block
+embedding, …). The schedule expands under the file name, because the ordered
+list needs the full row width, and the step order and names come from the
+service rather than from the file type. A schedule is only shown while it still
+describes the current outcome; a stale schedule from an earlier run never
+contradicts the status. A failed file keeps its server reason visible, because
+the status alone does not say what went wrong, and the steps after a failed
+step stay pending.
+
 Deletion is permanent for files and confirmed before execution. Classifier folder
 deletion removes descendant folders but preserves their files at the workspace
 root. Trash, restore and undo are not supported by the current backend.
