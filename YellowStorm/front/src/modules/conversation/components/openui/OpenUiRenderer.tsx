@@ -1,5 +1,5 @@
 import './devtools-off';
-import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Renderer, type ActionEvent, type ParseResult } from '@openuidev/react-lang';
 import { CardSourceProvider, ThemeProvider } from '@openuidev/react-ui';
 import '@openuidev/react-ui/styles/index.css';
@@ -8,10 +8,19 @@ import { ThemeProviderContext } from '@/contexts/ThemeContext';
 import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { OpenUiCitationContext, splitCitations, toStockSources, type OpenUiCitationScope } from './citations';
 import { openUiLibrary } from './library';
-import { ReportBlock } from './ReportBlock';
 import { splitReportProgram } from './report-program';
 import { OPENUI_COMPACT_THEME } from './theme';
 import { createScopedImageCache } from './document-images';
+
+// Plain chat cards do not need the report/presentation adapters or slide export UI.
+let ReportBlock = createLazyReportBlock();
+function createLazyReportBlock() {
+  return lazy(() => import('./ReportBlock').catch(() => import('./ReportBlock'))
+    .then(module => ({ default: module.ReportBlock })).catch((error: unknown) => {
+      ReportBlock = createLazyReportBlock();
+      throw error;
+    }));
+}
 
 export interface OpenUiRendererProps {
   content: string;

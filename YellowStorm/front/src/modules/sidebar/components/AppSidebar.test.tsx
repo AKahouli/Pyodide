@@ -87,19 +87,16 @@ vi.mock('@/modules/playbook/components/PlaybookButton', () => ({ PlaybookButton:
 vi.mock('@/modules/governance', () => ({ GovernanceButton: () => <div>governance-btn</div> }));
 vi.mock('@/modules/worky/components/WorkyButton', () => ({ WorkyButton: () => <div>worky-btn</div> }));
 vi.mock('@/modules/app-builder', () => ({ AppBuilderButton: () => <div>app-builder-btn</div> }));
-vi.mock('@/modules/admin', () => ({
-  AdminButton: () => <div>admin-btn</div>,
-  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, playbook: true, governance: true, appBuilder: true, worky: true, agents: true },
-  getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
+vi.mock('@/modules/admin/constants', async original => ({ ...await original<typeof import('@/modules/admin/constants')>(),
+  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, semanticModel: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
 }));
-vi.mock('@/modules/admin', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/modules/admin')>();
+vi.mock('@/modules/admin/api', () => ({ getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })) }));
+vi.mock('@/modules/admin/hooks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/admin/hooks')>();
+  const { DEFAULT_NAVIGATION_SETTINGS } = await import('@/modules/admin/navigation');
   return {
     ...actual,
-    AdminButton: () => <div>admin-btn</div>,
-    DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, semanticModel: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
-    getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
-    useNavigationSettings: () => actual.DEFAULT_NAVIGATION_SETTINGS,
+    useNavigationSettings: () => DEFAULT_NAVIGATION_SETTINGS,
   };
 });
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({

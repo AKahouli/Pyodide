@@ -16,7 +16,7 @@ vi.mock('../UsageContext', () => ({
   useUsage: () => usageState,
 }));
 
-vi.mock('@/modules/profile', () => ({
+vi.mock('@/modules/profile/SettingsContext', () => ({
   useSettingsModal: () => ({ closeSettings: closeSettingsMock }),
 }));
 

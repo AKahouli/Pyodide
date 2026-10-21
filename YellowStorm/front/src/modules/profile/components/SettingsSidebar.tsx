@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { SettingsSection } from '../types';
-import { usePermissions } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks';
 
 interface NavItem {
   id: SettingsSection;

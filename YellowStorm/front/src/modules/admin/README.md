@@ -1,5 +1,12 @@
 # Admin Module
 
+Shell navigation and shared permission consumers use the existing lightweight
+public entrypoints `admin/api`, `admin/constants`, `admin/navigation` and
+`admin/hooks`. Importing the main barrel at runtime also imports its admin page
+exports and defeats lazy routing in development. Public types and existing page
+consumers remain compatible with the main barrel. This import-only separation
+does not change feature visibility or permission checks.
+
 > **Documentation technique junior (Panel Admin — ensemble des fonctionnalités, code vérifié)** : [DOCUMENTATION_TECHNIQUE.md](./DOCUMENTATION_TECHNIQUE.md)
 
 The Admin module provides administrative functionality for managing users, roles, plans, system settings, and viewing analytics/audit logs.

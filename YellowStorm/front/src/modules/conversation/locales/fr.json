@@ -1,4 +1,5 @@
 {
+  "openui.viewAnswer": "Afficher la réponse",
   "assets.delete": "Supprimer",
   "assets.deleteTitle": "Supprimer cet élément ?",
   "assets.deleteDescription": "Supprimer « {{name}} » de cette conversation ? L’agent ne pourra plus l’ouvrir ni le réutiliser. Les fichiers déjà téléchargés et les copies séparées restent disponibles.",

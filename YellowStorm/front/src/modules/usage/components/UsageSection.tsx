@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useUsage } from '../UsageContext';
-import { useSettingsModal } from '@/modules/profile';
+import { useSettingsModal } from '@/modules/profile/SettingsContext';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 

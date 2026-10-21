@@ -16,16 +16,18 @@ import { AppSidebar } from '@/modules/sidebar';
 import { useAuth } from '../useAuth';
 import { LandingPage } from './LandingPage';
 import { PendingApprovalPage } from './PendingApprovalPage';
-import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
-import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { DEFAULT_FEATURE_VISIBILITY } from '@/modules/admin/constants';
+import { getFeatureVisibility } from '@/modules/admin/api';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
 import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
+
+const NewConversationPage = React.lazy(() => import('@/modules/conversation/NewConversationPage').then(module => ({ default: module.NewConversationPage })));
 
 export function RootGuard() {
   const {
@@ -171,7 +173,7 @@ export function RootGuard() {
         <header className='flex h-14 shrink-0 items-center gap-2 md:hidden'>
           <SidebarTriggerMobile />
         </header>
-        <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
+        <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <React.Suspense fallback={<Loader2 className='size-6 animate-spin' aria-hidden='true' />}><NewConversationPage /></React.Suspense> : <Outlet />}</div>
       </SidebarInset>
       {platformCopilotEnabled && canUseFeature('platformCopilot') && !isWorkyStreamRoute && <PlatformCopilotMascot />}
     </SidebarProvider>

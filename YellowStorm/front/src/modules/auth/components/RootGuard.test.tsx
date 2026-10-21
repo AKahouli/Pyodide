@@ -24,7 +24,7 @@ vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
   usePlaybookStreamGlobal: vi.fn(),
 }));
 vi.mock('@/modules/sidebar', () => ({ AppSidebar: () => <div data-testid='app-sidebar' /> }));
-vi.mock('@/modules/conversation', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
+vi.mock('@/modules/conversation/NewConversationPage', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
 vi.mock('@/components/ui/sidebar', () => ({
   SidebarProvider: ({ children }: { children: ReactNode }) => <div data-testid='sidebar-provider'>{children}</div>,
   SidebarInset: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -38,10 +38,8 @@ vi.mock('@/modules/localization', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/modules/localization')>();
   return { ...actual, useModuleTranslation: () => ({ t: (key: string) => key, ready: true, language: 'en' }) };
 });
-vi.mock('@/modules/admin', () => ({
-  DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false },
-  getFeatureVisibility: getFeatureVisibilityMock,
-}));
+vi.mock('@/modules/admin/constants', async original => ({ ...await original<typeof import('@/modules/admin/constants')>(), DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false } }));
+vi.mock('@/modules/admin/api', () => ({ getFeatureVisibility: getFeatureVisibilityMock }));
 vi.mock('@/modules/platform-copilot', () => ({
   PlatformCopilotMascot: () => <div>platform copilot mascot</div>,
 }));
@@ -97,7 +95,7 @@ describe('RootGuard', () => {
     );
 
     expect(screen.getByTestId('sidebar-provider')).toBeInTheDocument();
-    expect(screen.getByText('new conversation page')).toBeInTheDocument();
+    expect(await screen.findByText('new conversation page')).toBeInTheDocument();
     await waitFor(() => expect(fetchModelsMock).toHaveBeenCalledTimes(1));
   });
 

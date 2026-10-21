@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import type { FeatureVisibility, NavigationNode, NavigationSettings, NavigationTargetKey } from '@/modules/admin';
-import { NAVIGATION_TARGETS, navigationLabel, sortNavigationNodes, visibleNavigationItems } from '@/modules/admin';
+import { NAVIGATION_TARGETS, navigationLabel, sortNavigationNodes, visibleNavigationItems } from '@/modules/admin/navigation';
 import { ProjectsSection } from './ProjectsSection';
 import { WorkspaceButton } from '@/modules/workspace';
 import { SemanticModelButton } from '@/modules/semantic-model/components/SemanticModelButton';

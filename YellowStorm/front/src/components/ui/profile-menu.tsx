@@ -4,7 +4,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Button } from './button';
 import { Avatar, AvatarFallback } from './avatar';
 import { useAuth } from '@/modules/auth';
-import { useSettingsModal } from '@/modules/profile';
+import { useSettingsModal } from '@/modules/profile/SettingsContext';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function ProfileMenu() {

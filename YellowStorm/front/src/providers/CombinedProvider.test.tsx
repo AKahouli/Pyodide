@@ -36,7 +36,7 @@ vi.mock('@/modules/usage/UsageContext', () => ({
   UsageProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
-vi.mock('@/modules/profile', () => ({
+vi.mock('@/modules/profile/SettingsContext', () => ({
   SettingsModalProvider: ({ children }: { children: ReactNode }) => children,
 }));
 

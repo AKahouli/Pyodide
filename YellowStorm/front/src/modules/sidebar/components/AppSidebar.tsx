@@ -22,14 +22,14 @@ import {
   useHistoryConversations,
 } from '@/modules/conversation/store';
 import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { DEFAULT_FEATURE_VISIBILITY } from '@/modules/admin/constants';
+import { getFeatureVisibility } from '@/modules/admin/api';
+import { useNavigationSettings } from '@/modules/admin/hooks';
 import {
-  DEFAULT_FEATURE_VISIBILITY,
-  getFeatureVisibility,
   NAVIGATION_TARGETS,
   navigationLabel,
-  useNavigationSettings,
   visibleNavigationItems,
-} from '@/modules/admin';
+} from '@/modules/admin/navigation';
 import type { FeatureVisibility } from '@/modules/admin';
 import { useAdminAccess } from '@/modules/admin/hooks/useAdminAccess';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';

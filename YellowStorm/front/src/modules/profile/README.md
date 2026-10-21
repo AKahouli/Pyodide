@@ -1,5 +1,11 @@
 # Profile Module (Frontend)
 
+Shell providers and lightweight settings launchers import the existing public
+`profile/SettingsContext` entrypoint. The main barrel still exports the same
+symbols, but also reexports the settings modal and its sections; importing it at
+startup would bypass the modal's lazy-loading boundary. Provider order, context
+identity and settings behavior are unchanged.
+
 The profile module provides a comprehensive settings interface for users to manage their profile, sessions, appearance preferences, data controls, and view system health status.
 
 ## Table of Contents
