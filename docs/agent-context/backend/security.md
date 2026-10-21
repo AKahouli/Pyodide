@@ -29,10 +29,10 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 `DelegatedActorGuard` without a separate static service token. The forwarded signed
 assertion must satisfy the route-owned audience and current connector/revision,
 delegation and actor checks; domain permissions still apply. Audit principal comes
-from verified authority, not the service-name header. See proposed
-[ADR-0033](../decisions/ADR-0033-jwt-only-mcp-callbacks.md) for the user-approved
-scope and coordinated deployment requirements. Verification/review is tracked
-separately; this is not production certification.
+from verified authority, not the service-name header. Every first-party MCP — new
+development included — must satisfy the full checklist in the accepted
+[ADR-0033 first-party MCP security baseline](../decisions/ADR-0033-jwt-only-mcp-callbacks.md);
+its deployment section defines the coordinated server + receiver + connector rollout.
 
 During the platform-MCP migration (proposed ADR-0035) these routes also accept the
 shared `mcp-platform` audience until the three legacy MCP deployments retire; audit
