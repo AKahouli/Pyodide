@@ -18,6 +18,25 @@ Autonomous AI ownership migration: `e9ef1676c` / `baseline/semantic-model-001`, 
 
 ### Cross-workspace document discovery and index connection diagnostics
 
+AGE restore identity diagnostics (2026-10-21): a raw `ag_graph` row does not prove
+Cypher can resolve the graph. In AGE 1.8, graph IDs must agree with the graph's
+namespace OID; a restore can preserve plain-OID graph/label references while
+remapping namespace identities. This caused bootstrap `_label_name` to reject
+graph 96952 although its schema existed under OID 16415. Fresh read-only Cypher
+failed for both the application role and administrator, including after explicit
+`LOAD 'age'`, ruling out a simple pool/preload fix. Repair is a separately approved,
+transactional graph/label catalog remap with writers paused and verification before
+commit, not graph recreation or suppressing startup errors. Never drop the AGE
+extension or graph contents to resolve this mismatch. The localhost indexing
+webhook warning is a separate callback-reachability issue, not this startup crash.
+The approved local repair completed with a verified catalog backup: 26 graphs and
+204 labels retained, all physical vertex/edge counts unchanged, no orphan labels.
+Fresh administrator and application sessions each passed 52 vertex/edge Cypher
+checks across all graphs. Backend startup then completed successfully and runtime
+readiness returned 200. The guarded operator helper and rollback-validation mode
+are documented in `YellowStorm/back/scripts/semantic-model/repair-age-graph-oids.md`;
+this is not an automatic bootstrap repair for arbitrary restores.
+
 3072 embedding migration (2026-10-21): user-approved disposable search reset uses
 runtime migration 038. Only search documents/passages/cache are cleared; generation
 state becomes failed with `embedding_storage_changed`, while generated records,
