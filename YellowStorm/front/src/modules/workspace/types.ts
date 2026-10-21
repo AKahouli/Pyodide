@@ -16,7 +16,8 @@ export interface IndexingProgress {
   totalSteps: number;
   steps: Array<{ number: number; name: string; key: string; task_id?: string }>;
   stepStatus?: 'PROCESSING' | 'FINISH' | 'FAIL';
-  processingStatus: 'PROCESSING' | 'FINISH' | 'FAIL';
+  /** Workflow status reported by the indexing service; it also accepts the legacy 'START'. */
+  processingStatus?: 'START' | 'PROCESSING' | 'FINISH' | 'FAIL';
   message?: string;
   processingTaskName?: string;
   processingTaskId?: string;
