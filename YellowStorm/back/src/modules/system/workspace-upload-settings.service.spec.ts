@@ -8,6 +8,7 @@ import {
   WORKSPACE_UPLOAD_SETTINGS_KEY,
 } from './constants/workspace-upload-settings.constants';
 import { EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
+import { WorkspaceService } from '../workspace/workspace.service';
 
 class InMemorySettingStore implements SystemSettingStore {
   private readonly rows = new Map<string, SystemSettingRow>();
@@ -52,14 +53,17 @@ const buildLogger = (): LoggerService =>
 describe('WorkspaceUploadSettingsService', () => {
   let service: WorkspaceUploadSettingsService;
   let store: InMemorySettingStore;
+  let applyConversationWorkspaceStorage: jest.Mock;
 
   beforeEach(async () => {
     store = new InMemorySettingStore();
+    applyConversationWorkspaceStorage = jest.fn().mockResolvedValue(3);
     const moduleRef = await Test.createTestingModule({
       providers: [
         WorkspaceUploadSettingsService,
         { provide: SYSTEM_SETTING_STORE, useValue: store },
         { provide: LoggerService, useFactory: buildLogger },
+        { provide: WorkspaceService, useValue: { applyConversationWorkspaceStorage } },
       ],
     }).compile();
     service = moduleRef.get(WorkspaceUploadSettingsService);
@@ -71,6 +75,16 @@ describe('WorkspaceUploadSettingsService', () => {
     expect(await service.updateSettings(['.pdf'], 'admin')).toMatchObject({ maxFileSizeMb: 50, conversationWorkspaceStorageMb: 200 });
     const fresh = new WorkspaceUploadSettingsService(store, buildLogger());
     expect(await fresh.getSettings()).toMatchObject({ maxFileSizeMb: 50, conversationWorkspaceStorageMb: 200 });
+  });
+
+  it('applies a saved conversation quota to existing system workspaces', async () => {
+    await service.updateSettings(['.png'], 'admin', { conversationWorkspaceStorageMb: 321 });
+    expect(applyConversationWorkspaceStorage).toHaveBeenCalledWith(321 * 1048576);
+  });
+
+  it('leaves existing workspace quotas untouched when the quota is not part of the update', async () => {
+    await service.updateSettings(['.png'], 'admin', { maxFileSizeMb: 10 });
+    expect(applyConversationWorkspaceStorage).not.toHaveBeenCalled();
   });
 
   it.each([0, -1, 1.5, 10241, NaN])('rejects invalid upload limit %s', async (maxFileSizeMb) => {

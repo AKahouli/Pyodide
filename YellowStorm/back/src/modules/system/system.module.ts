@@ -28,6 +28,7 @@ import { NavigationSettingsService } from './navigation-settings.service';
 import { PlatformSettingsService } from './platform-settings.service';
 import { AdminPlatformSettingsController } from './controllers/admin-platform-settings.controller';
 import { AdminSystemSettingsController } from './controllers/admin-system-settings.controller';
+import { WorkspaceModule } from '../workspace/workspace.module';
 import { SYSTEM_SETTING_STORE } from './persistence/system-setting.store';
 import { PgSystemSettingStore } from './persistence/pg-system-setting.store';
 import { APPEARANCE_LOGO_STORE } from './persistence/appearance-logo.store';
@@ -53,6 +54,7 @@ import { PgAppearanceLogoStore } from './persistence/pg-appearance-logo.store';
     AgentRepositoryModule,
     AgentModule,
     AgentTypeModule,
+    WorkspaceModule,
   ],
   controllers: [
     SystemController,

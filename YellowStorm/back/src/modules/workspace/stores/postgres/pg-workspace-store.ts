@@ -188,6 +188,16 @@ export class PgWorkspaceStore {
     });
   }
 
+  /** Applies one quota to every conversation system workspace; usage is never undercut. */
+  async updateSystemWorkspacesStorage(allocatedStorage: number): Promise<number> {
+    const rows = await this.q
+      .update(WORKSPACES)
+      .set({ allocatedStorage: sql`GREATEST(${allocatedStorage}, ${WORKSPACES.usedStorage})`, updatedAt: new Date() })
+      .where(eq(WORKSPACES.isSystem, true))
+      .returning({ id: WORKSPACES.id });
+    return rows.length;
+  }
+
   async updateFields(id: string, patch: WorkspaceUpdatePatch): Promise<void> {
     const values: Partial<typeof WORKSPACES.$inferInsert> = {};
     if (patch.name !== undefined) values.name = patch.name;

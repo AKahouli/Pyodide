@@ -14,6 +14,7 @@ import {
   WorkspaceUploadSettings,
   WorkspaceUploadSettingsValue,
 } from './interfaces/workspace-upload-settings.interface';
+import { WorkspaceService } from '../workspace/workspace.service';
 
 const SUPPORTED_EXTENSIONS = new Set(Object.keys(EXTENSION_MIME_TYPES));
 const SUPPORTED_EXTENSIONS_LIST = Object.keys(EXTENSION_MIME_TYPES).sort((a, b) => a.localeCompare(b));
@@ -29,6 +30,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     private readonly systemSettings: SystemSettingStore,
     private readonly logger: LoggerService,
     @Optional() private readonly configService?: ConfigService,
+    @Optional() private readonly workspaces?: WorkspaceService,
   ) {
     this.logger.setContext(WorkspaceUploadSettingsService.name);
   }
@@ -123,6 +125,14 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
 
     this.cache = { ...value, allowedExtensions: [...normalized] };
     this.cacheLoadedAt = Date.now();
+
+    if (limits.conversationWorkspaceStorageMb !== undefined) {
+      const updated = await this.workspaces?.applyConversationWorkspaceStorage(conversationWorkspaceStorageMb * 1048576);
+      this.logger.log('Applied conversation workspace quota to existing workspaces', {
+        conversationWorkspaceStorageMb,
+        updated: updated ?? 0,
+      });
+    }
 
     this.logger.log('Workspace upload settings updated', {
       actorId,

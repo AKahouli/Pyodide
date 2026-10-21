@@ -558,6 +558,13 @@ export class WorkspaceService implements OnModuleInit {
     return this.getAdminStorage(workspaceId);
   }
 
+  /** Global conversation quota change reaches every existing system workspace. */
+  async applyConversationWorkspaceStorage(allocatedStorage: number): Promise<number> {
+    const updated = await this.workspaceStore.updateSystemWorkspacesStorage(allocatedStorage);
+    this.logger.log('Conversation workspace quota applied', { allocatedStorage, updated });
+    return updated;
+  }
+
   async checkStorageQuota(
     workspaceId: string,
     fileSize: number,
