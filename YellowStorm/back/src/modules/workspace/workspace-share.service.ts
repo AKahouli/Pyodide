@@ -17,7 +17,7 @@ import { WorkspaceQueryDto } from './dto/workspace-query.dto';
 import { LoggerService } from '../logger';
 import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { UserService } from '../user';
+import { UserService } from '../user/services/user.service';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/notification.types';

@@ -45,7 +45,9 @@ describe('browser conversation pins', () => {
     localStorage.setItem('sidebar:pins:alice', '{broken');
     const { result } = renderHook(usePinnedConversations);
     expect(result.current.pins).toEqual([]);
-    vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('Quota'); });
+    // Spy on the prototype: jsdom's Storage is a proxy, so an own-property spy
+    // on the instance never intercepts the write and the failure path is untested.
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Quota'); });
     act(() => result.current.togglePin(row));
     expect(result.current.pins).toEqual([]);
     expect(showError).toHaveBeenCalledWith('conversations.pinError');

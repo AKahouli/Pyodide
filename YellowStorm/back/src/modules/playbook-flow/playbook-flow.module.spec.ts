@@ -42,13 +42,15 @@ describe('PlaybookFlowModule wiring', () => {
 
   /**
    * ConfigService is read by guards, e.g. `get('INTERNAL_SERVICE_SECRET', '').trim()`: a bare stand-in
-   * returns undefined and breaks on the .trim(). Honour the string default, like the real service does.
+   * returns undefined and breaks on the .trim(). Honour the default, like the real service does.
+   * The default is honoured for every type, not only strings: `get('MCP_WORKSPACE_SCOPE_TTL_SECONDS', 180)`
+   * must yield 180, otherwise the MCP signer rejects the scope lifetime as invalid.
    */
   const configStandIn: Provider = {
     provide: ConfigService,
     useValue: {
       get: (_key: string, defaultValue?: unknown) =>
-        typeof defaultValue === 'string' ? defaultValue : '',
+        defaultValue !== undefined ? defaultValue : '',
       getOrThrow: () => '',
     },
   };
