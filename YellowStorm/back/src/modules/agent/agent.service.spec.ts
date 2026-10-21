@@ -170,9 +170,7 @@ describe('AgentService connector skill inheritance', () => {
       getValidToken: jest.fn(),
     };
     const configService = {
-      get: jest.fn((key: string, fallback?: string) => (
-        key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp' : fallback ?? ''
-      )),
+      get: jest.fn((_key: string, fallback?: string) => fallback ?? ''),
     };
     const teamService = {
       removeAgentFromAllTeams: jest.fn().mockResolvedValue(undefined),
