@@ -1,5 +1,35 @@
 # Workspace Module (Frontend)
 
+## Workspace file explorer
+
+The `/workspace/:id` page uses `WorkspaceFileBrowser` for folder navigation,
+scoped search, indexing filters, sorting and a paginated selectable table.
+Page selection and selection of all matching items are distinct; selection
+survives pagination and resets when the folder, search or filter changes.
+Batch move, index and delete actions preserve failed selections for retry.
+The initial view shows all documents unless a folder is already active. Selecting
+items replaces search and filtering with a compact action toolbar; clearing the
+selection restores those controls. An empty folder tree shows an organizing hint.
+The header shows the workspace name once with a switcher, and one overflow menu
+contains advanced and workspace actions. Storage usage sits below folder navigation.
+Files use classifier assignments from `page-api.ts`, not legacy document folders.
+Generated artifacts remain expandable beneath their source documents, and web
+source documents retain their navigator action.
+
+`WorkspaceUploadDropZone` provides compact file/folder upload controls;
+`WorkspaceUploadActivity` separates transfer progress from indexing readiness.
+Folder imports preserve relative paths. Large selections use sequential sessions
+of at most 50 files and at most four parallel storage transfers. Queue failures
+remain available for retry, including assignment failures without re-uploading.
+Only queued transfers can be cancelled. Upload destinations are captured before
+asynchronous work, and pending assignments prevent premature queue dismissal.
+
+Deletion is permanent for files and confirmed before execution. Classifier folder
+deletion removes descendant folders but preserves their files at the workspace
+root. Trash, restore and undo are not supported by the current backend.
+See [reviewed workspace context](../../../../../docs/agent-context/features/workspaces.md)
+for source boundaries, verification and remaining integration limits.
+
 Admin → Workspace separates maximum per-file upload size, the default total quota
 for new conversation workspaces, and the quota of an existing workspace loaded by
 ID (including hidden conversation system workspaces). Values use MiB. Existing

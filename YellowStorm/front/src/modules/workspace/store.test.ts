@@ -77,7 +77,7 @@ describe('workspace store', () => {
     expect(addFilesToQueue).not.toHaveBeenCalled();
     workspaceApiMock.getWorkspaceUploadSettings.mockResolvedValueOnce({ maxFileSizeMb: 2 });
     await useWorkspaceStore.getState().uploadPageFiles([file]);
-    expect(addFilesToQueue).toHaveBeenCalledWith([file], 'ws-1');
+    expect(addFilesToQueue).toHaveBeenCalledWith([file], 'ws-1', undefined);
     expect(startUpload).toHaveBeenCalledTimes(1);
   });
 

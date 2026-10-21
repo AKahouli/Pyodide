@@ -6,11 +6,11 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notifications';
 import * as workspaceApi from './api';
 import * as pageApi from './page-api';
 import * as artifactApi from './artifact-api';
-import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
+import { DEFAULT_PAGE_LIMIT, MAX_FILES_PER_UPLOAD, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
@@ -72,6 +72,7 @@ function getApiErrorMessage(err: unknown, fallback: string): string {
 type WorkspaceTranslator = (key: ModuleTranslationKey<'workspace'>, params?: TranslationParams) => string;
 
 let workspaceTranslator: WorkspaceTranslator | null = null;
+let pageUploadInProgress = false;
 
 export function setWorkspaceTranslator(translator?: WorkspaceTranslator) {
   workspaceTranslator = translator ?? null;
@@ -260,8 +261,9 @@ interface WorkspaceActions {
   addFilesToQueue: (files: File[], workspaceId: string, folderId?: string) => void;
   removeFromQueue: (fileId: string) => void;
   clearQueue: () => void;
-  startUpload: (deepSearch?: boolean, autoIndex?: boolean) => Promise<void>;
+  startUpload: (deepSearch?: boolean, autoIndex?: boolean, classifierFolders?: boolean, uploadWorkspaceId?: string) => Promise<void>;
   cancelUpload: (fileId: string) => void;
+  retryPageUpload: (fileId: string, options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   updateUploadProgress: (fileId: string, progress: number) => void;
   updateUploadStatus: (fileId: string, status: UploadFileStatus, error?: string) => void;
   clearCompletedUploads: () => void;
@@ -321,7 +323,7 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 // ===== Initial State =====
 
-const initialState: WorkspaceState = {
+export const initialState: WorkspaceState = {
   workspaces: new Map(),
   currentPage: 1,
   totalPages: 0,
@@ -1229,9 +1231,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ uploadQueue: [], uploadSessionId: null });
       },
 
-      startUpload: async (deepSearch?: boolean, autoIndex?: boolean) => {
+      startUpload: async (deepSearch?: boolean, autoIndex?: boolean, classifierFolders = false, uploadWorkspaceId?: string) => {
         const state = get();
-        const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
+        if (state.isUploading || (pageUploadInProgress && !classifierFolders)) return;
+        const first = state.uploadQueue.find((item) => item.status === 'pending' && (!uploadWorkspaceId || item.workspaceId === uploadWorkspaceId));
+        const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending' && item.workspaceId === first?.workspaceId).slice(0, MAX_FILES_PER_UPLOAD);
 
         if (pendingFiles.length === 0) {
           return;
@@ -1252,21 +1256,22 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             get().updateUploadStatus(item.id, 'uploading');
 
             try {
-              await workspaceApi.uploadSmallFile(
+              const document = await workspaceApi.uploadSmallFile(
                 workspaceId,
                 item.file,
                 (progress: number) => {
                   get().updateUploadProgress(item.id, progress);
                 },
-                item.folderId,
+                classifierFolders ? undefined : item.folderId,
                 deepSearch,
                 autoIndex,
               );
+              set((s) => ({ uploadQueue: s.uploadQueue.map((q) => q.id === item.id ? { ...q, documentId: document.id } : q) }));
               get().updateUploadStatus(item.id, 'completed');
 
               // Invalidate cache and refresh documents and folders
               const currentFolderId = get().currentFolderId;
-              if (currentFolderId === (item.folderId || null)) {
+              if (get().selectedWorkspaceId === workspaceId && currentFolderId === (item.folderId || null)) {
                 get().invalidateDocumentData();
                 await Promise.all([get().fetchAllFolders(workspaceId), get().fetchDocuments(workspaceId, 1)]);
               }
@@ -1302,23 +1307,26 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
             // PUT each file to object storage — keep status "uploading" until
             // completeBulkUpload finishes (that call is what queues auto-index).
-            const putResults = await Promise.all(
-              session.files.map(async (fileInfo, index) => {
-                const item = pendingFiles[index];
-                try {
-                  await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
-                    get().updateUploadProgress(item.id, progress);
-                  });
-                  // Progress 100% while still awaiting server-side finalize/index queue.
-                  get().updateUploadProgress(item.id, 100);
-                  return { ok: true as const, itemId: item.id, index: fileInfo.index };
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : 'Unknown error';
-                  get().updateUploadStatus(item.id, 'failed', message);
-                  return { ok: false as const, itemId: item.id, index: fileInfo.index, error: message };
-                }
-              }),
-            );
+            const putOne = async (fileInfo: typeof session.files[number], index: number) => {
+              const item = pendingFiles[index];
+              try {
+                await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
+                  get().updateUploadProgress(item.id, progress);
+                });
+                // Progress 100% while still awaiting server-side finalize/index queue.
+                get().updateUploadProgress(item.id, 100);
+                return { ok: true as const, itemId: item.id, index: fileInfo.index };
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Unknown error';
+                get().updateUploadStatus(item.id, 'failed', message);
+                return { ok: false as const, itemId: item.id, index: fileInfo.index, error: message };
+              }
+            };
+            const putResults: Awaited<ReturnType<typeof putOne>>[] = [];
+            // Keep network pressure bounded while preserving backend file indexes.
+            for (let offset = 0; offset < session.files.length; offset += 4) {
+              putResults.push(...await Promise.all(session.files.slice(offset, offset + 4).map((file, index) => putOne(file, offset + index))));
+            }
 
             let completeResult: Awaited<ReturnType<typeof workspaceApi.completeBulkUpload>>;
             try {
@@ -1354,6 +1362,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               if (completeError) {
                 get().updateUploadStatus(r.itemId, 'failed', completeError);
               } else {
+                const documentId = session.files.find((file) => file.index === r.index)?.documentId;
+                set((s) => ({ uploadQueue: s.uploadQueue.map((q) => q.id === r.itemId ? { ...q, documentId } : q) }));
                 get().updateUploadStatus(r.itemId, 'completed');
               }
             });
@@ -1414,7 +1424,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           throw err;
         } finally {
           set({ isUploading: false, uploadSessionId: null });
-          get().clearCompletedUploads();
         }
       },
 
@@ -1438,8 +1447,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       clearCompletedUploads: () => {
+        // Classifier assignment still needs completed queue identities after storage finalization.
+        if (pageUploadInProgress || get().isUploading) return;
         set((state) => ({
-          uploadQueue: state.uploadQueue.filter((item) => item.status !== 'completed' && item.status !== 'failed'),
+          uploadQueue: state.uploadQueue.filter((item) => item.status !== 'completed'),
         }));
       },
 
@@ -2035,75 +2046,101 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       uploadPageFiles: async (files, options) => {
         const workspaceId = get().selectedWorkspaceId;
+        const destinationId = get().pageCurrentFolderId;
         if (!workspaceId || files.length === 0) return;
-
-        let maxFileSize: number;
-        try {
-          const settings = await workspaceApi.getWorkspaceUploadSettings();
-          maxFileSize = (settings.maxFileSizeMb ?? 500) * 1024 * 1024;
-        } catch (error) {
-          toast.error(getApiErrorMessage(error, tError('uploadSettingsFailed', 'Unable to load upload limits')));
+        if (pageUploadInProgress || get().isUploading) {
+          toast.warning(tToast('uploadActivity.busy', 'An upload is already in progress'));
           return;
         }
-        const { validFiles } = validateFiles(files, maxFileSize);
-        if (validFiles.length === 0) return;
-
-        const previousFileIds = new Set(get().pageFiles.map((f) => f.id));
-        const targetFolderId = get().pageCurrentFolderId;
-
-        get().addFilesToQueue(validFiles, workspaceId);
+        pageUploadInProgress = true;
         try {
-          await get().startUpload(options?.deepSearch, options?.autoIndex);
-          toast.success(
-            validFiles.length === 1
-              ? 'Fichier ajouté'
-              : `${validFiles.length} fichiers ajoutés`,
-          );
-          await Promise.all([get().refreshPageData(), get().refreshWorkspace(workspaceId)]);
-
-          // Auto-index is queued asynchronously on the backend. A second refresh
-          // shortly after gives pending/processing a chance to land so the
-          // WorkspacePage polling loop can take over.
-          if (options?.autoIndex === true) {
-            await new Promise((resolve) => setTimeout(resolve, 800));
+          const settings = await workspaceApi.getWorkspaceUploadSettings();
+          const validFiles: File[] = [];
+          for (let offset = 0; offset < files.length; offset += MAX_FILES_PER_UPLOAD) {
+            validFiles.push(...validateFiles(files.slice(offset, offset + MAX_FILES_PER_UPLOAD), (settings.maxFileSizeMb ?? 500) * 1024 * 1024).validFiles);
+          }
+          if (!validFiles.length) return;
+          // Capture both workspace and classifier destination before any asynchronous work.
+          const previousQueueIds = new Set(get().uploadQueue.map((item) => item.id));
+          const folders = await pageApi.listFolders(workspaceId);
+          const destinations = new Map<string, string | undefined>();
+          destinations.set('', destinationId ?? undefined);
+          const preparedFiles: Array<{ file: File; folderId?: string }> = [];
+          for (const file of validFiles) {
+            const parts = (file.webkitRelativePath || '').split('/').slice(0, -1);
+            let parentId = destinationId;
+            let path = '';
+            for (const name of parts) {
+              path = path ? `${path}/${name}` : name;
+              if (!destinations.has(path)) {
+                const existing = folders.find((folder) => folder.parentId === parentId && folder.name === name);
+                const folder = existing ?? await pageApi.createFolder(workspaceId, { name, description: path.slice(0, 1000), parentId });
+                if (!existing) folders.push(folder);
+                destinations.set(path, folder.id);
+              }
+              parentId = destinations.get(path) ?? null;
+            }
+            preparedFiles.push({ file, folderId: parentId ?? undefined });
+          }
+          // Publish queue entries only after every destination exists. A folder failure
+          // cannot leave orphaned pending uploads for a later selection to consume.
+          for (const item of preparedFiles) get().addFilesToQueue([item.file], workspaceId, item.folderId);
+          // All files remain visible as pending; each backend session contains at most 50.
+          const assigned = new Set<string>();
+          do {
+            const pendingBefore = get().uploadQueue.filter((q) => q.workspaceId === workspaceId && q.status === 'pending').map((q) => q.id);
+            try {
+              await get().startUpload(options?.deepSearch, options?.autoIndex, true, workspaceId);
+            } catch {
+              // startUpload records and surfaces failures. Continue with the next batch.
+            }
+            const completed = get().uploadQueue.filter((q) => q.workspaceId === workspaceId && q.status === 'completed' && q.documentId && q.folderId && !previousQueueIds.has(q.id) && !assigned.has(q.id));
+            for (const item of completed) {
+              try {
+                await pageApi.assignFileToFolder(workspaceId, item.documentId!, item.folderId!);
+                assigned.add(item.id);
+                // Keep the captured destination for retries; do not depend on navigation state.
+              } catch (error) {
+                get().updateUploadStatus(item.id, 'failed', getApiErrorMessage(error, tError('uploadFailed', 'Upload failed')));
+              }
+            }
+            if (pendingBefore.length && pendingBefore.every((id) => get().uploadQueue.find((q) => q.id === id)?.status === 'pending')) break;
+          } while (get().uploadQueue.some((q) => q.workspaceId === workspaceId && q.status === 'pending'));
+          if (get().selectedWorkspaceId === workspaceId) {
             await get().refreshPageData();
-            const stillNoneIds = get()
-              .pageFiles.filter((f) => !previousFileIds.has(f.id) && (f.indexingStatus === 'none' || !f.indexingStatus))
-              .map((f) => f.id);
-            if (stillNoneIds.length > 0) {
-              // Optimistic pending so the status-dot poll starts even if the
-              // backend hasn't flipped none→pending yet.
-              set((s) => ({
-                pageFiles: s.pageFiles.map((f) =>
-                  stillNoneIds.includes(f.id) ? { ...f, indexingStatus: 'pending' as const } : f,
-                ),
-              }));
+            // Keep polling active while asynchronous auto-index jobs enter the queue.
+            if (options?.autoIndex === true) {
+              const uploadedIds = new Set(get().uploadQueue.filter((q) => !previousQueueIds.has(q.id) && q.status === 'completed').map((q) => q.documentId));
+              set((s) => ({ pageFiles: s.pageFiles.map((file) => uploadedIds.has(file.id) && (!file.indexingStatus || file.indexingStatus === 'none') ? { ...file, indexingStatus: 'pending' as const } : file) }));
             }
           }
+          await get().refreshWorkspace(workspaceId);
+        } catch (error) {
+          toast.error(getApiErrorMessage(error, tError('uploadFailed', 'Upload failed')));
+        } finally {
+          pageUploadInProgress = false;
+        }
+      },
 
-          const newFileIds = get()
-            .pageFiles.filter((f) => !previousFileIds.has(f.id))
-            .map((f) => f.id);
-
-          if (targetFolderId && newFileIds.length > 0) {
-            const assignResults = await Promise.allSettled(
-              newFileIds.map((fileId) =>
-                pageApi.assignFileToFolder(workspaceId, fileId, targetFolderId),
-              ),
-            );
-            const assignFailed = assignResults.filter((r) => r.status === 'rejected').length;
-            if (assignFailed > 0) {
-              toast.warning(
-                assignFailed === newFileIds.length
-                  ? 'Les fichiers n’ont pas pu être assignés au dossier courant'
-                  : `${assignFailed} fichier(s) n’ont pas pu être assignés au dossier courant`,
-              );
-            }
-            // Refresh again so pageFiles reflects new folder assignments
-            await get().refreshPageData();
+      retryPageUpload: async (fileId, options) => {
+        const item = get().uploadQueue.find((q) => q.id === fileId && q.status === 'failed');
+        if (!item || get().isUploading || pageUploadInProgress) return;
+        pageUploadInProgress = true;
+        try {
+          if (!item.documentId) {
+            get().updateUploadStatus(item.id, 'pending');
+            await get().startUpload(options?.deepSearch, options?.autoIndex, true, item.workspaceId);
           }
-        } catch {
-          // startUpload already surfaces a failure toast; skip success path.
+          const uploaded = get().uploadQueue.find((q) => q.id === fileId);
+          if (uploaded?.documentId && uploaded.folderId) {
+            await pageApi.assignFileToFolder(uploaded.workspaceId, uploaded.documentId, uploaded.folderId);
+            get().updateUploadStatus(fileId, 'completed');
+          }
+          if (get().selectedWorkspaceId === item.workspaceId) await get().refreshPageData();
+        } catch (error) {
+          get().updateUploadStatus(fileId, 'failed', getApiErrorMessage(error, tError('uploadFailed', 'Upload failed')));
+        } finally {
+          pageUploadInProgress = false;
         }
       },
 

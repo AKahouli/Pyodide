@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -8,6 +8,12 @@ import { UploadItem } from './UploadItem';
 import { UploadProgressHeader } from './UploadProgressHeader';
 
 export function UploadProgress() {
+  const [hasInlineActivity, setHasInlineActivity] = useState(() => /^#\/workspace\/[^/?]+/.test(window.location.hash));
+  useEffect(() => {
+    const update = () => setHasInlineActivity(/^#\/workspace\/[^/?]+/.test(window.location.hash));
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
   const [isExpanded, setIsExpanded] = useState(true);
   const uploadQueue = useUploadQueue();
   const hasActiveUploads = useHasActiveUploads();
@@ -21,6 +27,8 @@ export function UploadProgress() {
   const totalProgress = uploadQueue.length > 0 ? Math.round(uploadQueue.reduce((sum, item) => sum + item.progress, 0) / uploadQueue.length) : 0;
 
   const isVisible = uploadQueue.length > 0;
+
+  if (hasInlineActivity) return null;
 
   return (
     <div className={`fixed bottom-4 right-4 w-[calc(100vw-2rem)] sm:w-[28rem] bg-background border rounded-lg shadow-lg z-52 transition-opacity duration-200 ${isVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>

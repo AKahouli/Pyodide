@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notifications';
 import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, FileX, Folder, FolderKanban, FolderPlus, Globe, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Network, Pencil, Plus, RefreshCw, Search, Settings, Shield, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
@@ -20,41 +18,23 @@ import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
-import { IndexingStatusDot } from './IndexingStatusDot';
-import { groupBySourceRoot } from '../lib/source-groups';
-import { SourceGroupRow } from './SourceGroupRow';
-import { useAutoIndexation } from '../hooks/useAutoIndexation';
-import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
+import { WorkspaceIndexingStatus } from './WorkspaceIndexingStatus';
+import { WorkspaceFileBrowser, type FileRowSelection } from './WorkspaceFileBrowser';
+import { WorkspaceUploadActivity } from './WorkspaceUploadActivity';
+import { Checkbox } from '@/components/ui/checkbox';
+import { TableCell, TableRow } from '@/components/ui/table';
+import { useAutoIndexation, readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { useDeepSearchIndexation, readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 import { useIndexingNotifications } from '../hooks/useIndexingNotifications';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { EditFolderDialog } from './EditFolderDialog';
-import { MoveFolderDialog } from './MoveFolderDialog';
-import { MoveFileDialog } from './MoveFileDialog';
 import { ClassifyDialog } from './ClassifyDialog';
 import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
 import { CommunityGraphPanel } from '@/modules/playbook/components/CommunityGraphPanel';
 import { useModuleTranslation } from '@/modules/localization';
-
-const ITEM_MIME = 'application/x-workspace-page-item';
-
-type DragPayload = { kind: 'file'; id: string; name: string } | { kind: 'folder'; id: string; name: string };
-
-function readItemPayload(dt: DataTransfer): DragPayload | null {
-  try {
-    const raw = dt.getData(ITEM_MIME);
-    if (!raw) return null;
-    return JSON.parse(raw) as DragPayload;
-  } catch {
-    return null;
-  }
-}
-
-function hasItemPayload(dt: DataTransfer): boolean {
-  return Array.from(dt.types).includes(ITEM_MIME);
-}
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return '0 B';
@@ -95,12 +75,8 @@ export function WorkspacePage() {
   const loadingPageFolders = useWorkspaceStore((s) => s.loadingPageFolders);
   const loadingPageFiles = useWorkspaceStore((s) => s.loadingPageFiles);
   const pageWorkspaceLoadedFor = useWorkspaceStore((s) => s.pageWorkspaceLoadedFor);
-  const deletePageFolder = useWorkspaceStore((s) => s.deletePageFolder);
-  const movePageFolder = useWorkspaceStore((s) => s.movePageFolder);
-  const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const refreshWorkspaceArtifacts = useWorkspaceStore((s) => s.refreshWorkspaceArtifacts);
-  const openAddLink = useWorkspaceStore((s) => s.openAddLink);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== selectedWorkspaceId) {
@@ -148,11 +124,8 @@ export function WorkspacePage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editFolder, setEditFolder] = useState<WorkspaceFolder | null>(null);
-  const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
-  const [moveTarget, setMoveTarget] = useState<{ files: WorkspaceFile[]; title: string } | null>(null);
-  const [deleteGroupTarget, setDeleteGroupTarget] = useState<{ files: WorkspaceFile[]; label: string } | null>(null);
-  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
-  const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
+  const [externalDrag, setExternalDrag] = useState(false);
+  const externalDragDepth = useRef(0);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -194,54 +167,7 @@ export function WorkspacePage() {
     }
   }, [activeWorkspaceId, isSyncing]);
 
-  const handleDeleteGroup = useCallback(async () => {
-    if (!deleteGroupTarget) return;
-    setIsDeletingGroup(true);
-    try {
-      // Delete every page in the group; cascade any linked artifacts.
-      for (const file of deleteGroupTarget.files) {
-        await deleteDocument(file.workspaceId, file.id, true);
-      }
-      toast.success(`Groupe « ${deleteGroupTarget.label} » supprimé`);
-      setDeleteGroupTarget(null);
-      await refreshPageData();
-    } catch {
-      // toast handled by the store
-    } finally {
-      setIsDeletingGroup(false);
-    }
-  }, [deleteGroupTarget, deleteDocument, refreshPageData]);
-
-  const breadcrumbs = useMemo(() => {
-    if (!currentFolderId) return [] as WorkspaceFolder[];
-    const chain: WorkspaceFolder[] = [];
-    let cursor: WorkspaceFolder | undefined = folders.find((f) => f.id === currentFolderId);
-    while (cursor) {
-      chain.unshift(cursor);
-      cursor = cursor.parentId ? folders.find((f) => f.id === cursor!.parentId) : undefined;
-    }
-    return chain;
-  }, [folders, currentFolderId]);
-
-  const visibleFolders = useMemo(() => {
-    if (!activeWorkspaceId) return [];
-    const q = search.trim().toLowerCase();
-    return folders
-      .filter((f) => f.workspaceId === activeWorkspaceId && f.parentId === currentFolderId)
-      .filter((f) => !q || f.name.toLowerCase().includes(q) || f.description.toLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [folders, activeWorkspaceId, currentFolderId, search]);
-
-  const visibleFiles = useMemo(() => {
-    if (!activeWorkspaceId) return [];
-    const q = search.trim().toLowerCase();
-    return files
-      .filter((f) => f.workspaceId === activeWorkspaceId)
-      .filter((f) => (currentFolderId ? f.folderId === currentFolderId : f.folderId === null))
-      .filter((f) => !q || f.name.toLowerCase().includes(q) || artifacts.some((artifact) => artifact.primarySource.documentId === f.id && artifact.name.toLowerCase().includes(q)));
-  }, [files, artifacts, activeWorkspaceId, currentFolderId, search]);
-
-  const renderFileRow = (file: WorkspaceFile) => {
+  const renderFileRow = (file: WorkspaceFile, selection: FileRowSelection) => {
     const query = search.trim().toLowerCase();
     const sourceMatches = file.name.toLowerCase().includes(query);
     const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
@@ -249,249 +175,58 @@ export function WorkspacePage() {
     return (
       <FileRow
         key={file.id}
+        selection={selection}
         file={file}
         artifacts={linkedArtifacts}
         totalArtifactCount={allLinkedArtifacts.length}
         forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0}
-        onMove={() => setMoveTarget({ files: [file], title: file.name })}
+        onMove={() => selection.onMove?.()}
       />
     );
   };
-
-  const handleDropOnFolder = useCallback(
-    (targetFolder: WorkspaceFolder, payload: DragPayload) => {
-      if (!canWrite) return;
-      if (payload.kind === 'file') {
-        void setFileFolderAssignment(payload.id, targetFolder.id);
-        toast.success(`${payload.name} déplacé dans ${targetFolder.name}`);
-      } else {
-        if (payload.id === targetFolder.id) return;
-        void movePageFolder(payload.id, targetFolder.id);
-        toast.success(`${payload.name} déplacé dans ${targetFolder.name}`);
-      }
-    },
-    [canWrite, movePageFolder, setFileFolderAssignment],
-  );
-
-  const handleDropOnBreadcrumb = useCallback(
-    (targetParentId: string | null, payload: DragPayload) => {
-      if (!canWrite) return;
-      if (payload.kind === 'file') {
-        void setFileFolderAssignment(payload.id, targetParentId);
-        toast.success(targetParentId ? `${payload.name} déplacé` : `${payload.name} retiré du classement`);
-      } else {
-        void movePageFolder(payload.id, targetParentId);
-        toast.success(`${payload.name} déplacé`);
-      }
-    },
-    [canWrite, movePageFolder, setFileFolderAssignment],
-  );
 
   if (!activeWorkspaceId) {
     return <EmptyWorkspaceState />;
   }
 
   return (
-    <div className='flex h-screen w-full flex-col overflow-hidden bg-background'>
-      {/* Header */}
-      <div className='border-b bg-background/80 backdrop-blur-xl'>
-        <div className='mx-auto flex w-full max-w-7xl items-center gap-3 px-6 py-5'>
-          <div className='flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/15'>
-            <FolderKanban className='h-5 w-5' />
-          </div>
-          <div className='min-w-0 flex-1'>
-            <div className='flex items-center gap-1.5'>
-              {selectedWorkspace ? <EditableWorkspaceName workspace={selectedWorkspace} canEdit={selectedWorkspaceRole === 'owner' && !selectedWorkspace.isPersonal} /> : <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>}
-              {selectedWorkspace && !canWrite && (
-                <span className='inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground'>
-                  <Eye className='h-3 w-3' /> Lecture seule
-                </span>
-              )}
+    <div className='relative flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background text-foreground'
+      onDragEnterCapture={event => { if (canWrite && event.dataTransfer.types.includes('Files')) { event.preventDefault(); externalDragDepth.current++; setExternalDrag(true); } }}
+      onDragOverCapture={event => { if (canWrite && event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+      onDragLeaveCapture={event => { if (event.dataTransfer.types.includes('Files')) { externalDragDepth.current = Math.max(0, externalDragDepth.current - 1); if (!externalDragDepth.current) setExternalDrag(false); } }}
+      onDropCapture={event => { if (!canWrite || !event.dataTransfer.types.includes('Files')) return; event.preventDefault(); event.stopPropagation(); externalDragDepth.current = 0; setExternalDrag(false); if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) { toast.warning(t('explorer.useFolderPicker')); return; } void useWorkspaceStore.getState().uploadPageFiles(Array.from(event.dataTransfer.files), { autoIndex: readAutoIndexationValue(), deepSearch: readDeepSearchIndexationValue() }); }}>
+      <header className='flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 py-4 md:px-6'>
+        <div className='flex min-w-0 items-center gap-3'>
+          <FolderKanban className='hidden h-6 w-6 shrink-0 text-primary sm:block' />
+          <div className='min-w-0'>
+            <div className='flex min-w-0 items-center gap-1'>
+              {selectedWorkspace ? <EditableWorkspaceName workspace={selectedWorkspace} canEdit={selectedWorkspaceRole === 'owner' && !selectedWorkspace.isPersonal} /> : <h1 className='text-xl font-semibold'>{t('explorer.workspace')}</h1>}
               {selectedWorkspace && <WorkspaceActionsMenu workspace={selectedWorkspace} role={selectedWorkspaceRole} onDeleted={() => navigate('/workspace')} />}
+              {!canWrite && <span className='shrink-0 rounded bg-muted px-2 py-1 text-xs text-muted-foreground'>{t('explorer.readOnly')}</span>}
             </div>
-            <p className='text-xs text-muted-foreground'>Organisez, classez et indexez vos documents au sein d'un workspace.</p>
+            <p className='mt-1 text-xs text-muted-foreground'>{t('explorer.description')}</p>
           </div>
+        </div>
+        <div className='flex flex-wrap items-center gap-2'>
           {selectedWorkspace && <StorageIndicator workspace={selectedWorkspace} />}
           <WorkspacePicker />
-        </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className='border-b bg-card/40'>
-        <div className='mx-auto flex w-full max-w-7xl items-center gap-3 px-6 py-3'>
-          <div className='relative w-64 shrink-0'>
-            <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder='Rechercher dossier ou fichier…' className='ps-9 pe-9 h-9' />
-            {search && (
-              <button onClick={() => setSearch('')} className='absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted'>
-                <X className='h-3.5 w-3.5' />
-              </button>
-            )}
-          </div>
-
-          <div className='flex items-center gap-2 overflow-x-auto'>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
-                    <Label htmlFor='auto-indexation-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
-                      Auto-indexation
-                    </Label>
-                    <Switch id='auto-indexation-toggle' checked={autoIndex} onCheckedChange={setAutoIndex} aria-label="Activer l'indexation automatique des fichiers uploadés" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>{autoIndex ? 'ON' : 'OFF'}</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side='bottom' className='max-w-xs text-center'>
-                  {autoIndex ? 'Les nouveaux fichiers uploadés sont envoyés au pipeline d’indexation automatiquement.' : 'Les fichiers sont uploadés sans indexation. Vous pouvez indexer manuellement plus tard.'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
-                    <Label htmlFor='deep-search-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
-                      Recherche approfondie
-                    </Label>
-                    <Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label="Activer la recherche approfondie lors de l'indexation" />
-                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', deepSearch ? 'text-primary' : 'text-muted-foreground')}>{deepSearch ? 'ON' : 'OFF'}</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side='bottom' className='max-w-xs text-center'>
-                  {deepSearch ? 'Indexation avec analyse approfondie : le document est envoyé au graphe de connaissances en plus de l\'indexation standard.' : 'Indexation standard uniquement. Activez pour enrichir le document avec une analyse approfondie.'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <Separator orientation='vertical' className='h-6' />
-            {canWrite && (
-              <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
-                <FolderPlus className='h-4 w-4' />
-                Nouveau dossier
-              </Button>
-            )}
-            {canWrite && (
-              <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
-                <Shield className='h-4 w-4' />
-                Règles
-              </Button>
-            )}
-            <Button variant='outline' size='sm' onClick={handleSync} disabled={isSyncing} className='gap-1.5'>
-              {isSyncing ? <Loader2 className='h-4 w-4 animate-spin' /> : <DownloadCloud className='h-4 w-4' />}
-              Sync
-            </Button>
-            <Button variant='outline' size='sm' onClick={() => setGraphOpen(true)} className='gap-1.5'>
-              <Network className='h-4 w-4' />
-              Graphe
-            </Button>
-            {canWrite && (
-              <>
-                <Separator orientation='vertical' className='h-6' />
-                <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
-                  <Sparkles className='h-4 w-4' />
-                  Classifier
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Breadcrumb */}
-        <div className='mx-auto flex w-full max-w-7xl items-center gap-1 px-6 pb-3 text-sm'>
-          <BreadcrumbItem isActive={!currentFolderId} onClick={() => navigateToFolder(null)} onDropItem={(payload) => handleDropOnBreadcrumb(null, payload)}>
-            <Home className='h-3.5 w-3.5' />
-            Accueil
-          </BreadcrumbItem>
-          {breadcrumbs.map((crumb, idx) => {
-            const isLast = idx === breadcrumbs.length - 1;
-            return (
-              <div key={crumb.id} className='flex items-center gap-1'>
-                <ChevronRight className='h-3.5 w-3.5 text-muted-foreground' />
-                <BreadcrumbItem isActive={isLast} onClick={() => navigateToFolder(crumb.id)} onDropItem={(payload) => handleDropOnBreadcrumb(crumb.id, payload)}>
-                  {crumb.name}
-                </BreadcrumbItem>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Content */}
-      <ScrollArea className='flex-1'>
-        <div className='mx-auto w-full max-w-7xl px-6 py-6 space-y-6'>
+          {canWrite && <Button variant='outline' size='sm' className='gap-2' onClick={() => setCreateOpen(true)}><FolderPlus className='h-4 w-4' />{t('explorer.newFolder')}</Button>}
           <WorkspaceUploadDropZone />
-          {isInitialLoading ? (
-            <WorkspaceContentLoading />
-          ) : visibleFolders.length === 0 && visibleFiles.length === 0 ? (
-            <EmptyFolderState hasSearch={!!search} canCreate={canWrite} onCreateFolder={() => setCreateOpen(true)} />
-          ) : (
-            <div className='space-y-8'>
-              {visibleFolders.length > 0 && (
-                <section>
-                  <SectionHeader title='Dossiers' count={visibleFolders.length} icon={<Folder className='h-3.5 w-3.5' />} />
-                  <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3'>
-                    {visibleFolders.map((folder) => {
-                      const childCount = folders.filter((f) => f.parentId === folder.id).length;
-                      const fileCount = files.filter((f) => f.workspaceId === activeWorkspaceId && f.folderId === folder.id).length;
-                      return <FolderCard key={folder.id} folder={folder} childCount={childCount} fileCount={fileCount} onOpen={() => navigateToFolder(folder.id)} onEdit={() => setEditFolder(folder)} onMove={() => setMoveFolderTarget(folder)} onDelete={() => deletePageFolder(folder.id)} onDropItem={(payload) => handleDropOnFolder(folder, payload)} />;
-                    })}
-                  </div>
-                </section>
-              )}
-
-              {visibleFiles.length > 0 && (
-                <section>
-                  <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
-                  {/* Group only at the workspace root with no active search. While a
-                      search is active, render flat so matching pages surface directly
-                      instead of being hidden inside a collapsed start-URL group. */}
-                  {search.trim() ? (
-                    <div className='space-y-1'>{visibleFiles.map(renderFileRow)}</div>
-                  ) : (() => {
-                    const { groups, loose } = groupBySourceRoot(visibleFiles);
-                    return (
-                      <div className='space-y-1'>
-                        {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.key, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
-                            {group.files.map(renderFileRow)}
-                          </SourceGroupRow>
-                        ))}
-                        {loose.map(renderFileRow)}
-                      </div>
-                    );
-                  })()}
-                </section>
-              )}
-            </div>
-          )}
+          <DropdownMenu><DropdownMenuTrigger asChild><Button variant='ghost' size='icon' aria-label={t('explorer.moreOptions')}><MoreVertical className='h-4 w-4' /></Button></DropdownMenuTrigger><DropdownMenuContent align='end' className='w-72'>
+            {canWrite && <><div className='flex items-center justify-between gap-4 px-2 py-3'><Label htmlFor='auto-indexation-toggle' className='text-sm'>{t('explorer.autoIndex')}</Label><Switch id='auto-indexation-toggle' checked={autoIndex} onCheckedChange={setAutoIndex} aria-label={t('explorer.autoIndex')} /></div><div className='flex items-center justify-between gap-4 px-2 py-3'><Label htmlFor='deep-search-toggle' className='text-sm'>{t('explorer.deepSearch')}</Label><Switch id='deep-search-toggle' checked={deepSearch} onCheckedChange={setDeepSearch} aria-label={t('explorer.deepSearch')} /></div><DropdownMenuSeparator /><DropdownMenuItem onClick={() => setRulesOpen(true)}><Shield className='me-2 h-4 w-4' />{t('explorer.rules')}</DropdownMenuItem><DropdownMenuItem onClick={() => setClassifyOpen(true)}><Sparkles className='me-2 h-4 w-4' />{t('explorer.classify')}</DropdownMenuItem></>}
+            <DropdownMenuItem onClick={handleSync} disabled={isSyncing}><DownloadCloud className='me-2 h-4 w-4' />{t('explorer.downloadWorkspace')}</DropdownMenuItem><DropdownMenuItem onClick={() => setGraphOpen(true)}><Network className='me-2 h-4 w-4' />{t('explorer.graph')}</DropdownMenuItem>
+          </DropdownMenuContent></DropdownMenu>
         </div>
-      </ScrollArea>
+      </header>
+      {isInitialLoading ? <div className='flex-1 overflow-y-auto p-6'><WorkspaceContentLoading /></div> : <WorkspaceFileBrowser key={activeWorkspaceId} workspaceId={activeWorkspaceId} folders={folders} files={files} artifacts={artifacts} currentFolderId={currentFolderId} search={search} onSearch={setSearch} onNavigate={navigateToFolder} onEditFolder={setEditFolder} renderFile={renderFileRow} />}
+      <WorkspaceUploadActivity />
 
       <CreateFolderDialog open={createOpen} onOpenChange={setCreateOpen} parentId={currentFolderId} />
       <EditFolderDialog open={!!editFolder} onOpenChange={(o) => !o && setEditFolder(null)} folder={editFolder} />
-      <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
-      <MoveFileDialog open={!!moveTarget} onOpenChange={(o) => !o && setMoveTarget(null)} files={moveTarget?.files ?? []} title={moveTarget?.title ?? ''} />
-      <Dialog open={!!deleteGroupTarget} onOpenChange={(o) => !isDeletingGroup && !o && setDeleteGroupTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Supprimer le groupe</DialogTitle>
-            <DialogDescription>
-              Voulez-vous vraiment supprimer le groupe <span className='font-medium text-foreground'>{deleteGroupTarget?.label}</span> et ses {deleteGroupTarget?.files.length ?? 0} lien(s) indexé(s) ? Cette action est irréversible.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setDeleteGroupTarget(null)} disabled={isDeletingGroup}>
-              Annuler
-            </Button>
-            <Button variant='destructive' onClick={handleDeleteGroup} disabled={isDeletingGroup} className='gap-1.5'>
-              {isDeletingGroup ? <Loader2 className='h-4 w-4 animate-spin' /> : <Trash2 className='h-4 w-4' />}
-              Supprimer
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
       <CommunityGraphPanel open={graphOpen} onOpenChange={setGraphOpen} workspaceId={selectedWorkspaceId} />
+      {externalDrag && <div className='pointer-events-none absolute inset-2 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-background/95 p-6 text-center'><p className='text-lg font-medium'>{t('uploadActivity.dropHere')}</p></div>}
     </div>
   );
 }
@@ -736,140 +471,19 @@ function StorageIndicator({ workspace }: { workspace: Workspace }) {
   );
 }
 
-function BreadcrumbItem({ children, isActive, onClick, onDropItem }: { children: React.ReactNode; isActive: boolean; onClick: () => void; onDropItem: (payload: DragPayload) => void }) {
-  const [isOver, setIsOver] = useState(false);
-
-  return (
-    <button
-      onClick={onClick}
-      onDragOver={(e) => {
-        if (!hasItemPayload(e.dataTransfer)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        setIsOver(true);
-      }}
-      onDragLeave={() => setIsOver(false)}
-      onDrop={(e) => {
-        setIsOver(false);
-        const payload = readItemPayload(e.dataTransfer);
-        if (!payload) return;
-        e.preventDefault();
-        onDropItem(payload);
-      }}
-      className={cn('flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors', isActive ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground', isOver && 'bg-primary/10 text-primary ring-1 ring-primary/40')}>
-      {children}
-    </button>
-  );
-}
-
-function SectionHeader({ title, count, icon }: { title: string; count: number; icon: React.ReactNode }) {
-  return (
-    <div className='mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground'>
-      <span className='flex h-5 w-5 items-center justify-center rounded bg-secondary text-secondary-foreground'>{icon}</span>
-      {title}
-      <span className='rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground'>{count}</span>
-    </div>
-  );
-}
-
-function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onDelete, onDropItem }: { folder: WorkspaceFolder; childCount: number; fileCount: number; onOpen: () => void; onEdit: () => void; onMove: () => void; onDelete: () => void; onDropItem: (payload: DragPayload) => void }) {
-  const canWrite = useCanWriteWorkspace();
-  const [isOver, setIsOver] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-
-  const handleDragStart = (e: React.DragEvent) => {
-    if (!canWrite) return;
-    e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ kind: 'folder', id: folder.id, name: folder.name }));
-    e.dataTransfer.effectAllowed = 'move';
-    setIsDragging(true);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (!canWrite || !hasItemPayload(e.dataTransfer)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-    setIsOver(true);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    if (!canWrite) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsOver(false);
-    const payload = readItemPayload(e.dataTransfer);
-    if (!payload) return;
-    if (payload.kind === 'folder' && payload.id === folder.id) return;
-    onDropItem(payload);
-  };
-
-  const borderClass = isOver ? 'border-primary' : 'border-border group-hover:border-primary/50';
-
-  return (
-    <div className={cn('group relative pt-2 transition-transform duration-200', 'hover:-translate-y-0.5', isDragging && 'opacity-50')}>
-      <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-card border border-b-0 transition-colors', borderClass)} />
-      <div draggable={canWrite} onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', canWrite && 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
-        <button onClick={onOpen} className='w-full text-start p-4 pb-3'>
-          <div className='flex items-start gap-3'>
-            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-              <Folder className='h-6 w-6' />
-            </div>
-            <div className='min-w-0 flex-1'>
-              <div className='font-semibold leading-tight truncate'>{folder.name}</div>
-              <div className='mt-1 text-xs text-muted-foreground line-clamp-2 min-h-8'>{folder.description || 'Sans description'}</div>
-            </div>
-          </div>
-        </button>
-
-        <div className='flex items-center justify-between border-t border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground'>
-          <div className='flex items-center gap-3'>
-            <span className='inline-flex items-center gap-1'>
-              <Folder className='h-3 w-3' /> {childCount}
-            </span>
-            <span className='inline-flex items-center gap-1'>
-              <FileIcon className='h-3 w-3' /> {fileCount}
-            </span>
-          </div>
-
-          {canWrite && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} className='rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background'>
-                  <MoreVertical className='h-4 w-4' />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className='me-2 h-4 w-4' /> Renommer / éditer
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onMove}>
-                  <Move className='me-2 h-4 w-4' /> Déplacer
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={onDelete}>
-                  <Trash2 className='me-2 h-4 w-4' /> Supprimer
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }: { file: WorkspaceFile; artifacts: WorkspaceArtifact[]; totalArtifactCount: number; forceExpanded: boolean; onMove: () => void }) {
+function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove, selection }: { file: WorkspaceFile; artifacts: WorkspaceArtifact[]; totalArtifactCount: number; forceExpanded: boolean; onMove: () => void; selection: FileRowSelection }) {
   const { t } = useModuleTranslation('workspace');
   const Icon = getItemIcon(file);
   const isConverting = file.type === 'url' && file.status === 'processing';
   const canWrite = useCanWriteWorkspace();
-  const [isDragging, setIsDragging] = useState(false);
+  const openAddLink = useWorkspaceStore(s => s.openAddLink);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [expanded, setExpanded] = useState(forceExpanded);
+  const shiftSelection = useRef(false);
 
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
@@ -891,13 +505,6 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   // be suppressed (otherwise the viewer signs the placeholder and errors).
   const isStored = file.type !== 'url' || file.status === 'completed';
   const viewable = isViewableFile(file.mimeType) && !!file.path && !isConverting && isStored;
-
-  const handleDragStart = (e: React.DragEvent) => {
-    if (!canWrite) return;
-    e.dataTransfer.setData(ITEM_MIME, JSON.stringify({ kind: 'file', id: file.id, name: file.name }));
-    e.dataTransfer.effectAllowed = 'move';
-    setIsDragging(true);
-  };
 
   const handleView = useCallback(() => {
     if (!viewable) return;
@@ -947,75 +554,71 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   }, [deleteDocument, file.id, file.name, file.workspaceId, refreshPageData, totalArtifactCount]);
 
   const primaryContent = <>
-    <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
-    <div className='min-w-0 flex-1 flex items-center gap-2'>
-      {isConverting ? (
-        <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
-          <Loader2 className='h-3.5 w-3.5 animate-spin' />
-        </span>
-      ) : (
-        <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
-      )}
-      <span className='truncate text-sm'>{file.name}</span>
-      {totalArtifactCount > 0 && <span className='text-xs text-muted-foreground'>{t('artifacts.count', { count: totalArtifactCount })}</span>}
-    </div>
-    <span className='hidden md:inline text-xs text-muted-foreground tabular-nums whitespace-nowrap'>{formatBytes(file.size)}</span>
+    <Icon className='h-4 w-4 shrink-0 text-muted-foreground' />
+    <span className='min-w-0 flex-1'>
+      <span className='block truncate text-sm' title={file.name}>{file.name}</span>
+      <span className='block sm:hidden'><WorkspaceIndexingStatus file={file} /></span>
+    </span>
+    {totalArtifactCount > 0 && <span className='shrink-0 text-xs text-muted-foreground'>{t('artifacts.count', { count: totalArtifactCount })}</span>}
   </>;
 
   return (
     <>
-      <div
-        draggable={canWrite}
-        onDragStart={handleDragStart}
-        onDragEnd={() => setIsDragging(false)}
-        className={cn('group flex items-center gap-4 rounded-md py-2 ps-2 pe-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}
-      >
-        {artifacts.length > 0 ? <button type='button' onClick={() => setExpanded((value) => !value)} aria-label={expanded ? t('artifacts.collapse') : t('artifacts.expand')}><ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} /></button> : <span className='w-4' />}
-        {viewable
-          ? <button type='button' className='flex min-w-0 flex-1 cursor-pointer items-center gap-4 text-start' onClick={handleView}>{primaryContent}</button>
-          : <div className='flex min-w-0 flex-1 items-center gap-4'>{primaryContent}</div>}
-
+      <TableRow data-state={selection.selected ? 'selected' : undefined}>
+        {canWrite && <TableCell className='w-10'><Checkbox aria-label={t('explorer.selectItem', { name: file.name })} checked={selection.selected} disabled={selection.disabled} onClick={e => { shiftSelection.current = e.shiftKey; }} onCheckedChange={() => { selection.onToggle(shiftSelection.current); shiftSelection.current = false; }} /></TableCell>}
+        <TableCell className='min-w-0'>
+          <div className='flex min-w-0 items-center gap-1'>
+            {artifacts.length > 0 && <button type='button' className='shrink-0 rounded p-1 hover:bg-accent' onClick={() => setExpanded(value => !value)} aria-expanded={expanded} aria-label={expanded ? t('artifacts.collapse') : t('artifacts.expand')}><ChevronRight className={cn('h-4 w-4', expanded && 'rotate-90')} /></button>}
+            {viewable ? <button type='button' className='flex min-w-0 flex-1 items-center gap-2 py-1 text-start hover:underline' onClick={handleView}>{primaryContent}</button> : <div className='flex min-w-0 flex-1 items-center gap-2 py-1'>{primaryContent}</div>}
+          </div>
+        </TableCell>
+        <TableCell className='hidden sm:table-cell'><WorkspaceIndexingStatus file={file} /></TableCell>
+        <TableCell className='hidden text-end text-xs text-muted-foreground lg:table-cell'>{formatBytes(file.size)}</TableCell>
+        <TableCell className='hidden text-end text-xs text-muted-foreground xl:table-cell'>{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : '—'}</TableCell>
+        <TableCell className='w-10'>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className='rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-background group-hover:opacity-100'>
+            <button type='button' disabled={selection.batchMode || selection.disabled} aria-label={t('explorer.itemActions', { name: file.name })} className='rounded p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-40'>
               <MoreVertical className='h-4 w-4' />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end'>
             {viewable && (
               <DropdownMenuItem onClick={handleView}>
-                <Eye className='me-2 h-4 w-4' /> Voir
+                <Eye className='me-2 h-4 w-4' /> {t('explorer.view')}
               </DropdownMenuItem>
             )}
             {isStored && (
               <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
                 {isDownloading ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <Download className='me-2 h-4 w-4' />}
-                Télécharger
+                {t('explorer.download')}
               </DropdownMenuItem>
             )}
+            {file.sourceRootUrl && <DropdownMenuItem onClick={() => openAddLink({ url: file.sourceRootUrl!, autoStart: true, sourceGroupId: file.sourceGroupId, seed: useWorkspaceStore.getState().pageFiles.filter(f => file.sourceGroupId ? f.sourceGroupId === file.sourceGroupId : f.sourceRootUrl === file.sourceRootUrl).filter(f => !!f.sourceUrl).map(f => ({ url: f.sourceUrl!, name: f.name, indexingStatus: f.indexingStatus })) })}><Globe className='me-2 h-4 w-4' />{t('explorer.openSource')}</DropdownMenuItem>}
             {canWrite && (
               <>
                 <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
                   {isReindexing ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <RefreshCw className='me-2 h-4 w-4' />}
-                  Indexer / Réindexer
+                  {t('explorer.index')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-                  <Pencil className='me-2 h-4 w-4' /> Renommer
+                  <Pencil className='me-2 h-4 w-4' /> {t('explorer.rename')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={onMove}>
-                  <ArrowRight className='me-2 h-4 w-4' /> Déplacer dans…
+                  <ArrowRight className='me-2 h-4 w-4' /> {t('explorer.move')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteOpen(true)}>
-                  <Trash2 className='me-2 h-4 w-4' /> Supprimer
+                  <Trash2 className='me-2 h-4 w-4' /> {t('explorer.delete')}
                 </DropdownMenuItem>
               </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+        </TableCell>
+      </TableRow>
 
-      {expanded && artifacts.map((artifact) => <WorkspaceArtifactRow key={artifact.id} artifact={artifact} canWrite={canWrite} onChanged={refreshPageData} />)}
+      {expanded && artifacts.length > 0 && <TableRow><TableCell colSpan={canWrite ? 6 : 5} className='bg-muted/20 ps-8'>{artifacts.map(artifact => <WorkspaceArtifactRow key={artifact.id} artifact={artifact} canWrite={canWrite} onChanged={refreshPageData} />)}</TableCell></TableRow>}
 
       <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} linkedArtifactCount={totalArtifactCount} isDeleting={isDeleting} onConfirm={handleDelete} />
 
@@ -1129,42 +732,6 @@ function WorkspaceContentLoading() {
           ))}
         </div>
       </section>
-    </div>
-  );
-}
-
-function EmptyFolderState({ hasSearch, canCreate, onCreateFolder }: { hasSearch: boolean; canCreate: boolean; onCreateFolder: () => void }) {
-  if (hasSearch) {
-    return (
-      <div className='flex flex-col items-center justify-center py-24 text-center'>
-        <div className='mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted'>
-          <Search className='h-6 w-6 text-muted-foreground' />
-        </div>
-        <h3 className='text-sm font-semibold'>Aucun résultat</h3>
-        <p className='mt-1 text-xs text-muted-foreground'>Essayez avec d'autres mots-clés.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className='flex flex-col items-center justify-center py-20 text-center'>
-      <div className='mb-5 flex h-16 w-16 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/15'>
-        <Folder className='h-7 w-7' />
-      </div>
-      <h3 className='text-base font-semibold'>Cet emplacement est vide</h3>
-      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>
-        {canCreate
-          ? "Créez un dossier pour structurer votre classification ou utilisez la zone d'upload ci-dessus pour ajouter des fichiers."
-          : 'Ce workspace partagé est en lecture seule.'}
-      </p>
-      {canCreate && (
-        <div className='mt-5 flex items-center gap-2'>
-          <Button variant='outline' onClick={onCreateFolder} className='gap-1.5'>
-            <FolderPlus className='h-4 w-4' />
-            Nouveau dossier
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
