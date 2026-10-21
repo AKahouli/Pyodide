@@ -102,7 +102,6 @@ def backend() -> YellowStormSemanticModelClient:
             settings.backend_url,
             settings.timeout_seconds,
             settings.max_response_bytes,
-            service_token=settings.service_token,
         )
     return _client
 

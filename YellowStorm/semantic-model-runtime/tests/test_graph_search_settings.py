@@ -284,7 +284,7 @@ async def test_an_index_request_records_its_settings_and_a_later_one_reuses_them
     monkeypatch.setattr(indexer, "population_store", Population())
     monkeypatch.setattr(indexer, "is_live_projection_ref", lambda ref: True)
     monkeypatch.setattr(indexer, "profile_from_env", lambda: embeddings.EmbeddingProfile(
-        base_url="http://x", api_key="", model="m", dimension=2560))
+        base_url="http://x", api_key="", model="m", dimension=embeddings.STORAGE_DIMENSION))
 
     async def admit(**_kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("a ready generation needs no job")

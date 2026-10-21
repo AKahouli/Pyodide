@@ -192,8 +192,9 @@ export async function openHarness(directory, options = {}) {
           if (!item || !['PASS', 'PENDING', 'FAIL'].includes(item.status)) throw new Error(`Startup health requires an explicit ${name} status.`);
           return { status: item.status, reason: String(item.reason ?? '').slice(0, 1500), action: String(item.action ?? '').slice(0, 1500) };
         };
-        const receipt = { root, sessionID, processID: pid, ownerToken: owner, checkedAt: new Date().toISOString(), probe: randomUUID(), checkpoints: { status: 'PASS', reason: 'Transactional checkpoint write/read verified in this worktree.' }, graph: service('graph'), hindsight: service('hindsight') };
+        const receipt = { root, sessionID, processID: pid, ownerToken: owner, checkedAt: new Date().toISOString(), probe: randomUUID(), checkpoints: { status: 'PASS', reason: 'Transactional checkpoint write/read verified in this worktree.' }, graph: service('graph') };
         if (value.harnessVersion) receipt.harnessVersion = String(value.harnessVersion).slice(0, 100);
+        if (Number.isInteger(value.graphifyInvocations)) receipt.graphifyInvocations = value.graphifyInvocations;
         task.startupHealth = { ...(task.startupHealth ?? {}), [sessionID]: receipt };
         save(task);
         const stored = taskById(task.id)?.startupHealth?.[sessionID];

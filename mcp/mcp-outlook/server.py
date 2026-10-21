@@ -4,9 +4,11 @@ Outlook/Calendar MCP Server
 Provides MCP tools to interact with Microsoft Outlook (email) and Calendar
 using Microsoft Graph API. Includes email sending, user lookup, and meeting creation.
 
-Authentication is injected at runtime via the Authorization header or environment
-variables by the connector auth layer. This server is fully stateless — it does
-not read or write any local token files.
+Authentication is two-credential and injected at runtime by the connector auth
+layer (ADR-0017, ADR-0026): the Authorization bearer is the backend-signed actor
+assertion, and the configured provider-token header carries the acting user's
+delegated Microsoft Graph token. This server is fully stateless — it does not
+read or write any local token files and holds no tenant-wide Graph credential.
 """
 
 import asyncio
@@ -1979,7 +1981,7 @@ async def create_meeting(
 
 if __name__ == "__main__":
     os.environ.setdefault("HOST", "0.0.0.0")
-    transport = os.getenv("OUTLOOK_MCP_TRANSPORT", "sse")
+    transport = os.getenv("OUTLOOK_MCP_TRANSPORT", "streamable-http")
     port = int(os.getenv("OUTLOOK_MCP_PORT", os.getenv("PORT", "8002")))
 
     middleware = [Middleware(AuthMiddleware)]
@@ -2004,4 +2006,9 @@ if __name__ == "__main__":
     logger.info(
         f"Starting Outlook MCP server with transport: {transport} on port: {port}",
     )
-    mcp.run(transport=transport, middleware=middleware, host="0.0.0.0", port=port)
+    if transport == "streamable-http":
+        # Every call carries its own actor assertion and delegated Graph token,
+        # so no MCP transport session may retain either (ADR-0026).
+        mcp.run(transport=transport, middleware=middleware, host="0.0.0.0", port=port, stateless_http=True)
+    else:
+        mcp.run(transport=transport, middleware=middleware, host="0.0.0.0", port=port)

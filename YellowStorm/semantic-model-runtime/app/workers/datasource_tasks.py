@@ -290,7 +290,8 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None,
     import tempfile
 
     from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
-                                                fetch_workspace_asset, upload_prepared_dataset)
+                                                fetch_workspace_asset, fetch_workspace_asset_metadata,
+                                                upload_prepared_dataset)
     from app.datasource.parser_sandbox import prepare_dataset_subprocess, run_preview_subprocess
 
     if not isinstance(command_dump, dict):
@@ -305,11 +306,22 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None,
         return authorized_metadata
     metadata_profile = authorized_metadata["profile"]
     is_tabular = metadata_profile.get("structure", {}).get("kind") in {"csv", "xlsx", "email_archive"}
-    if metadata_profile.get("status") != "ready" or not is_tabular:
-        return run_discovery_for_payload(command_dump)
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
     if not isinstance(actor, str) or not actor:
         return {"ok": False, "errorCode": "invalid_command"}
+    if metadata_profile.get("status") != "ready" or not is_tabular:
+        try:
+            # The preview above only validates shape. Metadata grants recheck the
+            # live job, exact source and current actor access without fetching bytes.
+            current = await fetch_workspace_asset_metadata(source, actor)
+        except AssetFetchError as exc:
+            return failure_outcome(exc, exc.code, phase="datasource.fetch")
+        return run_discovery_for_payload(
+            {**command_dump, "payload": {**inner, "source": current}},
+            authorize=lambda **scope: (scope["actor_user_id"] == actor
+                                      and scope["home_workspace_id"] == command_dump.get("workspaceId", command_dump.get("workspace_id"))
+                                      and scope["source_workspace_id"] == current["workspaceId"]),
+        )
     from app.datasource.discovery import is_email_archive
 
     temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")

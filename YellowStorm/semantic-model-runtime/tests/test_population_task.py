@@ -587,6 +587,28 @@ def test_lease_covers_sources_within_bounds():
     assert 300 <= population_lease_seconds(3, 30) <= 1800
 
 
+def test_summarize_gaps_preserves_safe_source_failure_diagnostics():
+    from app.workers.population_tasks import summarize_gaps
+
+    specification = {"concepts": [{"conceptId": "c1", "allowedFields": ["name", "id"]}]}
+    gaps = [{"conceptId": "c1", "kind": "source_unavailable", "detail": reason,
+             "assetRef": {"workspaceId": "w1", "assetId": f"a{i}"}}
+            for i, reason in enumerate(["asset_fetch_forbidden", "Bearer secret / response body"] * 20)]
+    summary = summarize_gaps({"gaps": gaps}, specification)
+    group = summary["other"][0]
+    assert "fields" not in group
+    assert group["details"]["sources"][0] == {
+        "code": "asset_fetch_forbidden", "asset": {"workspaceId": "w1", "assetId": "a0"}}
+    assert group["details"]["sources"][1]["code"] == "source_unavailable"
+    assert len(group["details"]["sources"]) == 25
+    assert "secret" not in str(summary)
+    gaps[0]["field"] = "id"
+    summary = summarize_gaps({"gaps": gaps}, specification)
+    assert summary["other"][0]["fields"] == ["id"]
+    assert summary["other"][0]["details"]["sources"][0]["fields"] == ["id"]
+    assert "fields" not in summary["other"][0]["details"]["sources"][1]
+
+
 def test_summarize_gaps_groups_missing_values_and_links():
     from app.workers.population_tasks import summarize_gaps
 

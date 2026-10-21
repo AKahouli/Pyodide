@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Response, status
 import structlog
@@ -979,6 +979,34 @@ async def commit_manual_snapshot(model_id: str, command: ManualCommitCommand, re
     return {"snapshotId": snapshot_id, "reused": not created}
 
 
+def _interactive_metadata(body: dict, sources: list[dict]) -> Callable[[dict, str], Awaitable[dict]]:
+    """Only for service-key authenticated interactive routes, never worker delivery.
+
+    Nest constructs this handoff from documents it just authorized, not frontend data.
+    Validate the whole handoff before any index access, including unused sources.
+    """
+    authority = body.get("authorizedMetadata")
+    actor, model = body.get("actorUserId"), body.get("modelId")
+    if (not isinstance(actor, str) or not actor.strip() or not isinstance(model, str) or not model.strip()
+            or not isinstance(authority, dict) or set(authority) != {"actorUserId", "modelId", "sources"}
+            or authority.get("actorUserId") != actor or authority.get("modelId") != model
+            or authority.get("sources") != sources or not sources):
+        raise HTTPException(status_code=403, detail="interactive_metadata_forbidden")
+    for source in sources:
+        if (not isinstance(source, dict)
+                or any(not isinstance(source.get(key), str) or not source[key].strip()
+                       for key in ("workspaceId", "assetId", "originalName", "mimeType"))
+                or type(source.get("sizeBytes")) is not int or source["sizeBytes"] < 0):
+            raise HTTPException(status_code=403, detail="interactive_metadata_forbidden")
+
+    async def metadata_fetch(source: dict, actor_user_id: str) -> dict:
+        if actor_user_id != actor or source not in sources:
+            raise HTTPException(status_code=403, detail="interactive_metadata_forbidden")
+        return dict(source)
+
+    return metadata_fetch
+
+
 @router.post("/document-preview", status_code=status.HTTP_200_OK)
 async def preview_document_fields(body: dict, request: Request) -> dict[str, object]:
     """Read one document's extracted fields exactly as a run would, and say for each one how it
@@ -993,6 +1021,7 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     if not isinstance(actor, str) or not actor or not isinstance(entry, dict):
         raise HTTPException(status_code=422, detail="invalid_preview")
     source = entry.get("source")
+    metadata_fetch = _interactive_metadata(body, [source])
     mappings = entry.get("fieldMappings")
     if (not isinstance(source, dict) or not source.get("assetId") or not isinstance(mappings, list)
             or not 0 < len(mappings) <= 25 or not all(isinstance(item, dict) for item in mappings)):
@@ -1013,7 +1042,7 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         raise HTTPException(status_code=503, detail="index_unavailable")
     entry = {**entry, "fieldMappings": mappings, "mappingVersion": entry.get("mappingVersion") or "preview",
              "conceptId": entry.get("conceptId") or "preview"}
-    resolved = await resolve_indexed_document(pool, entry, actor)
+    resolved = await resolve_indexed_document(pool, entry, actor, metadata_fetch=metadata_fetch)
     if "gap" in resolved:
         gap = resolved["gap"]["gaps"][0]
         return {"status": gap["kind"], "detail": gap.get("detail"), "fields": {}}
@@ -1052,11 +1081,12 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
 @router.post("/document-field-suggestions", status_code=status.HTTP_200_OK)
 async def suggest_document_fields(body: FieldDiscoveryRequest, request: Request) -> dict[str, Any]:
     """Read-only proposals; existing service authentication and per-asset authorization apply."""
+    metadata_fetch = _interactive_metadata(body.model_dump(), [source.model_dump() for source in body.sources])
     pool = getattr(request.app.state, "index_pool", None)
     if pool is None:
         raise HTTPException(status_code=503, detail="index_unavailable")
     try:
-        return await discover_fields(pool, body)
+        return await discover_fields(pool, body, metadata_fetch=metadata_fetch)
     except AttributeExtractionError as exc:
         raise _ai_http_error(exc) from exc
 

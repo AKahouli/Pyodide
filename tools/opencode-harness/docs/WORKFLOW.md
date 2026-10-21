@@ -63,19 +63,18 @@ never adopt the default tab, copy storage or close another task's browser.
 If routing/isolation is unsupported, return BLOCKED/BROWSER_ISOLATION.
 
 AUTH_REQUIRED returns sign-in URL, owned context/page ID, blocked criteria and
-checks already passed. Build reuses the confirmed non-secret recipe, or retrieves
-one scoped Hindsight result if missing, then asks once for direct sign-in or an
-existing test-account/password-manager entry. Independent work continues.
+checks already passed. Build reuses the confirmed non-secret recipe from its
+task checkpoints, or asks once for direct sign-in or an existing
+test-account/password-manager entry. Independent work continues.
 Credentials/MFA are entered directly in the private browser/password manager;
 pause inspection during entry and never inspect credential fields, cookies or tokens.
 Resume the same child/context after sign-in and verify actual access/role.
 
-After successful sign-in, build may persist a sanitized recipe through
-`hindsight_ingest_document`: stable title per origin/environment/role, method,
+After successful sign-in, build may persist a sanitized recipe in the task
+checkpoint: stable title per origin/environment/role, method,
 supplied account alias/role, optional credential-store reference, isolation policy
 and verification date. Ephemeral page IDs stay in checkpoint/handoff.
-Never retain secrets or claim memory saved without successful confirmation;
-failed persistence does not block QA. A recipe avoids repeated account questions,
+Never retain secrets; a recipe avoids repeated account questions,
 not necessary authentication in a fresh context.
 
 ## Documentation maintenance

@@ -163,6 +163,79 @@ route boundaries and qualification record](../architecture/conversation-v1-remed
 and proposed [ADR-0027](../decisions/ADR-0027-classic-conversation-durable-sse.md).
 P1-07 ADK queue backpressure and conversation v2 are explicitly excluded.
 
+### Historical OpenUI rendering (2026-10-21)
+
+Completed non-MiniApp OpenUI answers defer their renderer until their answer
+container is within 200 px of the viewport. A keyboard-accessible **View answer**
+button also activates the answer. Activation is permanent for that mounted
+actor/conversation/message/component identity: scrolling away does not discard
+form values, open reports or image caches. Streaming answers and private
+MiniApps remain eager; the latter retain their mounted autosave/export guards
+and HtmlView capture registrations required by ADR-0025. Browsers without
+IntersectionObserver retain immediate rendering. Deferred placeholders reserve a
+bounded 160–640 px estimate from source length; this is not a measured final
+answer height. Plain chat cards also defer importing the separate report,
+presentation and slide-export adapters until an answer contains a report program.
+Report imports retry once; after a final failure, a fresh lazy component permits
+another attempt on the next mount while the existing answer boundary handles the
+failure.
+
+This only defers render work; message pagination, transcript data, API contracts
+and outer message anchors are unchanged. Copying an untouched offscreen answer
+uses the existing stored-program text projection. Files/search navigation still
+targets the outer message, and viewport proximity activates its deferred answer.
+Coverage is in `OpenUiAnswer.viewport.test.tsx`: untouched historical answers do
+not mount/load the renderer, near-viewport and button activation work, edited
+values survive scrolling away, eager cases remain immediate, and identity changes
+reset activation. The 50-answer offscreen regression verifies zero renderer
+loads for untouched answers. The supplied live thread initially loaded five
+messages and three OpenUI answers; visible answers may all activate normally.
+Temporary probes measured the messages request at 270 ms, the subsequent active
+stream request at 47 ms, and OpenUI renderer module loading at 810 ms. Variable
+warm development reload samples were 3.779 s before and 4.559 s after; these do
+not establish a loading-time improvement. Temporary probes were removed.
+Focused answer, viewport, renderer/report compatibility and import-boundary
+verification passed 63 distinct tests. The final TypeScript check passed. The
+standard production build reached final gzip size reporting, which failed with
+insufficient memory; the retry with optional compressed-size reporting disabled
+passed. After reconnecting the same Chrome profile, live reload rendered the
+procedure in 3.905 s. Scrolling loaded all six messages while one older answer
+remained deferred; approaching it activated the third OpenUI view, and all three
+remained mounted after scrolling away. HTML download succeeded after reload.
+These checks establish compatibility and deferred work, not a reliable startup
+speedup for this small thread. Final evidence is recorded in the delivery checkpoint.
+
+### Classic conversation startup imports (2026-10-21)
+
+Shell navigation and shared permission consumers now import the existing admin
+API, constants, navigation and hooks entrypoints directly rather than the main
+barrel that reexports every admin page. Profile-menu and usage consumers and the
+combined provider use the existing `profile/SettingsContext` entrypoint, avoiding
+an eager dependency on the settings modal. The authenticated index route loads
+`NewConversationPage` lazily inside a local Suspense boundary. Existing barrel
+exports, auth checks, permission implementations, provider ownership, routes and
+stream hooks are unchanged. The scoped public-entrypoint exception is documented
+in [frontend architecture](../frontend/architecture.md).
+
+Temporary probes in the same warm development conversation measured these
+navigation-relative milestones before the shell import changes and in two
+subsequent reloads: main entry 1,748 → 1,177 / 1,074 ms; conversation page mount
+2,510 → 2,052 / 1,972 ms; OpenUI import start 3,543 → 2,929 / 2,864 ms; first
+OpenUI UI 4,472 → 3,831 / 3,759 ms. OpenUI module loading itself remained
+805 → 782 / 751 ms and measured React render CPU 368 → 351 / 357 ms. These
+samples suggest earlier app startup rather than a large reduction in OpenUI
+render CPU; they are development observations, not a production benchmark or a
+guaranteed speedup. All temporary probes were removed.
+
+Source review confirmed the narrowed imports resolve to the same implementations
+and settings context, with no new permission or persistence boundary. All 63
+focused shell/context tests and the final TypeScript check passed. The production
+build passed in 1m 58s with optional compressed-size reporting disabled, retaining
+the normal build output. Live checks passed for the lazy index page, on-demand
+settings dialog and original conversation after a clean reload; three OpenUI
+answers rendered and no temporary profiling attributes remained. Final evidence
+is recorded in the delivery checkpoint.
+
 ### Reusable OpenUI mini-apps (2026-10-17)
 
 With the agent's existing generative-UI option enabled, the shared library now
@@ -609,6 +682,32 @@ provider chaining passed real-gateway qualification with all 12 permits released
 | Continue in a playbook | Prepare a conversation playbook handoff through the existing controller/service; [handoff service](../../../YellowStorm/back/src/modules/conversation/services/conversation-playbook-handoff.service.ts) |
 
 These are implemented entry points, not a guarantee that every deployment enables every capability or has configured agents/providers.
+
+### Sidebar history and browser-local pins
+
+The sidebar's middle navigation/history region owns scrolling; its header and
+footer stay outside that scroll area. It displays all loaded history instead of
+five rows. Scrolling within 160 pixels of the end requests another classic
+conversation page (25 rows) and/or Studio cursor page, with loading and in-flight
+guards; exhausted sources are not requested again. Existing stores deduplicate
+appended rows. Closing History or collapsing the rail suppresses scroll loading.
+
+Conversation row actions in History and All chats offer Pin/Unpin. Pinned rows
+appear before recent history without duplication. Pins are browser-local and
+scoped by signed-in account, not synchronized to the server or other devices.
+Only kind, ID, title and sort time are saved; saved pin metadata keeps older pins
+reachable after reload before their history page is loaded. Opening a pin uses
+the normal authorized conversation route. Successful row deletion removes its
+pin, manual rename updates its saved title, and storage failures show an error.
+Filtered All chats lists retain their filter rather than inserting unmatched pins.
+
+Sources and focused regressions: `sidebar/components/AppSidebar.tsx`,
+`ManagedNavigation.tsx`, `RecentChats.tsx`, `ConversationItem.test.tsx`,
+`AppSidebar.test.tsx` and `sidebar/hooks/usePinnedConversations.test.tsx` under
+`YellowStorm/front/src/modules/`. The sidebar suite passed 58 tests and TypeScript
+checking. Signed-in Chromium checks verified cursor-driven appends without duplicate
+links, pin ordering/reload/unpin, and fixed header/footer with independent scrolling
+at 1280×720 desktop and in the 390×844 mobile sheet. The QA-created pin was removed.
 
 ## Ownership and request flow
 

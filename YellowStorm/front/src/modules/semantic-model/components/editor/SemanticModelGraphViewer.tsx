@@ -465,10 +465,10 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
       style={{ background: '#0f0f1a' }}>
       {/* Header */}
       <div className="shrink-0 space-y-1.5 border-b border-white/10 px-4 py-2.5">
-      <div className="flex items-center gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]">
         <h2 className="text-sm font-semibold text-white">{t('graphViewer.title')}</h2>
         {/* Search: a record by its name or one of its values. */}
-        <div className="relative w-72 max-w-full">
+        <div className="relative col-span-2 row-start-2 w-[36rem] max-w-full min-w-0 justify-self-center lg:col-span-1 lg:col-start-2 lg:row-start-1">
           <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-white/40" />
           <input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }}
             onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
@@ -488,7 +488,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             {searching && <li className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/45"><Loader2 className="h-3 w-3 animate-spin" />{t('graphViewer.searchingValues')}</li>}
           </ul>}
         </div>
-        <div className="flex-1" />
+        <div className="col-start-2 row-start-1 flex items-center gap-3 justify-self-end lg:col-start-3">
         {canExport && index.records.length > 0 && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" aria-label={t('graphViewer.export')} title={t('graphViewer.exportHelpShort')}>
@@ -506,6 +506,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
         <Button variant="ghost" size="icon" className="text-white/60 hover:bg-white/10 hover:text-white" onClick={onClose} aria-label={t('graphViewer.close')}>
           <X className="h-5 w-5" />
         </Button>
+        </div>
       </div>
         {/* Legend: each concept with its records; clicking shows or hides them. */}
         <div className="-ms-2 flex flex-wrap items-center gap-1" aria-label={t('graphViewer.legend')} role="group">

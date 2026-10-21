@@ -7,7 +7,7 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@/modules/admin', () => ({
+vi.mock('@/modules/admin/hooks', () => ({
   usePermissions: () => ({ hasPermission: () => true }),
 }));
 

@@ -87,6 +87,15 @@ import { useConversationStore } from '@/modules/conversation';
 
 **Barrel rules:** Export **only** the public surface (pages, store hook, public types). Cross-module consumers import from `@/modules/<name>`, never from internals. Code inside the same module should import its sibling implementation directly rather than routing back through its own barrel.
 
+The app shell has a scoped exception for existing lightweight public entrypoints:
+`admin/api`, `admin/constants`, `admin/navigation`, `admin/hooks` and
+`profile/SettingsContext`. Shell providers/navigation and shared permission
+consumers use these instead of page-exporting barrels, so a conversation does not
+eagerly load administrative pages or the settings modal. Public types can still
+come from the main barrel with `import type`. Existing barrel exports remain
+compatible. RootGuard's index page uses the same direct lazy route import as the
+router. This changes import timing only, not permissions or provider ownership.
+
 Representative current modules include: `admin`, `agent`, `app-marketplace`, `auth`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `platform-copilot`, `platform-overview`, `playbook`, `profile`, `project`, `semantic-model`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. This list is descriptive, not an exhaustive registry; verify `src/modules/`. When adding a module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
 
 ```ts

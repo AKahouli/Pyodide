@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
@@ -40,7 +41,6 @@ def backend() -> YellowStormPyodideClient:
     if _client is None:
         _client = YellowStormPyodideClient(
             settings.backend_url,
-            settings.internal_token,
             settings.timeout_seconds,
             settings.max_response_bytes,
         )
@@ -159,13 +159,17 @@ async def execute_python(
 
 if __name__ == "__main__":
     settings.validate()
+    public_key = Path(settings.jwt_public_key_file).read_text(encoding="utf-8")
     middleware = [Middleware(
         TrustedIdentityMiddleware,
-        ingress_token=settings.ingress_token,
+        jwt_public_key=public_key,
+        jwt_issuer=settings.jwt_issuer,
+        jwt_audience=settings.jwt_audience,
     )]
     mcp.run(
         transport="streamable-http",
         host="0.0.0.0",
         port=settings.port,
         middleware=middleware,
+        stateless_http=True,
     )

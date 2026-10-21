@@ -21,13 +21,12 @@ _load_local_env()
 @dataclass(frozen=True)
 class Settings:
     backend_url: str
-    internal_token: str
     ingress_token: str
     timeout_seconds: float
     port: int
     max_response_bytes: int
     search_limit_max: int
-    auth_mode: str = "Bearer"
+    auth_mode: str = "JWT"
     jwt_public_key_file: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = "mcp-playbook"
@@ -36,29 +35,22 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
-            internal_token=os.getenv("PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN", ""),
-            ingress_token=os.getenv("PLAYBOOK_MCP_INGRESS_TOKEN", ""),
+            ingress_token="",
             timeout_seconds=float(os.getenv("PLAYBOOK_MCP_TIMEOUT_SECONDS", "190")),
             port=int(os.getenv("MCP_PORT", "8025")),
             max_response_bytes=int(os.getenv("PLAYBOOK_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
             search_limit_max=int(os.getenv("PLAYBOOK_MCP_SEARCH_LIMIT_MAX", "25")),
-            auth_mode=os.getenv("PLAYBOOK_MCP_AUTH_MODE", "Bearer"),
+            auth_mode=os.getenv("PLAYBOOK_MCP_AUTH_MODE", "JWT"),
             jwt_public_key_file=os.getenv("PLAYBOOK_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("PLAYBOOK_MCP_JWT_ISSUER", ""),
             jwt_audience=os.getenv("PLAYBOOK_MCP_JWT_AUDIENCE", "mcp-playbook"),
         )
 
     def validate(self) -> None:
-        if not self.internal_token.strip() or self.internal_token != self.internal_token.strip():
-            raise ValueError("PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN is required without surrounding whitespace")
-        if os.getenv("ENVIRONMENT") == "production" and len(self.internal_token) < 32:
-            raise ValueError("PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN must be at least 32 characters in production")
-        if self.auth_mode not in ("JWT", "Bearer"):
-            raise ValueError("PLAYBOOK_MCP_AUTH_MODE must be JWT or Bearer")
-        if self.auth_mode == "JWT" and not (self.jwt_public_key_file and self.jwt_issuer and self.jwt_audience):
+        if self.auth_mode != "JWT":
+            raise ValueError("PLAYBOOK_MCP_AUTH_MODE must be JWT")
+        if not all(value.strip() for value in (self.jwt_public_key_file, self.jwt_issuer, self.jwt_audience)):
             raise ValueError("JWT mode requires a public key file, issuer and audience")
-        if self.auth_mode == "Bearer" and not self.ingress_token:
-            raise ValueError("PLAYBOOK_MCP_INGRESS_TOKEN is required")
         if not self.backend_url.startswith(("http://", "https://")):
             raise ValueError("YELLOWSTORM_BACKEND_URL must be an HTTP(S) URL")
         if not 1 <= self.port <= 65535:

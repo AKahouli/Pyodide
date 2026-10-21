@@ -1524,7 +1524,7 @@ async def _generation_with_documents(pool: asyncpg.Pool, hashes: list[str], pass
 
 
 async def _cache(pool: asyncpg.Pool, hashes: list[str]) -> None:
-    vector = "[" + ",".join(["0.5"] * 2560) + "]"
+    vector = "[" + ",".join(["0.5"] * 3072) + "]"
     await pool.executemany(
         "INSERT INTO semantic_graph_search.embedding_cache (model_id, embedding_fingerprint, content_hash, embedding) "
         "VALUES ('m-1', 'vfp', $1, $2::text::halfvec)", [(content_hash, vector) for content_hash in hashes])

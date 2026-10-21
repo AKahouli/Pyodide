@@ -36,9 +36,22 @@ _request_conversation_id: ContextVar[str | None] = ContextVar(
     "_request_conversation_id", default=None
 )
 
+# The acting user's delegated Microsoft Graph token, delivered per request by the
+# connector auth layer in the configured token header (ADR-0017 provider
+# authority). Set and reset by AuthMiddleware; never logged and never read from
+# the environment — an ambient tenant token would let a caller inherit tenant
+# authority.
+_delegated_provider_token: ContextVar[str | None] = ContextVar(
+    "_delegated_provider_token", default=None
+)
+
 
 def get_request_user_id() -> str | None:
     return _request_user_id.get()
+
+
+def get_request_provider_token() -> str | None:
+    return _delegated_provider_token.get()
 
 
 def get_request_conversation_id() -> str | None:
@@ -183,12 +196,13 @@ DRIVE_ITEM_SELECT = (
 
 
 def get_access_token() -> str:
-    env_token = os.getenv("M365_ACCESS_TOKEN")
-    if env_token:
-        return env_token
+    token = _delegated_provider_token.get()
+    if token:
+        return token
     raise RuntimeError(
-        "No access token available. "
-        "M365_ACCESS_TOKEN must be injected into the server environment."
+        "No delegated Microsoft Graph token for this request. "
+        "The connector auth layer must send the acting user's token in the "
+        "configured provider header (M365_TOKEN_HEADER)."
     )
 
 

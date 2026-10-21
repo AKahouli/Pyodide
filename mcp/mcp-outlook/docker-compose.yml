@@ -7,7 +7,7 @@ services:
     ports:
       - "8005:8005"
     environment:
-      - OUTLOOK_MCP_TRANSPORT=sse
+      - OUTLOOK_MCP_TRANSPORT=streamable-http
       - OUTLOOK_MCP_PORT=8005
       - ALLOWED_ORIGINS=*
       - LOG_LEVEL=info

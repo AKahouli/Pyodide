@@ -12,7 +12,25 @@ import { assertAccountApproved } from '@modules/user/utils/assert-account-access
 
 type Headers = Record<string, string | string[] | undefined>;
 const AUDIENCE_METADATA = 'yellowstorm:mcp-route-audience';
-export const McpRouteAudience = (audience: 'mcp-agent' | 'mcp-playbook' | 'mcp-semantic-model') => SetMetadata(AUDIENCE_METADATA, audience);
+const ROUTE_PRINCIPALS: Record<string, string> = {
+  'mcp-agent': 'mcp-agent',
+  'mcp-playbook': 'mcp-playbook',
+  'mcp-semantic-model': 'semantic-model-mcp',
+  'mcp-platform': 'mcp-platform',
+};
+export type McpRouteAudienceValue = 'mcp-agent' | 'mcp-playbook' | 'mcp-semantic-model' | 'mcp-platform';
+/**
+ * Declare the trusted assertion audience(s) for an internal MCP surface in code.
+ * Multiple audiences exist only for the platform-MCP migration: legacy per-server
+ * audiences and the shared `mcp-platform` audience are accepted until the old
+ * deployments retire, then each list collapses back to one entry.
+ */
+export const McpRouteAudience = (...audiences: McpRouteAudienceValue[]) => {
+  if (!audiences.length || audiences.some((audience) => !ROUTE_PRINCIPALS[audience])) {
+    throw new Error('McpRouteAudience requires trusted audiences');
+  }
+  return SetMetadata(AUDIENCE_METADATA, audiences);
+};
 
 interface DelegatedRequest {
   headers: Headers;
@@ -33,7 +51,8 @@ interface DelegatedRequest {
  * source and may not disagree with the signed actor (ADR-0017 §2, ADR-0024 rule 5).
  *
  * The controller declares its trusted audience in code; request headers cannot
- * select it. The scoped principal guard separately authenticates the MCP caller.
+ * select it. The verified connector assertion supplies the callback authority;
+ * no static service credential or caller-selected principal is required.
  *
  * The assertion is required; its absence fails closed. Connector ID/revision and
  * verified-user delegation are re-checked against the current connector policy on
@@ -58,7 +77,6 @@ export class DelegatedActorGuard implements CanActivate {
     assertUnambiguousSecurityHeaders(request);
     const assertion = request.headers['x-yellowstorm-mcp-assertion'];
     const headerUserId = request.headers['x-yellowstorm-user-id'];
-    const principal = request.headers['x-yellowstorm-service-principal'];
     const correlationId = request.headers['x-correlation-id'];
     if (typeof correlationId !== 'string' || !correlationId.trim() || correlationId.length > 200) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid correlation id');
@@ -67,10 +85,12 @@ export class DelegatedActorGuard implements CanActivate {
     if (typeof assertion !== 'string' || !assertion.trim()) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing MCP delegated actor assertion');
     }
-    const audience = this.reflector.getAllAndOverride<string>(AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
-    if (!audience) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing trusted MCP route audience');
-    const verified = await this.mcpJwt.verifyMcpAssertion(assertion.trim(), audience);
-    if (!verified || !isObjectId(verified.sub)) {
+    const routeAudiences = this.reflector.getAllAndOverride<string[] | string>(AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
+    const allowed = (Array.isArray(routeAudiences) ? routeAudiences : routeAudiences ? [routeAudiences] : [])
+      .filter((audience) => Boolean(ROUTE_PRINCIPALS[audience]));
+    if (!allowed.length) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing trusted MCP route audience');
+    const verified = await this.mcpJwt.verifyMcpAssertion(assertion.trim(), allowed);
+    if (!verified || !isObjectId(verified.sub) || !ROUTE_PRINCIPALS[verified.aud]) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP delegated actor assertion');
     }
     if (headerUserId !== undefined && headerUserId !== verified.sub) {
@@ -97,7 +117,8 @@ export class DelegatedActorGuard implements CanActivate {
       action: 'mcp.delegated_call',
       targetType: 'internal_mcp_route',
       metadata: {
-        servicePrincipal: typeof principal === 'string' ? principal : 'unknown',
+        servicePrincipal: ROUTE_PRINCIPALS[verified.aud],
+        connectorId: verified.connectorId,
         correlationId,
         method: request.method ?? null,
         route,

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const root = process.argv[2];
-if (!root) throw new Error('Supply the real opted-in worktree served on localhost ports 6193 and 6194. The graph and Hindsight daemon must be available.');
+if (!root) throw new Error('Supply the real worktree with a graphify index. The graphify hooks and graphify-out/graph.json must be available.');
 const request = async (base, route, body) => {
   const response = await fetch(base + route, { ...(body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(45000) });
   if (!response.ok) throw new Error(`${route}: HTTP ${response.status}`);
@@ -26,7 +26,7 @@ try {
     const deadline = performance.now() + 30000;
     while (!(report = receipt(session.id)) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(report, `${session.id}: startup did not persist an existing receipt`);
-    for (const name of ['graph', 'hindsight', 'checkpoints']) assert.equal(report[name].status, 'PASS', `${session.id}: ${name}: ${report[name].reason}`);
+    for (const name of ['graph', 'checkpoints']) assert.equal(report[name].status, 'PASS', `${session.id}: ${name}: ${report[name].reason}`);
     assert.equal(path.resolve(report.root).toLowerCase(), path.resolve(root).toLowerCase());
     const messages = await request(base, `/session/${session.id}/message`);
     const tools = messages.flatMap(message => message.parts ?? []).filter(part => part.type === 'tool');
@@ -38,4 +38,4 @@ try {
   assert.notEqual(sessions[0].probe, sessions[1].probe);
   for (const session of sessions) assert.equal(receipt(session.sessionID).processID, session.processID);
 } finally { db.close(); }
-console.log(JSON.stringify({ parallelProcesses: 2, scopedGraphIndexAndTransport: 'PASS', actualMemoryBankRead: 'PASS', checkpointWriteRead: 'PASS', independentReceipts: 'PASS', diagnosticModelToolCalls: 0, elapsedMs: Math.round(performance.now() - started), sessions }));
+console.log(JSON.stringify({ parallelProcesses: 2, scopedGraphIndex: 'PASS', checkpointWriteRead: 'PASS', independentReceipts: 'PASS', diagnosticModelToolCalls: 0, elapsedMs: Math.round(performance.now() - started), sessions }));

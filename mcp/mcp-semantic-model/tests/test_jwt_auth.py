@@ -119,18 +119,16 @@ async def test_rejects_wrong_signature_and_duplicate_authorization(keys):
 
 def test_auth_mode_configuration():
     settings = Settings("http://localhost:3000", "", 120, 8027, 2097152,
-        service_token="service-secret", auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm")
+        auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm")
     settings.validate()
     for mode in ("invalid", "Bearer"):
         with pytest.raises(ValueError):
             Settings("http://localhost:3000", "", 120, 8027, 2097152,
-                service_token="service-secret", auth_mode=mode).validate()
+                auth_mode=mode).validate()
 
 
-def test_service_principal_token_is_required():
-    # WP07.2: without the scoped secret the backend rejects every assistant
-    # call, so startup must fail instead.
-    with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required"):
+def test_ingress_credentials_are_still_required():
+    with pytest.raises(ValueError, match="JWT mode requires"):
         Settings("http://localhost:3000", "", 120, 8027, 2097152).validate()
 
 
@@ -139,9 +137,8 @@ def production_env(monkeypatch):
     # Override local .env values so configuration tests are deployment-independent.
     for key, value in {
         "ENVIRONMENT": "production",
-        "SEMANTIC_MODEL_MCP_AUTH_MODE": "Bearer",
+        "SEMANTIC_MODEL_MCP_AUTH_MODE": "JWT",
         "SEMANTIC_MODEL_MCP_INGRESS_TOKEN": "ingress-secret",
-        "SEMANTIC_MODEL_MCP_SERVICE_TOKEN": "semantic-principal-test-secret-00000001",
         "SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE": "public.pem",
         "SEMANTIC_MODEL_MCP_JWT_ISSUER": "yellowstorm",
         "SEMANTIC_MODEL_MCP_JWT_AUDIENCE": "mcp-semantic-model",
@@ -153,33 +150,37 @@ def production_env(monkeypatch):
         monkeypatch.setenv(key, value)
 
 
-def test_production_accepts_explicit_bearer_mode(production_env):
+def test_production_rejects_explicit_bearer_mode(production_env, monkeypatch):
+    monkeypatch.setenv("SEMANTIC_MODEL_MCP_AUTH_MODE", "Bearer")
     settings = Settings.from_env()
     assert settings.auth_mode == "Bearer"
+    with pytest.raises(ValueError, match="must be JWT"):
+        settings.validate()
+
+
+def test_production_jwt_ignores_legacy_ingress_token(production_env, monkeypatch):
+    monkeypatch.delenv("SEMANTIC_MODEL_MCP_INGRESS_TOKEN")
+    settings = Settings.from_env()
+    assert settings.ingress_token == ""
     settings.validate()
 
 
-def test_production_bearer_requires_ingress_token(production_env, monkeypatch):
-    monkeypatch.delenv("SEMANTIC_MODEL_MCP_INGRESS_TOKEN")
-    with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_INGRESS_TOKEN is required"):
-        Settings.from_env().validate()
-
-
-def test_production_requires_explicit_env_auth_mode(production_env, monkeypatch):
+def test_production_defaults_to_jwt(production_env, monkeypatch):
     monkeypatch.delenv("SEMANTIC_MODEL_MCP_AUTH_MODE")
-    with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_AUTH_MODE"):
-        Settings.from_env()
+    settings = Settings.from_env()
+    assert settings.auth_mode == "JWT"
+    settings.validate()
 
 
-def test_development_preserves_default_bearer_mode(production_env, monkeypatch):
+def test_development_defaults_to_jwt(production_env, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.delenv("SEMANTIC_MODEL_MCP_AUTH_MODE")
     settings = Settings.from_env()
-    assert settings.auth_mode == "Bearer"
+    assert settings.auth_mode == "JWT"
     settings.validate()
 
 
-@pytest.mark.parametrize("mode", ["", "invalid", "jwt", "bearer"])
+@pytest.mark.parametrize("mode", ["", "invalid", "jwt", "bearer", "Bearer"])
 def test_production_rejects_invalid_env_modes(production_env, monkeypatch, mode):
     monkeypatch.setenv("SEMANTIC_MODEL_MCP_AUTH_MODE", mode)
     with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_AUTH_MODE"):
@@ -206,14 +207,14 @@ def test_production_jwt_requires_trust_config_without_fallback(production_env, m
         Settings.from_env().validate()
 
 
-@pytest.mark.parametrize("mode", ["JWT", "Bearer"])
-def test_production_requires_service_principal_in_both_modes(production_env, monkeypatch, mode):
+@pytest.mark.parametrize("mode", ["JWT"])
+def test_production_requires_no_callback_service_secret(production_env, monkeypatch, mode):
     monkeypatch.setenv("SEMANTIC_MODEL_MCP_AUTH_MODE", mode)
-    monkeypatch.delenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN")
-    with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required"):
-        Settings.from_env().validate()
+    monkeypatch.delenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", raising=False)
+    Settings.from_env().validate()
 
 
-def test_direct_production_bearer_settings_remain_supported():
-    Settings("http://localhost:3000", "ingress-secret", 120, 8027, 2097152,
-        service_token="semantic-principal-test-secret-00000001", environment="production").validate()
+def test_direct_production_bearer_settings_are_rejected():
+    with pytest.raises(ValueError, match="must be JWT"):
+        Settings("http://localhost:3000", "ingress-secret", 120, 8027, 2097152,
+            auth_mode="Bearer", environment="production").validate()

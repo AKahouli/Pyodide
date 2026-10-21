@@ -1,4 +1,9 @@
 {
+  "recentChats.pinned": "المثبتة",
+  "conversations.pin": "تثبيت المحادثة",
+  "conversations.unpin": "إلغاء تثبيت المحادثة",
+  "conversations.pinned": "محادثة مثبتة",
+  "conversations.pinError": "تعذر حفظ المحادثات المثبتة في هذا المتصفح.",
   "actions.newChat.label": "محادثة جديدة",
   "actions.newChat.tooltip": "ابدأ محادثة جديدة",
   "actions.platformOverview.label": "نظرة عامة",

@@ -590,11 +590,11 @@ async def call_mcp_tool(
             # editable connector headers (including case-variant collisions).
             merged_headers = {
                 key: value for key, value in (merged_headers or {}).items()
-                if key.lower() != "authorization"
+                if key.lower() not in ("authorization", "x-yellowstorm-mcp-assertion")
             }
             merged_headers.update({
                 key: value for key, value in (auth_headers or {}).items()
-                if key.lower() == "authorization"
+                if key.lower() in ("authorization", "x-yellowstorm-mcp-assertion")
             })
             jwt_expiry = assertion_expiry(merged_headers, jwt_env)
             if jwt_expiry <= time.time() + 30:
@@ -658,7 +658,7 @@ async def call_mcp_tool(
                     if jwt_expiry <= time.time() + 30:
                         client_headers, jwt_expiry = await renew_mcp_jwt(server_url, jwt_env, client_headers)
                     for name in list(request.headers):
-                        if name.lower() == "authorization":
+                        if name.lower() in ("authorization", "x-yellowstorm-mcp-assertion"):
                             del request.headers[name]
                 for key, value in client_headers.items():
                     request.headers[key] = value

@@ -4,7 +4,7 @@ FastMCP server (Streamable HTTP, `/mcp`, port 8027) that lets a Yellowmind agent
 natural language: "I need a model to handle billing and contract management".
 
 It is a thin client of the YellowStorm backend. Every tool calls
-`/api/v1/internal/semantic-model-assistant/*` with fixed `X-YellowStorm-Service-Principal: semantic-model-mcp`, `X-YellowStorm-Service-Token`, and the identity of the person the agent
+`/api/v1/internal/semantic-model-assistant/*` with the current signed `X-YellowStorm-Mcp-Assertion`, `X-Correlation-Id`, and the identity of the person the agent
 acts for; the backend applies that person's permissions and model roles, through the same services as the
 model editor. Nothing here touches a database.
 
@@ -119,43 +119,23 @@ query_records(model_id, concept, filters=None, match="all", group_by=None, aggre
 ## Run locally
 
 ```bash
-cp .env.example .env   # configure the selected auth mode and backend credentials
+cp .env.example .env   # configure JWT public PEM, issuer and audience
 pip install -r requirements.txt
 python server.py
 ```
 
-- `SEMANTIC_MODEL_MCP_SERVICE_TOKEN` must match the backend's dedicated semantic principal credential, differ from every other machine credential, and be at least 32 characters in production. No generic credential is read or forwarded. The signed actor assertion must have route-fixed audience `mcp-semantic-model`.
-- `SEMANTIC_MODEL_MCP_SERVICE_TOKEN` must match the backend setting of the same name;
-  it authenticates the `semantic-model-mcp` service principal and is required in both modes.
-- `SEMANTIC_MODEL_MCP_INGRESS_TOKEN` authenticates incoming requests in Bearer mode;
-  it is separate from the service-principal token.
+- No static ingress or backend service token is read or forwarded. The signed
+  actor assertion must have route-fixed audience `mcp-semantic-model`.
 
 ### Authentication mode
 
-Set `SEMANTIC_MODEL_MCP_AUTH_MODE=Bearer` (development default) for the static ingress
-token, or `SEMANTIC_MODEL_MCP_AUTH_MODE=JWT` for signed user tokens. Both use the
-HTTP `Authorization: Bearer <token>` header; JWT mode never accepts the static secret.
-Both modes can be explicitly selected in production; neither is a fallback for
-failed authentication in the other mode. Production requires explicit mode selection
-and HTTPS at the deployment ingress (for example, a TLS-terminating reverse proxy).
-The auth-mode setting does not configure TLS or relax backend destination policies.
-
-For production Bearer ingress, configure:
-
-```dotenv
-ENVIRONMENT=production
-SEMANTIC_MODEL_MCP_AUTH_MODE=Bearer
-SEMANTIC_MODEL_MCP_INGRESS_TOKEN=<strong-ingress-secret>
-SEMANTIC_MODEL_MCP_SERVICE_TOKEN=<matching-backend-service-secret>
-```
-
-The shared ingress secret is not a signed end-user identity. Bearer mode does not
-create or forward a verified user JWT, and a supplied user-ID header is not actor
-proof. Backend semantic-assistant operations still require their signed actor
-assertion and service principal; enabling Bearer ingress alone does not authorize
-those operations. Use JWT mode for the existing delegated-user execution path.
-
-For JWT mode, configure:
+`SEMANTIC_MODEL_MCP_AUTH_MODE=JWT` is the default and only accepted startup mode
+in development and production. `Bearer` mode is rejected; there is no static-token
+fallback. Every request uses `Authorization: Bearer <signed MCP JWT>`, including
+initialization and discovery. Startup requires nonblank public key path, issuer
+and audience. Production also requires HTTPS at the deployment ingress (for
+example, a TLS-terminating reverse proxy); auth settings do not configure TLS or
+relax destination policy. Configure:
 
 ```dotenv
 SEMANTIC_MODEL_MCP_AUTH_MODE=JWT
@@ -168,8 +148,8 @@ The backend can use the same dedicated private key and issuer for explicitly
 configured internal-JWT connectors, with the corresponding verifier and audience
 configured independently in each receiving MCP. Other MCPs select their own profile.
 For a new deployment, mount the private PEM only in YellowStorm and set
-`MCP_JWT_PRIVATE_KEY_FILE` and `MCP_JWT_ISSUER`; the existing
-`SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE` and `_ISSUER` remain supported.
+`MCP_JWT_PRIVATE_KEY_FILE` and `MCP_JWT_ISSUER`; retired semantic signer aliases
+are not supported.
 Mount the matching public PEM in each MCP container.
 
 The PEM file must contain an RSA public key (absolute path recommended). The issuer
@@ -180,10 +160,11 @@ conversation and correlation headers remain optional trace metadata.
 
 YellowStorm now issues dedicated five-minute RS256 MCP tokens. Its existing HS256
 login tokens authenticate to the backend; they cannot be sent directly to this MCP.
-Backend calls still require the configured internal credential and the scoped
-`SEMANTIC_MODEL_MCP_SERVICE_TOKEN` in either mode; do not replace either with the
-ingress secret. Configure `SEMANTIC_MODEL_MCP_SERVICE_TOKEN` on both backend and MCP.
-Health probes remain public.
+Backend callbacks send only the current assertion and correlation, without static
+service credentials or unsigned actor selectors. The backend verifies route audience,
+connector/revision and the current user's permissions/resource access. Missing
+assertions fail before network access. Health probes remain public. Restart the MCP
+after provisioning JWT trust; other connectors retain their own supported auth profiles.
 
 ### YellowStorm issuance and automatic renewal
 
@@ -199,15 +180,13 @@ Configure the backend's `.env`:
 ```dotenv
 MCP_JWT_PRIVATE_KEY_FILE=/run/secrets/mcp-private.pem
 MCP_JWT_ISSUER=yellowstorm
-SEMANTIC_MODEL_MCP_SERVICE_TOKEN=<matching-mcp-service-secret>
 ADK_RUNTIME_MCP_RENEWAL_TOKEN=<dedicated-adk-renewal-secret>
 ```
 
 Use the matching public key and issuer in this MCP's `.env`, select JWT mode, and
 set its expected audience. The backend needs an RSA private key of at least 2048
 bits; the MCP receives only its public key. Restart after changing deployment
-configuration. For Bearer ingress instead, select the configured-credential connector
-profile and supply the ingress token; this does not enable JWT user delegation.
+configuration. Static ingress credentials cannot replace signed user delegation.
 
 In the existing Connector UI, explicitly select YellowStorm user delegation
 (`internal_jwt`), audience `mcp-semantic-model`, and verified-user delegation. Select
@@ -242,8 +221,8 @@ verification is not immediate revocation of an already-issued JWT.
 1. **Admin → Connectors → New connector**: MCP, transport *Streamable HTTP*, and the
    deployed server URL. Use HTTPS for production; an approved local development
    endpoint can use `http://127.0.0.1:8027/mcp`.
-2. Match the selected server mode: saved ingress credential for Bearer, or explicit
-   user delegation/audience for JWT. Configure any exact private-endpoint exception
+2. Select explicit user delegation with audience `mcp-semantic-model` for JWT.
+   Configure any exact private-endpoint exception
    through privileged security controls. Save before inspecting tools. No URL list
    or slug grants user-delegation or private-network authority.
 3. **Agent edit → Connectors**: add the connector to Yellowmind (or any agent) and choose its tools.

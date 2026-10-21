@@ -45,7 +45,7 @@ import {
 } from '@/components/ui/chart';
 import { useApiAction } from '@/lib/use-api-action';
 import { useModuleTranslation } from '@/modules/localization';
-import { usePermissions } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import * as profileApi from '../api';
 import type {

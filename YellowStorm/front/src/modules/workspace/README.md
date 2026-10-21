@@ -1,27 +1,34 @@
 # Workspace Module (Frontend)
 
-Workspace file rows show the indexing status, live step and server display message
-on the right beside the file size, with an expandable ordered schedule. Workspace
-totals count all files, indexed files, failures and processing/queued work across
-all folders, independently of the current folder or search. The existing unfiltered
-file-list response owns these totals and receives the same notification/poll updates.
-`WorkspaceFile.indexingProgress` hydrates from
-the existing file-list API; `useIndexingNotifications` updates it through the
-shared notification SSE stream and keeps the document cache in sync. The returned
-schedule and count drive the display, including initial step zero. Only the
-workflow status determines success: a failure at the final step remains failed,
-and steps after a failed operation remain pending. Files with no detailed progress
-retain a visible localized indexing status.
-An explicit null progress notification clears a previous run during retries.
-Legacy terminal notifications without detailed progress clear stale steps; the
-overall file result also takes precedence over stale progress returned by a list.
-Failed files without a detailed schedule show their server error beside the
-status, with the full reason available on hover. Step notifications update rows
-without popup toasts when the backend marks them silent.
-Per-file processing time uses the server's `indexingAttemptStartedAt` and
-`indexingAttemptCompletedAt` timestamps. It ticks each second during processing,
-freezes on success/failure, survives reloads and clears on an explicit retry reset.
-Missing or invalid attempt times do not display an invented duration.
+## Workspace file explorer
+
+The `/workspace/:id` page uses `WorkspaceFileBrowser` for folder navigation,
+scoped search, indexing filters, sorting and a paginated selectable table.
+Page selection and selection of all matching items are distinct; selection
+survives pagination and resets when the folder, search or filter changes.
+Batch move, index and delete actions preserve failed selections for retry.
+The initial view shows all documents unless a folder is already active. Selecting
+items replaces search and filtering with a compact action toolbar; clearing the
+selection restores those controls. An empty folder tree shows an organizing hint.
+The header shows the workspace name once with a switcher, and one overflow menu
+contains advanced and workspace actions. Storage usage sits below folder navigation.
+Files use classifier assignments from `page-api.ts`, not legacy document folders.
+Generated artifacts remain expandable beneath their source documents, and web
+source documents retain their navigator action.
+
+`WorkspaceUploadDropZone` provides compact file/folder upload controls;
+`WorkspaceUploadActivity` separates transfer progress from indexing readiness.
+Folder imports preserve relative paths. Large selections use sequential sessions
+of at most 50 files and at most four parallel storage transfers. Queue failures
+remain available for retry, including assignment failures without re-uploading.
+Only queued transfers can be cancelled. Upload destinations are captured before
+asynchronous work, and pending assignments prevent premature queue dismissal.
+
+Deletion is permanent for files and confirmed before execution. Classifier folder
+deletion removes descendant folders but preserves their files at the workspace
+root. Trash, restore and undo are not supported by the current backend.
+See [reviewed workspace context](../../../../../docs/agent-context/features/workspaces.md)
+for source boundaries, verification and remaining integration limits.
 
 Admin → Workspace separates maximum per-file upload size, the default total quota
 for new conversation workspaces, and the quota of an existing workspace loaded by

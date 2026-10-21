@@ -214,7 +214,7 @@ async def test_cancelling_the_index_build_leaves_no_index_and_a_usable_pool(pool
         "INSERT INTO semantic_graph_search.entity_documents (index_id, entity_id, concept_id, label, label_key, "
         "search_text, lexical, content_hash, embedding, status) "
         "SELECT $1::uuid, 'e' || g, 'c', 'A', 'a', 'a', to_tsvector('simple', 'a'), $2, "
-        "(SELECT array_agg(random() - 0.5) FROM generate_series(1, 2560) WHERE g > 0)::vector(2560)::halfvec, 'ready' "
+        "(SELECT array_agg(random() - 0.5) FROM generate_series(1, 3072) WHERE g > 0)::vector(3072)::halfvec, 'ready' "
         "FROM generate_series(1, 4000) g", index_id, "sha256:" + "a" * 64)
     building = asyncio.ensure_future(vector_indexes.build_vector_indexes(pool, index_id, workers=0))
     await asyncio.sleep(1.0)

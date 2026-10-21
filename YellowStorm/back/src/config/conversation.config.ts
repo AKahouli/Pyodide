@@ -16,6 +16,8 @@ export default registerAs('conversation', () => ({
   sseReplayEnabled: (process.env.CONVERSATION_SSE_REPLAY_ENABLED || 'true') === 'true',
   sseReplayMaxEvents: Number.parseInt(process.env.CONVERSATION_SSE_REPLAY_MAX_EVENTS || '200', 10),
   sseReplayTtlMs: Number.parseInt(process.env.CONVERSATION_SSE_REPLAY_TTL_MS || '120000', 10),
+  // Periodic aggregate measurement logs are opt-in so normal deployments stay quiet.
+  sseMeasurementLogsEnabled: (process.env.CONVERSATION_SSE_MEASUREMENT_LOGS || 'false') === 'true',
   maxMessageLength: Number.parseInt(process.env.CONVERSATION_MAX_MESSAGE_LENGTH || '50000', 10),
   maxFilesPerMessage: Number.parseInt(process.env.CONVERSATION_MAX_FILES_PER_MESSAGE || '5', 10),
   shareExpiryDays: Number.parseInt(process.env.CONVERSATION_SHARE_EXPIRY_DAYS || '30', 10),

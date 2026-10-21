@@ -6,9 +6,9 @@ task checkpoints, coordinates parallel edits and routes agents to reusable code
 and Git documentation. Independent work runs in the background so you can keep
 messaging the main agent.
 
-This guide covers the verified **Windows + PowerShell** setup. Hindsight runs
-inside WSL/Ubuntu; OpenCode, Chrome and the code graph run on Windows.
-macOS/Linux installation is not verified by this Windows procedure.
+This guide covers the verified **Windows + PowerShell** setup. OpenCode, Chrome
+and the graphify structural graph all run on Windows; no WSL or memory service
+is required. macOS/Linux installation is not verified by this Windows procedure.
 
 ## Choose your starting point
 
@@ -30,12 +30,11 @@ macOS/Linux installation is not verified by this Windows procedure.
 | Team instructions and reviewed context | Root/scoped `AGENTS.md`, `docs/agent-context/`, owning READMEs/contracts | Yes |
 | Installed runtime, agents and skills | `%USERPROFILE%\.config\opencode\` | No |
 | Provider settings and sign-in | Your OpenCode configuration/account | No |
-| Experience memory | Your WSL Hindsight daemon; Windows client config in `%USERPROFILE%\.hindsight\coding-agent.json` | No |
 | Task checkpoints and local baselines | `<worktree>/.opencode/sdlc/` | No |
-| Structural graph | `<worktree>/.code-review-graph/` | No |
+| Structural graph | `<worktree>/graphify-out/` | No |
 | Private browser state and QA evidence | Task-owned Chrome context; `qa-artifacts/<task-id>/<run-id>/` | No |
 
-Each developer uses their own credentials and memory. Reviewed documentation
+Each developer uses their own credentials. Reviewed documentation
 travels with implementation in the same branch and PR.
 
 ## One-click installer
@@ -46,38 +45,25 @@ Run it from a reviewed checkout/release; the launcher uses a process-only execut
 policy, subject to your organization's restrictions. It keeps the window open so
 you can read the result. Internet access is needed for missing dependencies.
 
-The first question is **Install Hindsight local experience memory? (Y/N)**:
+The script checks Git, Node 24+ and uv, installs missing prerequisites through
+WinGet, installs the graphify CLI and its freshness hooks (building an initial
+code-only graph when none exists), installs the pinned SDK and OpenCode if absent,
+merges missing config defaults, installs the harness, enables background tasks,
+and prepares Chrome. It backs up existing personal settings, preserves
+JSON/JSONC/provider configuration and serializes installers per Windows user.
+It never stops an active OpenCode host. Detected OpenCode processes produce an
+advisory warning with their PIDs; they do not block setup, including Desktop
+processes left running after closing a window. Fully exit/restart OpenCode after
+setup to load the installed changes. If a file is in use, exit the listed hosts
+and rerun the installer. An existing Node older than 24 needs an upgrade before
+rerunning.
 
-| Answer | Result |
-| --- | --- |
-| **Y** | Installs the native Hindsight client, enrolls this repo, preserves existing endpoint/auth settings, and attempts local WSL setup if the configured local API is unavailable |
-| **N** | Skips Hindsight setup; existing memory installations/settings remain unchanged. An unconfigured memory warning is advisory |
-
-The script checks Git, Node 24+ and uv/uvx, installs missing prerequisites through
-WinGet, installs the pinned SDK and OpenCode if absent, merges missing config
-defaults, installs the harness, enables background tasks, and prepares Chrome/graph.
-It backs up existing personal settings, preserves JSON/JSONC/provider configuration
-and serializes installers per Windows user. It never stops an active OpenCode host.
-Detected OpenCode processes produce an advisory warning with their PIDs; they do
-not block setup, including Desktop processes left running after closing a window.
-Fully exit/restart OpenCode after setup to load the installed changes. If a file
-is in use, exit the listed hosts and rerun the installer.
-An existing Node older than 24 needs an upgrade before rerunning.
-
-Hindsight **Y** reuses a reachable configured service. A fresh local setup may need
-Windows permission/restart for WSL, Ubuntu first-run initialization and an interactive
-masked provider configuration. Existing WSL provider profiles are reused.
-It does not copy anyone's credentials or silently create a new sign-in.
-API/bank readiness is checked; extraction/capture still needs onboarding verification.
-
-For explicit command-line choices, from the repository root:
+For explicit command-line use, from the repository root:
 
 ```powershell
-.\tools\opencode-harness\setup.ps1 -InstallHindsight N
-# Or, when local experience memory is wanted:
-.\tools\opencode-harness\setup.ps1 -InstallHindsight Y
+.\tools\opencode-harness\setup.ps1
 # A separately extracted release can target an already prepared checkout:
-.\tools\opencode-harness\setup.ps1 -RepoRoot 'C:\work\YellowStorm-poc' -InstallHindsight Y
+.\tools\opencode-harness\setup.ps1 -RepoRoot 'C:\work\YellowStorm-poc'
 ```
 
 If the release is outside a Git checkout, the launcher asks for the application's
@@ -88,7 +74,7 @@ release profile first. Setup does not overwrite team code/policy or clone a repo
 | --- | --- |
 | 0 | Setup stages completed; restart, select accessible models and verify onboarding |
 | 1 | Core setup failed; fix the displayed error before retrying |
-| 2 | Harness installed, with Chrome/graph/Hindsight steps pending; follow the displayed recovery instructions |
+| 2 | Harness installed, with Chrome/graphify steps pending; follow the displayed recovery instructions |
 
 After completion, continue at [Verify onboarding](#verify-onboarding).
 For managed/manual installation, use the steps below.
@@ -98,12 +84,7 @@ For managed/manual installation, use the steps below.
 ### 1. Install prerequisites and choose the checkout
 
 Install Git, Node **24 or newer with `node:sqlite`**, Windows uv/uvx and Chrome
-Stable. Install WSL/Ubuntu for local Hindsight. If WSL is missing, run this in an
-administrator PowerShell terminal, restart if prompted, and complete Ubuntu setup:
-
-```powershell
-wsl --install -d Ubuntu-22.04
-```
+Stable.
 
 The tested dependency baseline is pinned below; these are not claims about the
 latest releases. Upgrade deliberately and repeat onboarding checks.
@@ -113,10 +94,8 @@ latest releases. Upgrade deliberately and repeat onboarding checks.
 | OpenCode CLI | 1.18.34 |
 | OpenCode plugin SDK | `@opencode-ai/plugin@1.1.42` |
 | One-click JSON/JSONC configuration helper | `jsonc-parser@3.3.1` |
-| Code graph, core package | `code-review-graph==2.3.9` |
+| Structural graph | `graphifyy` (PyPI; installed via `uv tool install graphifyy`) |
 | Chrome MCP | `chrome-devtools-mcp@1.10.1` |
-| Hindsight Coding Agents plugin | `@vectorize-io/hindsight-coding-agents@0.8.1` |
-| Hindsight local service | `hindsight-embed==1.0.0` |
 
 Use a normal developer PowerShell terminal for the remaining Windows commands:
 
@@ -124,9 +103,8 @@ Use a normal developer PowerShell terminal for the remaining Windows commands:
 npm install -g opencode-ai@1.18.34
 node --version
 git --version
-uvx --version
+uv --version
 opencode --version
-wsl --list --verbose
 
 $repoRoot = 'C:\work\YellowStorm-poc' # Replace with YOUR Git checkout.
 $configDir = Join-Path $env:USERPROFILE '.config\opencode'
@@ -177,7 +155,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\opencode-harness
 ```
 
 The installer copies runtime files, global instructions, seven specialists and
-three skills. Existing owned files are backed up under
+four skills. Existing owned files are backed up under
 `$configDir\.sdlc-backups/<timestamp-id>`.
 It **does not merge your personal instructions** or install/configure the services.
 It preserves `opencode.json`, provider credentials and repository policy.
@@ -185,11 +163,13 @@ Reconcile personal instruction/model overrides from the backup after installatio
 
 Merge [opencode.example.json](../config/opencode.example.json) into the active
 `opencode.json` or `opencode.jsonc` under your configuration directory.
-Preserve provider settings and any existing Hindsight plugin registration.
-Do not create a competing config file or blindly replace the existing one.
+Preserve provider settings. Do not create a competing config file or blindly
+replace the existing one.
 
-The template configures graph MCP, Chrome MCP with `--isolated --page-id-routing`,
+The template configures Chrome MCP with `--isolated --page-id-routing`,
 Context7, specialist permissions, subagent depth and context compaction/pruning.
+Graph queries run through the graphify CLI with read-only bash permissions in
+the agent files; no graph MCP server is registered.
 For the shipped GPT-6 models and their listed speed variants, the template caps
 the input budget at 460,000 tokens with a 60,000-token compaction reserve:
 automatic compaction starts at 400,000 reported context tokens. The actual model
@@ -203,7 +183,7 @@ Other large models need an equivalent input-budget override based on verified
 model limits. Existing personal model/buffer overrides survive installer merges
 and must be reconciled to obtain the same threshold. Restart hosts after changes.
 The SDLC plugin is discovered from `plugins/sdlc.js`; do not also register it in
-the `plugin` array. Hindsight uses its native plugin, not a second MCP server.
+the `plugin` array.
 
 Connect your provider through `/connect` and select an available model through
 `/models`. Review specialist files in `$configDir\agents`:
@@ -233,54 +213,41 @@ Launch the CLI from this terminal initially. A desktop launcher must inherit the
 new environment; fully restart it, or sign out/in if needed. Subagent depth alone
 does not enable background execution.
 
-### 3. Connect Hindsight and prepare the graph
+### 3. Install graphify and its freshness hooks
 
-Follow [Hindsight setup](HINDSIGHT-SETUP.md) for WSL installation, approved
-provider authentication, daemon startup, Windows plugin installation, repository
-opt-in and creation of the exact memory bank. Use your own authentication;
-never copy another developer's credentials. Existing approved authentication
-does not require another sign-in solely to install this harness.
-
-Then verify the service from Windows:
+Graphify is a persistent CLI tool, not an MCP server: the git hooks re-run
+`graphify` after commits/checkouts, which an ephemeral `uvx` cache cannot
+guarantee. Install it and prepare the graph once per checkout/worktree:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:9077/health -TimeoutSec 10
+uv tool install graphifyy
+graphify --version
+# Build the initial code-only graph (local AST parsing; no API key, no LLM):
+graphify extract "$repoRoot" --code-only --no-viz
+# Install the freshness hooks and verify them:
+graphify hook install
+graphify hook status
 ```
 
-Expected: healthy API and connected database. This alone does not prove memory
-extraction or automatic capture; finish that guide's write/read and capture checks.
+Expected `graphify hook status`: `post-commit`, `post-checkout`, `post-merge`
+and `post-rewrite` each report `installed`, plus the registered merge driver.
+The hooks rebuild `graphify-out/` in the background after commits and branch
+switches; a query immediately after a commit can briefly see the old graph.
 
-Prepare the graph once per checkout/worktree:
+Freshness workflow:
+
+- After `git pull` or a merge, run `graphify update .` explicitly (incremental,
+  code-only, no LLM needed).
+- Use `graphify update . --force` only after refactors that deleted code.
+- Queries answer against the current directory's `graphify-out/graph.json`;
+  pass `--graph <path>` for another worktree's graph.
+
+Check the graph answers questions before onboarding:
 
 ```powershell
-uvx --from code-review-graph==2.3.9 code-review-graph build --repo "$repoRoot"
-uvx --from code-review-graph==2.3.9 code-review-graph status --repo "$repoRoot" --json
-uvx --from code-review-graph==2.3.9 code-review-graph daemon add "$repoRoot" --alias YellowStorm-poc
-uvx --from code-review-graph==2.3.9 code-review-graph daemon status
+graphify query "where is request validation?" --budget 800
+graphify explain "a well-known-symbol" --graph "$repoRoot\graphify-out\graph.json"
 ```
-
-Use a unique alias for another checkout/worktree. Expect a nonempty completed
-index. Keep its default `.code-review-graph/graph.db` location; this health
-check does not support an external graph data directory. Embeddings/PyTorch
-are not prerequisites.
-
-If no shared graph watcher is running, start one hidden Windows process:
-
-```powershell
-$uvxPath = (Get-Command uvx.exe).Source
-Start-Process -FilePath $uvxPath -WindowStyle Hidden -ArgumentList @(
-    '--from', 'code-review-graph==2.3.9',
-    'code-review-graph', 'daemon', 'start', '--foreground'
-)
-uvx --from code-review-graph==2.3.9 code-review-graph daemon status
-```
-
-One watcher and one Hindsight daemon serve this developer's parallel sessions.
-Register each worktree with the watcher; each retains its own graph.
-For subsequent changes, use incremental `update --repo "$repoRoot"` when needed,
-not routine full rebuilds. Watcher liveness and matching HEAD do not prove
-uncommitted source freshness. Logon automation is optional; see
-[operations](OPERATIONS.md) and [Hindsight startup](HINDSIGHT-SETUP.md).
 
 ## Verify onboarding
 
@@ -296,24 +263,24 @@ Send this prompt to `build`:
 
 ```text
 Verify onboarding without source edits. Report the automatic startup statuses
-for graph, Hindsight and checkpoints, the actual repository root and loaded
-harness version. Reuse native results; do not repeat passing diagnostic calls.
+for graph and checkpoints, the actual repository root and loaded harness
+version. Reuse native results; do not repeat passing diagnostic calls.
 For any failure, give the specific recovery action and say whether coding can
 continue.
 ```
 
-Expected runtime for this guide: `2026-10-13-background-handoff`.
+Expected runtime for this guide: `2026-10-20-graphify`.
 The SDLC tools are `sdlc_checkpoint`, `sdlc_resume` and `sdlc_health`.
 
 | Startup result | Expected action |
 | --- | --- |
 | All PASS | Start work; no repeated diagnostics |
-| Graph/Hindsight FAIL or pending | Report the problem; continue with source/tests and Git docs/checkpoints |
+| Graph FAIL or pending | Report the problem; continue with source/tests and Git docs |
 | Checkpoint storage FAIL | Continue coding; repair checkpoint memory separately |
 | Missing tools or old runtime | Repair installation and fully restart the host |
 
 After recovery, request `sdlc_health(refresh: true)`. Health proves availability,
-not complete graph coverage, future memory capture or application readiness.
+not complete graph coverage or application readiness.
 
 For automated regression checks, from the Git root:
 
@@ -423,9 +390,9 @@ interrupt its task; preserve its database and coordinate changes through normal 
 
 Use separate Git worktrees for developers/sessions that may touch the same files.
 Commit approved shared instructions/docs before creating worktrees.
-Each worktree needs its policy/docs, application environment and graph registration.
-Checkpoints/graphs remain local to that worktree; linked worktrees may share the
-developer's repository memory bank.
+Each worktree needs its policy/docs, application environment, `graphify-out/`
+graph and its own `graphify hook install` (hooks live in each clone/worktree).
+Checkpoints and graphs remain local to that worktree.
 
 In the same checkout, assign disjoint files and coordinate shared contracts,
 translations/manifests and indexes. Use unique ports where independent runtimes
@@ -437,7 +404,8 @@ QA opens a private Chrome context per task with explicit page IDs; MCP
 storage between tasks. If QA reports AUTH_REQUIRED, sign in directly in its owned
 private browser/password manager, then ask the primary to resume the same child.
 Do not send passwords/MFA in chat. Only a verified non-secret login recipe is
-eligible for memory; a fresh private context can still require fresh sign-in.
+recorded in task checkpoints; a fresh private context can still require fresh
+sign-in.
 
 ## Documentation developers share
 
@@ -450,7 +418,7 @@ reported as documentation gaps, never invented as implemented facts.
 Maintainer updates travel with implementation in the same branch/PR.
 Reviewed main-branch documentation reaches other developers through normal Git
 merge/rebase; unmerged branch records remain provisional outside their branch.
-No separate Obsidian workspace or shared memory database is required.
+No separate memory service or shared memory database is required.
 See [documentation workflow](WORKFLOW.md#documentation-maintenance).
 
 ADRs use `decisions/ADR-NNNN-topic.md`, with status, scope, source paths, decision,
@@ -461,8 +429,8 @@ them through a new ADR; resolve numbering collisions before acceptance.
 ## Recovery and upgrades
 
 [Operations and recovery](OPERATIONS.md) covers missing tools, stale runtime,
-graph/memory failures, unavailable models, browser isolation, ownership and rollback.
-Graph/memory failures never justify refusing authorized runtime scripts or tests.
+graph failures, unavailable models, browser isolation, ownership and rollback.
+Graph failures never justify refusing authorized runtime scripts or tests.
 Shell commands follow the current agent's native permissions; native edits
 require no harness preparation or file reservation.
 
@@ -470,7 +438,8 @@ To upgrade: save active checkpoints, finish/park child tasks, fetch the reviewed
 source, back up personal config, reinstall, reapply personal overrides and fully
 restart hosts. Repeat affected onboarding checks. Keep one coherent installed
 runtime version across your sessions; the global installation is shared within
-your Windows account. Do not delete checkpoint/memory databases for an upgrade.
+your Windows account. Do not delete checkpoint databases or `graphify-out/`
+for an upgrade; `graphify update .` refreshes the graph after pulls.
 
 ## Using a release ZIP
 
@@ -493,10 +462,9 @@ Only committed changes enter an exported release; see
 
 - [Harness internals and guard limits](../README.md)
 - [Detailed handoff/QA/documentation recipes](WORKFLOW.md)
-- [Local Hindsight installation and memory verification](HINDSIGHT-SETUP.md)
+- [Graphify documentation](https://docs.graphify.com)
 - [OpenCode configuration](https://opencode.ai/docs/config/) and [providers](https://opencode.ai/docs/providers/)
 - [uv installation](https://docs.astral.sh/uv/getting-started/installation/)
-- [WSL installation](https://learn.microsoft.com/windows/wsl/install)
 
 Commands and examples follow the pinned harness baseline. Clean-machine onboarding
 and desktop UI checks must be verified on the developer's own environment.

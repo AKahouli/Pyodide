@@ -33,6 +33,38 @@ async function setup(purpose: 'discovery' | 'population' = 'discovery', scopes: 
 }
 
 describe('SemanticAssetGrantService live execution authority', () => {
+  it('keeps a sixteen-source metadata grant bounded independently of the admitted command', async () => {
+    const f = await setup('population', Array.from({ length: 16 }, (_, sheet) => ({ sheet, padding: 'x'.repeat(8000) })));
+    expect(Buffer.byteLength(f.admission)).toBeGreaterThan(99000);
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    expect(Buffer.byteLength(token)).toBeLessThan(4096);
+    const body = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).body;
+    expect(body.admission).toBeUndefined();
+    expect(body.admissionDigest).toBe(createHash('sha256').update(f.admission).digest('hex'));
+    expect(await f.service.check(token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
+  it('does not copy extra request-body fields into signed grants', async () => {
+    const f = await setup();
+    const { token } = await f.service.issue({ ...proof, extra: 'x'.repeat(100000) } as AssetExecutionProof,
+      source.workspaceId, source.assetId, 'metadata');
+    const body = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).body;
+    expect(body.extra).toBeUndefined();
+    expect(Buffer.byteLength(token)).toBeLessThan(4096);
+    expect(await f.service.check(token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
+  it('rejects grants when another valid admission replaces the canonical admission', async () => {
+    const f = await setup();
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    const admission = JSON.parse(Buffer.from(f.admission.split('.')[1], 'base64url').toString()).body;
+    const signer = f.service as unknown as { seal(type: string, body: unknown): string };
+    f.task.command.payload.assetAdmission = signer.seal('semantic-asset-admission', { ...admission, key: 'replacement' });
+    await expect(f.service.check(token, source.workspaceId, source.assetId, 'metadata')).rejects.toThrow('admission changed');
+    const replacement = await f.service.issue(proof, source.workspaceId, source.assetId, 'metadata');
+    expect(await f.service.check(replacement.token, source.workspaceId, source.assetId, 'metadata')).toBe(actor);
+  });
+
   it('binds a five-minute grant to exact operation, source and live claim digest', async () => {
     const f = await setup();
     const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'read');
@@ -126,12 +158,37 @@ describe('SemanticAssetGrantService live execution authority', () => {
     await expect(f.service.issue(replay, source.workspaceId, source.assetId, 'read')).rejects.toThrow('admission mismatch');
   });
 
-  it('requires job creation inside the finite signed admission window', async () => {
+  it.each(['discovery', 'population'] as const)('accepts bounded fractional DB issuance skew for %s on issue and check', async purpose => {
+    const f = await setup(purpose);
+    const { iat } = JSON.parse(Buffer.from(f.admission.split('.')[1], 'base64url').toString()).body;
+    for (const offset of [-1000, -542, -274, -245, -89, 0]) {
+      f.task.createdAt = new Date(iat * 1000 + offset);
+      const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'read');
+      await expect(f.service.check(token, source.workspaceId, source.assetId, 'read')).resolves.toBe(actor);
+    }
+  });
+
+  it.each([-1001, -10000, 300001, 310000, NaN])('rejects DB creation offset %s outside the bounded signed window on issue and check', async offset => {
     const f = await setup();
-    f.task.createdAt = new Date(Date.now() + 301000);
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'read');
+    const { iat } = JSON.parse(Buffer.from(f.admission.split('.')[1], 'base64url').toString()).body;
+    f.task.createdAt = new Date(iat * 1000 + offset);
     await expect(f.service.issue(proof, source.workspaceId, source.assetId, 'read')).rejects.toThrow('admission mismatch');
-    f.task.createdAt = new Date(Date.now() - 10000);
+    await expect(f.service.check(token, source.workspaceId, source.assetId, 'read')).rejects.toThrow('admission mismatch');
+  });
+
+  it.each([
+    { iat: 1000.5, exp: 1300 }, { iat: 1000, exp: 1300.5 },
+    { iat: 1000, exp: 1000 }, { iat: 1000, exp: 999 }, { iat: 1000, exp: 1301 },
+  ])('rejects malformed signed admission times %j', async times => {
+    const f = await setup();
+    const { token } = await f.service.issue(proof, source.workspaceId, source.assetId, 'read');
+    const body = JSON.parse(Buffer.from(f.admission.split('.')[1], 'base64url').toString()).body;
+    f.task.createdAt = new Date(1000000);
+    f.task.command.payload.assetAdmission = (f.service as unknown as { seal(typ: string, body: unknown): string })
+      .seal('semantic-asset-admission', { ...body, ...times });
     await expect(f.service.issue(proof, source.workspaceId, source.assetId, 'read')).rejects.toThrow('admission mismatch');
+    await expect(f.service.check(token, source.workspaceId, source.assetId, 'read')).rejects.toThrow('admission mismatch');
   });
 
   it('rejects altered signed command options and source scope', async () => {

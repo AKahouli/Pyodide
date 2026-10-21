@@ -26,6 +26,9 @@ export function HealthIssueCard({ issue, concepts, canEdit, onAction }: Readonly
     </div>
     <h3 id={`health-issue-${issue.id}`} className='mt-2.5 text-lg font-semibold leading-snug'>{text.title}</h3>
     <p className='mt-1.5 max-w-3xl text-sm text-muted-foreground'>{text.why}</p>
+    {issue.kind === 'documents_not_read' && issue.params.sourceCodes && <p className='mt-2 break-words text-xs text-muted-foreground'>
+      {t('runtimeError.code')}: <span className='font-mono'>{issue.params.sourceCodes}</span>
+    </p>}
 
     {issue.breakdown && <div className='mt-4 rounded-xl border bg-muted/30 p-3.5'>
       <p className='mb-2.5 text-xs text-muted-foreground'>{text.breakdownTitle}</p>

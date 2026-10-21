@@ -31,7 +31,7 @@ Set-Location -LiteralPath $repoRoot
 node tools/opencode-harness/tests/live-startup.mjs "$repoRoot"
 ```
 
-Expect distinct process/session/probe identities, graph/Hindsight/checkpoint PASS
+Expect distinct process/session/probe identities, graph/checkpoint PASS
 and `diagnosticModelToolCalls: 0`. Failed integrations need their specific recovery;
 do not infer success from one other healthy session.
 Stop only these owned test servers with Ctrl+C in their terminals.

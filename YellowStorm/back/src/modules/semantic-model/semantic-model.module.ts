@@ -55,7 +55,6 @@ import { SemanticRecordCitationService } from './services/semantic-record-citati
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
 import { SemanticAssistantModelGuard } from './guards/semantic-assistant-model.guard';
 import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
-import { SemanticMcpServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 // Registered locally (the connector module does not import this module) so the
 // shared delegated-user guard (ADR-0024) can verify the actor assertion with the
 // shared key pair.
@@ -97,7 +96,6 @@ import { SemanticAssetGrantService } from './services/semantic-asset-grant.servi
     McpJwtService,
     PgConnectorStore,
     DelegatedActorGuard,
-    SemanticMcpServiceGuard,
     SemanticAssistantModelGuard,
   ],
   exports: [SemanticAssetGrantService,SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],

@@ -160,6 +160,23 @@ describe('buildModelHealth', () => {
       .toEqual([['documents_not_read', 'mapping', 'blocked'], ['reading_limit', 'limit', 'warning']]);
   });
 
+  it('preserves bounded public source failure codes, source identifiers and affected fields', () => {
+    const result = buildModelHealth({
+      ...input(),
+      records: { ...input().records, health: null, gaps: { missingValues: [], unresolvedLinks: [], other: [
+        { conceptId: MESSAGE, kind: 'source_unavailable', count: 2, fields: ['subject'], details: { sources: [
+          { code: 'asset_fetch_forbidden', asset: { workspaceId: 'w1', assetId: 'a1' }, fields: ['subject'] },
+          { code: 'Bearer secret / body', asset: { assetId: 'a2' } },
+        ] } },
+      ] } },
+    });
+    const issue = result.concepts.find((item) => item.conceptId === MESSAGE)!.issues[0];
+    expect(issue).toMatchObject({ kind: 'documents_not_read', params: { sourceCodes: 'asset_fetch_forbidden, source_unavailable' },
+      examples: [{ source: 'w1/a1', values: { asset_fetch_forbidden: 'subject' } },
+        { source: 'a2', values: { source_unavailable: '' } }] });
+    expect(JSON.stringify(issue)).not.toContain('secret');
+  });
+
   it('calls a model with nothing to fix healthy and has no verdict', () => {
     const clean = buildModelHealth({ ...input(), records: { ...input().records, gaps: undefined, health: null }, derived: [] });
     expect(clean.verdict).toBeNull();

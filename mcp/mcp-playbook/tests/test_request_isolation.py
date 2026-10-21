@@ -127,17 +127,21 @@ async def test_production_stateless_transport_isolates_actors_and_renewal(keys, 
 
     async def backend_handler(request):
         await asyncio.sleep(0)
-        seen.append((request.headers["x-yellowstorm-user-id"], request.headers["x-yellowstorm-mcp-assertion"]))
+        assertion = request.headers["x-yellowstorm-mcp-assertion"]
+        actor = jwt.decode(assertion, keys[1], algorithms=["RS256"], issuer="yellowstorm", audience="mcp-playbook")["sub"]
+        assert "x-yellowstorm-service-token" not in request.headers
+        assert "x-yellowstorm-user-id" not in request.headers
+        seen.append((actor, assertion))
         return httpx.Response(200, json={"playbooks": []})
 
-    backend = YellowStormPlaybookClient("http://backend", "internal", transport=httpx.MockTransport(backend_handler))
+    backend = YellowStormPlaybookClient("http://backend", transport=httpx.MockTransport(backend_handler))
     from config import Settings
     import clients.yellowstorm_playbook_client as client_module
     public_file = tmp_path / "public.pem"
     public_file.write_text(keys[1], encoding="utf-8")
     settings = SimpleNamespace(validate=lambda: None, auth_mode="JWT", ingress_token="",
         jwt_public_key_file=str(public_file), jwt_issuer="yellowstorm", jwt_audience="mcp-playbook",
-        port=8025, backend_url="http://backend", internal_token="internal", timeout_seconds=190,
+        port=8025, backend_url="http://backend", timeout_seconds=190,
         max_response_bytes=2097152, search_limit_max=25)
     monkeypatch.setattr(Settings, "from_env", lambda: settings)
     class MockBackendClient(YellowStormPlaybookClient):

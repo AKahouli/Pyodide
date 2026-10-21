@@ -70,6 +70,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/stage-observability
+      - name: Verify canonical SDK packaging and unchanged committed locks
+        run: |
+          node --test scripts/observability/pack-sdk.test.mjs
+          git diff --exit-code -- YellowStorm/back/package-lock.json yellowstorm-code-runtime/package-lock.json
       - name: Verify staged artifacts exist with manifests
         run: |
           test -f YellowStorm/back/.generated/observability/manifest.json

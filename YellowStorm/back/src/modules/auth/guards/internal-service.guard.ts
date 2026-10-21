@@ -11,8 +11,8 @@ import { timingSafeEqual } from 'crypto';
  *
  * Trust-domain note (WP07.4): `APP_RUNTIME_BIND_TOKEN` is NOT accepted here —
  * it is valid only for the app-runtime bind surface via the scoped
- * AppRuntimeServiceGuard, and the semantic privileged surfaces use
- * SemanticMcpServiceGuard. This shared secret remains a narrowly bounded
+ * AppRuntimeServiceGuard. MCP callbacks require signed delegated assertions,
+ * not this shared secret. This shared secret remains a narrowly bounded
  * compatibility path for the remaining internal callers with a documented
  * removal gate; it is never a universal fallback for semantic privileged
  * endpoints.

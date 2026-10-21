@@ -189,7 +189,18 @@ export function buildModelHealth(input: HealthBuildInput): ModelHealth {
     } else if (gap.kind === 'ai_extraction_unavailable') {
       add({ ...base, id, kind: 'extraction_failed', cause: 'mapping', severity: 'warning', fix: { kind: 'open_sources', conceptId } });
     } else if (DOCUMENT_NOT_READ.has(gap.kind)) {
-      add({ ...base, id, kind: 'documents_not_read', cause: 'mapping', severity: 'blocked', fix: { kind: 'open_sources', conceptId } });
+      const sources: unknown[] = Array.isArray(gap.details?.sources) ? gap.details.sources.slice(0, 25) : [];
+      const token = (value: unknown, fallback = '') => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : fallback;
+      const examples: HealthExample[] = sources.filter((source): source is Record<string, unknown> => !!source && typeof source === 'object')
+        .map((source) => {
+          const asset = source.asset && typeof source.asset === 'object' ? source.asset as Record<string, unknown> : {};
+          return { source: [token(asset.workspaceId), token(asset.assetId)].filter(Boolean).join('/'),
+            values: { [token(source.code, 'source_unavailable')]: labels(conceptId,
+              Array.isArray(source.fields) ? source.fields.filter((field): field is string => typeof field === 'string').slice(0, 50) : []) } };
+        });
+      add({ ...base, id, kind: 'documents_not_read', cause: 'mapping', severity: 'blocked',
+        params: { ...base.params, ...(examples.length ? { sourceCodes: [...new Set(examples.flatMap((example) => Object.keys(example.values)))].join(', ') } : {}) },
+        examples, fix: { kind: 'open_sources', conceptId } });
     } else if (READING_LIMIT.has(gap.kind)) {
       add({ ...base, id, kind: 'reading_limit', cause: 'limit', severity: 'warning', fix: { kind: 'open_run_limits' }, secondary: { kind: 'view_records', conceptId } });
     } else if (gap.kind !== 'identity_too_coarse') {

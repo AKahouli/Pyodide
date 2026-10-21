@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { probeStartup, probeGraphIndex, canonical, healthLine, captureFailure } from '../runtime/lib/startup-health.mjs';
+import { probeStartup, probeGraphifyIndex, canonical, healthLine } from '../runtime/lib/startup-health.mjs';
 
 let directory, root, otherRoot;
 before(() => {
@@ -16,36 +16,20 @@ after(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-const readConfig = () => ({ apiUrl: 'http://hindsight.invalid/', apiToken: 'synthetic-test-token', retainSessions: true });
-const request = async () => ({ ok: true, status: 200, json: async () => ({ status: 'healthy', database: 'connected' }) });
-const tools = { ids: async () => ({ data: ['hindsight_diagnose'] }) };
-const client = { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: tools };
-const probe = overrides => probeStartup({ root, client, readConfig, request, readGraph: async () => ({ repoRoot: overrides?.root ?? root, hasNodes: true }), ...overrides });
-test('automatic connected current-root graph and authenticated memory bank pass without model tools', async () => {
-  let observedRoot;
-  const report = await probe({ client: { tool: tools, mcp: { status: async (input, options) => {
-    observedRoot = input.query.directory;
-    assert.ok(options.signal);
-    return { data: { 'code-review-graph': { status: 'connected' } } };
-  } } } });
-  assert.equal(observedRoot, root);
-  assert.equal(report.graph.status, 'PASS');
-  assert.equal(report.hindsight.status, 'PASS');
-  assert.equal(report.checkpoints.status, 'PENDING');
-  assert.match(healthLine(report), /graph PASS; Hindsight PASS; checkpoints PENDING/);
-});
+const graphPayload = (indexRoot, schema = 1) => JSON.stringify({ directed: false, multigraph: false, graph: { schema_version: schema, graphify_version: '0.9.92' }, nodes: [{ id: 'a', label: 'A', source_file: 'src/a.js' }], links: [] });
+const writeGraph = (base, indexRoot = base, payload = graphPayload(indexRoot)) => {
+  mkdirSync(path.join(base, 'graphify-out'), { recursive: true });
+  writeFileSync(path.join(base, 'graphify-out/graph.json'), payload);
+  writeFileSync(path.join(base, 'graphify-out/.graphify_root'), indexRoot);
+};
+const probe = overrides => probeStartup({ root, readGraph: async () => ({ indexRoot: root, hasNodes: true, schemaVersion: 1 }), ...overrides });
 
-test('disconnected, missing, errored and timed-out MCP status fails visibly', async () => {
-  for (const status of [
-    async () => ({ data: { 'code-review-graph': { status: 'disconnected' } } }),
-    async () => ({ data: {} }),
-    async () => ({ error: { message: 'synthetic' } }),
-    async () => { throw new DOMException('Timed out', 'TimeoutError'); },
-  ]) {
-    const report = await probe({ client: { mcp: { status } } });
-    assert.equal(report.graph.status, 'FAIL');
-    assert.ok(report.graph.action);
-  }
+test('nonempty current-root graphify index passes without model tools', async () => {
+  const report = await probe();
+  assert.equal(report.graph.status, 'PASS');
+  assert.equal(report.checkpoints.status, 'PENDING');
+  assert.match(healthLine(report), /graph PASS; checkpoints PENDING/);
+  assert.equal(Object.keys(report).filter(key => !['root', 'checkedAt', 'harnessVersion'].includes(key)).length, 2, 'only graph and checkpoints are probed');
 });
 
 test('checkpoint initialization error or missing marker is reported without hiding other probes', async () => {
@@ -55,25 +39,6 @@ test('checkpoint initialization error or missing marker is reported without hidi
     assert.equal(report.graph.status, 'PASS');
     assert.match(healthLine(report), /checkpoints FAIL/);
   }
-});
-
-test('Hindsight rejects HTTP auth/errors, network timeout and unhealthy database', async () => {
-  for (const fetcher of [
-    async () => ({ ok: false, status: 401 }),
-    async () => ({ ok: false, status: 503 }),
-    async () => { throw new DOMException('Timed out', 'TimeoutError'); },
-    async () => ({ ok: true, json: async () => ({ status: 'healthy', database: 'disconnected' }) }),
-    async () => ({ ok: true, json: async () => { throw new SyntaxError('invalid response'); } }),
-  ]) assert.equal((await probe({ request: fetcher })).hindsight.status, 'FAIL');
-});
-
-test('corrupt, disabled, capture-disabled and malformed-endpoint configuration fails', async () => {
-  for (const reader of [
-    () => { throw new SyntaxError('corrupt JSON'); },
-    () => ({ ...readConfig(), disabled: true }),
-    () => ({ ...readConfig(), retainSessions: false }),
-    () => ({ apiUrl: 'not-a-valid-url' }),
-  ]) assert.equal((await probe({ readConfig: reader })).hindsight.status, 'FAIL');
 });
 
 test('canonical roots and concurrent reports remain distinct', async () => {
@@ -86,118 +51,45 @@ test('canonical roots and concurrent reports remain distinct', async () => {
   assert.equal(reports[1].checkpoints.status, 'FAIL');
 });
 
-test('effective harness and current-directory capture overrides are honored', async () => {
-  for (const cfg of [
-    { ...readConfig(), harnesses: { opencode: { retainSessions: false } } },
-    { ...readConfig(), harnesses: { opencode: { disabled: true } } },
-    { ...readConfig(), paths: { [root]: { retainSessions: false } } },
-    { ...readConfig(), paths: { [root]: { disabled: true } } },
-    { ...readConfig(), paths: { [directory]: { retainSessions: false } } },
-  ]) {
-    assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'FAIL');
-  }
-  const cfg = { ...readConfig(), paths: { [otherRoot]: { retainSessions: false } } };
-  assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'PASS');
-});
-
-test('automatic memory rejects disabled hooks and HTTP-success bank error payloads', async () => {
-  const previous = process.env.HINDSIGHT_DISABLE_HOOKS;
-  try {
-    process.env.HINDSIGHT_DISABLE_HOOKS = '1';
-    assert.equal((await probe()).hindsight.status, 'FAIL');
-  } finally {
-    if (previous === undefined) delete process.env.HINDSIGHT_DISABLE_HOOKS;
-    else process.env.HINDSIGHT_DISABLE_HOOKS = previous;
-  }
-  for (const body of [{ error: 'synthetic rejection' }, { isError: true }]) {
-    assert.equal((await probe({ request: async url => String(url).endsWith('/stats') ? { ok: true, json: async () => body } : request() })).hindsight.status, 'FAIL');
-  }
-});
-
-test('capture diagnostics are session scoped, time scoped, and recover after successful retain', () => {
-  const filename = path.join(directory, 'capture-scoped.jsonl');
-  const since = '2026-10-13T10:00:00.000Z';
-  const write = item => appendFileSync(filename, `${JSON.stringify(item)}\n`);
-  writeFileSync(filename, '{malformed}\n');
-  write({ session: 'own', ts: '2026-10-13T09:00:00.000Z', event: 'retain_failed' });
-  write({ session: 'other', ts: since, event: 'retain_failed' });
-  write({ bank_id: 'shared', ts: since, event: 'retain_failed' });
-  assert.equal(captureFailure('own', since, filename), null);
-  for (const event of ['retain_failed', 'idle_fetch_failed']) {
-    write({ session: 'own', ts: since, event });
-    const failure = captureFailure('own', since, filename);
-    assert.equal(failure.status, 'FAIL');
-    assert.ok(failure.action);
-    assert.equal(captureFailure('unrelated', since, filename), null);
-    write({ session: 'own', ts: since, event: 'retain_ok' });
-    assert.equal(captureFailure('own', since, filename), null);
-  }
-  write({ session: 'other', ts: since, event: 'idle_fetch_failed' });
-  assert.equal(captureFailure('own', since, filename), null);
-});
-
-test('capture diagnostics only read the bounded tail and never expose raw errors', () => {
-  const filename = path.join(directory, 'capture-bounded.jsonl');
-  const since = '2026-10-13T10:00:00.000Z';
-  writeFileSync(filename, `${JSON.stringify({ session: 'own', ts: since, event: 'retain_failed' })}\n`);
-  appendFileSync(filename, `${'x'.repeat(70000)}\n`);
-  assert.equal(captureFailure('own', since, filename), null);
-  appendFileSync(filename, `${JSON.stringify({ session: 'own', ts: since, event: 'retain_failed', error: 'private diagnostic payload' })}\n`);
-  const failure = captureFailure('own', since, filename);
-  assert.equal(failure.status, 'FAIL');
-  assert.doesNotMatch(JSON.stringify(failure), /private diagnostic payload/);
-  assert.equal(captureFailure('own', since, path.join(directory, 'absent.jsonl')), null);
-});
-
 test('automatic probes reject wrong/missing graph identity and empty/corrupt index', async () => {
-  for (const graph of [{ repoRoot: otherRoot, hasNodes: true }, { hasNodes: true }, { repoRoot: root, hasNodes: false }]) {
+  for (const graph of [{ indexRoot: otherRoot, hasNodes: true, schemaVersion: 1 }, { hasNodes: true, schemaVersion: 1 }, { indexRoot: root, hasNodes: false, schemaVersion: 1 }, { indexRoot: root, hasNodes: true }]) {
     assert.equal((await probe({ readGraph: async () => graph })).graph.status, 'FAIL');
   }
-  assert.equal((await probe({ readGraph: async () => { throw new Error('private database detail'); } })).graph.status, 'FAIL');
+  assert.equal((await probe({ readGraph: async () => { throw new Error('private index detail'); } })).graph.status, 'FAIL');
+  assert.ok((await probe({ readGraph: async () => { throw new Error('private index detail'); } })).graph.reason.length < 200, 'raw errors are not exposed');
 });
 
-test('automatic memory checks exact mapped bank, opt-in, native registration and bank errors', async () => {
-  const urls = [];
-  const cfg = { ...readConfig(), mapPathToBank: { [root]: 'mapped/bank' } };
-  const report = await probe({ readConfig: () => cfg, request: async (url, options) => {
-    assert.equal(options.headers.Authorization, 'Bearer synthetic-test-token');
-    assert.ok(options.signal);
-    urls.push(String(url)); return request();
-  } });
-  assert.equal(report.hindsight.status, 'PASS');
-  assert.equal(report.hindsight.bank, 'mapped/bank');
-  assert.ok(urls.includes('http://hindsight.invalid/v1/default/banks/mapped%2Fbank/stats'));
-  assert.equal((await probe({ readConfig: () => ({ ...cfg, optInOnly: true, mapPathToBank: {}, optInPaths: [otherRoot] }) })).hindsight.status, 'FAIL');
-  assert.equal((await probe({ client: { ...client, tool: { ids: async () => ({ data: [] }) } } })).hindsight.status, 'FAIL');
-  assert.equal((await probe({ request: async url => String(url).endsWith('/stats') ? { ok: true, json: async () => ({ error: 'private failure' }) } : request() })).hindsight.status, 'FAIL');
+test('read-only graphify index probe checks root marker, schema and nodes without writing', async () => {
+  writeGraph(root);
+  const probeResult = await probeGraphifyIndex(root);
+  assert.equal(probeResult.indexRoot, root);
+  assert.equal(probeResult.schemaVersion, 1);
+  assert.equal(probeResult.graphifyVersion, '0.9.92');
+  assert.equal(probeResult.hasNodes, true);
+  await assert.rejects(probeGraphifyIndex(otherRoot), /ENOENT|no such/i);
 });
 
-test('read-only graph index probe checks metadata and one node without writing', async () => {
-  const { DatabaseSync } = await import('node:sqlite');
-  const folder = path.join(root, '.code-review-graph'); mkdirSync(folder);
-  const filename = path.join(folder, 'graph.db');
-  const db = new DatabaseSync(filename);
-  db.exec('CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE nodes(id INTEGER PRIMARY KEY)');
-  db.prepare('INSERT INTO metadata VALUES (?,?)').run('repo_root', root);
-  assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: false });
-  db.exec('INSERT INTO nodes VALUES(1)');
-  assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: true });
-  const oldBun = globalThis.Bun;
-  try {
-    globalThis.Bun = {}; // OpenCode compatibility globals do not change the runtime.
-    assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: true });
-  } finally { if (oldBun === undefined) delete globalThis.Bun; else globalThis.Bun = oldBun; }
-  db.close();
-  await assert.rejects(probeGraphIndex(otherRoot));
+test('index probe rejects missing nodes, empty nodes and unknown schema', async () => {
+  writeGraph(root, root, '{"directed":false,"multigraph":false,"graph":{"schema_version":1},"links":[]}');
+  await assert.rejects(probeGraphifyIndex(root), /nodes/);
+  writeGraph(root, root, '{"directed":false,"multigraph":false,"graph":{"schema_version":1},"nodes":[],"links":[]}');
+  await assert.rejects(probeGraphifyIndex(root), /index/);
+  writeGraph(root, root, '{"directed":false,"multigraph":false,"graph":{"corpus":"x"},"nodes":[{"id":"a"}],"links":[]}');
+  await assert.rejects(probeGraphifyIndex(root), /schema/);
+  writeGraph(root, root, '{"directed":false,"graph":{"schema_version":1},"nodes":');
+  await assert.rejects(probeGraphifyIndex(root), /index/);
 });
 
-test('nested launch directory memory overrides do not change graph worktree scope', async () => {
-  const nested = path.join(root, 'frontend'); mkdirSync(nested);
-  const cfg = { ...readConfig(), paths: { [nested]: { retainSessions: false } } };
-  const report = await probe({ hostDirectory: nested, memoryDirectory: nested, readConfig: () => cfg, client: { ...client, mcp: { status: async input => {
-    assert.equal(input.query.directory, nested); // Host instance is the launch directory.
-    return { data: { 'code-review-graph': { status: 'connected' } } };
-  } } } });
-  assert.equal(report.graph.status, 'PASS'); assert.equal(report.graph.root, root);
-  assert.equal(report.hindsight.status, 'FAIL');
+test('index probe verifies nodes near the head of a large corpus without loading it fully', async () => {
+  const filler = 'x'.repeat(600000);
+  writeGraph(root, root, `{"directed":false,"multigraph":false,"graph":{"schema_version":2,"graphify_version":"0.9.92"},"nodes":[{"id":"${filler}","label":"Big"}],"links":[]}`);
+  const probeResult = await probeGraphifyIndex(root);
+  assert.equal(probeResult.schemaVersion, 2);
+  assert.equal(probeResult.hasNodes, true);
+});
+
+test('probe failure action explains availability and freshness ownership', async () => {
+  const report = await probe({ readGraph: async () => { throw new Error('root'); } });
+  assert.equal(report.graph.status, 'FAIL');
+  assert.match(report.graph.action, /graphify update|graphify extract/);
 });

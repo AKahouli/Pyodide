@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createPrivateKey, createPublicKey, randomUUID } from 'node:crypto';
@@ -29,16 +30,6 @@ export interface AdkExecutionAuthority {
   dispatchStartedAt?: string;
 }
 
-/** Bounded deployment compatibility only: remove after legacy signer keys migrate.
- * Shared keys take precedence; this adapter never grants connector trust or selects recipients.
- */
-function signerConfigWithLegacyCompatibility(config: ConfigService): { path?: string; issuer?: string } {
-  return {
-    path: config.get<string>('MCP_JWT_PRIVATE_KEY_FILE') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE'),
-    issuer: config.get<string>('MCP_JWT_ISSUER') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'),
-  };
-}
-
 /** Dedicated MCP signing key; never reuse the application's HS256 secret. */
 @Injectable()
 export class McpJwtService {
@@ -46,10 +37,17 @@ export class McpJwtService {
   private readonly privateKey?: string;
   private readonly publicKey?: string;
   private readonly issuer?: string;
+  private readonly workspaceScopeTtl: number;
 
   constructor(private readonly config: ConfigService, private readonly users: UserService,
-    private readonly connectors: PgConnectorStore, private readonly authorization: AuthorizationService) {
-      const { path, issuer } = signerConfigWithLegacyCompatibility(config);
+     private readonly connectors: PgConnectorStore, private readonly authorization: AuthorizationService,
+     @Optional() private readonly workspaceShares?: WorkspaceShareService) {
+      this.workspaceScopeTtl = Number(config.get<number>('MCP_WORKSPACE_SCOPE_TTL_SECONDS', 180));
+      if (!Number.isInteger(this.workspaceScopeTtl) || this.workspaceScopeTtl < 1 || this.workspaceScopeTtl > 300) {
+        throw new Error('MCP_WORKSPACE_SCOPE_TTL_SECONDS must be an integer between 1 and 300');
+      }
+       const path = config.get<string>('MCP_JWT_PRIVATE_KEY_FILE');
+       const issuer = config.get<string>('MCP_JWT_ISSUER');
       if (!path && !issuer) return;
       if (!path || !issuer) {
         throw new Error('MCP JWT mode requires a private key file and issuer');
@@ -120,7 +118,7 @@ export class McpJwtService {
   async assertConnectorAccess(connector: ConnectorRow, userId: string) {
     if (!connector.isActive || !['streamable_http', 'sse'].includes(connector.mcpTransportType ?? '')) this.deny();
     const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
-    if (policy.profile === 'internal_jwt' && connector.mcpTransportType !== 'streamable_http') this.deny();
+    if ((policy.profile === 'internal_jwt' || policy.workspaceAuthorization) && connector.mcpTransportType !== 'streamable_http') this.deny();
     await this.checkDestination(connector);
     if (typeof userId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(userId)) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP actor');
@@ -138,7 +136,7 @@ export class McpJwtService {
     const roles = rolesResult.value;
     const permissions = await this.authorization.getUserPermissions(roles.map(role => role.id));
     if (policy.requiredPermissions.some(permission => !hasPermission(permissions, permission))) this.deny();
-    if (policy.profile === 'internal_jwt') this.assertSignerConfigured();
+    if (policy.profile === 'internal_jwt' || policy.workspaceAuthorization) this.assertSignerConfigured();
     return policy;
   }
 
@@ -148,15 +146,20 @@ export class McpJwtService {
     // silently sign for a different (query-stripped) destination during migration.
     assertNoUrlCredentials(connector.mcpServerUrl);
     const policy = await this.assertConnectorAccess(connector, userId);
-    if (policy.profile !== 'internal_jwt') this.deny();
+    if (policy.profile !== 'internal_jwt' && !policy.workspaceAuthorization) this.deny();
     const now = Math.floor(Date.now() / 1000);
+    const workspaceScope = policy.workspaceAuthorization ? {
+      version: 1, permission: 'read', ids: await this.workspaceShares?.readableWorkspaceScope(userId) ?? this.deny(),
+    } : undefined;
+    const lifetime = workspaceScope ? this.workspaceScopeTtl : 300;
     const token = this.jwt.sign({ sub: userId, connectorId: connector.id, securityRevision: connector.securityRevision ?? 1,
-      iat: now, exp: now + 300, jti: randomUUID() }, {
+      ...(workspaceScope ? { workspaceScope } : {}),
+      iat: now, exp: now + lifetime, jti: randomUUID() }, {
       privateKey: this.privateKey, algorithm: 'RS256',
       issuer: this.issuer,
       audience: policy.audience,
     });
-    return { token, expiresAt: now + 300, serverUrl: connector.mcpServerUrl! };
+    return { token, expiresAt: now + lifetime, serverUrl: connector.mcpServerUrl! };
   }
 
   /**
@@ -168,8 +171,8 @@ export class McpJwtService {
    * Connector-scoped callers (renewal, inspection, runtime binding) keep the
    * trusted expected audience here: the connector and this route must agree.
    */
-  async verifyMcpAssertion(token: string | undefined, expectedAudience: string): Promise<{ sub: string; connectorId: string } | null> {
-    if (!expectedAudience) return null;
+  async verifyMcpAssertion(token: string | undefined, expectedAudience: string | string[]): Promise<{ sub: string; connectorId: string; aud: string } | null> {
+    if (!expectedAudience || (Array.isArray(expectedAudience) && !expectedAudience.length)) return null;
     return this.verifyAssertion(token, expectedAudience);
   }
 
@@ -185,7 +188,7 @@ export class McpJwtService {
     return this.verifyAssertion(token);
   }
 
-  private async verifyAssertion(token: string | undefined, expectedAudience?: string): Promise<{ sub: string; connectorId: string } | null> {
+  private async verifyAssertion(token: string | undefined, expectedAudience?: string | string[]): Promise<{ sub: string; connectorId: string; aud: string } | null> {
     if (!token || !this.publicKey || !this.issuer) return null;
     try {
       const claims = this.jwt.verify(token, {
@@ -193,22 +196,29 @@ export class McpJwtService {
         algorithms: ['RS256'],
         issuer: this.issuer,
         // Omitted for the ADR-0024 delegated credential; jsonwebtoken then does
-        // not enforce an audience at all.
-        ...(expectedAudience ? { audience: expectedAudience } : {}),
+        // not enforce an audience at all. Route-declared sets pass the allowed
+        // audience list (jsonwebtoken accepts string[] at runtime).
+        ...(expectedAudience
+          ? { audience: Array.isArray(expectedAudience) ? [...expectedAudience] as [string, ...string[]] : expectedAudience }
+          : {}),
         // Backend minting allows at most five minutes; reject anything longer
         // even if it carries a valid signature.
         maxAge: '300s',
-      }) as { sub?: unknown; connectorId?: unknown; securityRevision?: unknown; iat?: number; exp?: number; jti?: unknown };
+      }) as { sub?: unknown; connectorId?: unknown; securityRevision?: unknown; iat?: number; exp?: number; jti?: unknown; aud?: string | string[] };
       if (typeof claims?.sub !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(claims.sub)) return null;
       if (typeof claims.connectorId !== 'string' || typeof claims.jti !== 'string'
         || !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp)
         || claims.iat! > Math.floor(Date.now() / 1000) || claims.exp! <= claims.iat! || claims.exp! - claims.iat! > 300) return null;
       const connector = await this.load(claims.connectorId);
       const policy = await this.assertConnectorAccess(connector, claims.sub);
-      if (policy.profile !== 'internal_jwt' || policy.actorDelegation !== 'verified_user'
-        || (expectedAudience !== undefined && policy.audience !== expectedAudience)
+      const policyAudience = policy.audience;
+      const audienceMatches = Array.isArray(expectedAudience)
+        ? policyAudience !== undefined && expectedAudience.includes(policyAudience)
+        : policyAudience === expectedAudience;
+      if ((policy.profile !== 'internal_jwt' && !policy.workspaceAuthorization) || policy.actorDelegation !== 'verified_user'
+        || (expectedAudience !== undefined && !audienceMatches)
         || claims.securityRevision !== (connector.securityRevision ?? 1)) return null;
-      return { sub: claims.sub, connectorId: connector.id };
+      return { sub: claims.sub, connectorId: connector.id, aud: Array.isArray(claims.aud) ? String(claims.aud[0]) : String(claims.aud) };
     } catch {
       return null;
     }
@@ -217,7 +227,7 @@ export class McpJwtService {
   async renew(connectorId: string, assertion: string) {
     const connector = await this.load(connectorId);
     const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
-    if (policy.profile !== 'internal_jwt' || !policy.audience) this.deny();
+    if ((policy.profile !== 'internal_jwt' && !policy.workspaceAuthorization) || !policy.audience) this.deny();
     const proof = await this.verifyMcpAssertion(assertion, policy.audience);
     if (!proof || proof.connectorId !== connectorId) this.deny();
     return this.issue(connectorId, proof.sub);
@@ -228,7 +238,7 @@ export class McpJwtService {
     const connector = await this.load(connectorId);
     if (canonicalMcpEndpoint(serverUrl) !== canonicalMcpEndpoint(connector.mcpServerUrl)) this.deny();
     const policy = await this.assertConnectorAccess(connector, userId);
-    if (policy.profile === 'configured') return existing;
+    if (policy.profile === 'configured' && !policy.workspaceAuthorization) return existing;
     if (policy.profile === 'public') {
       if (Object.keys(existing).some(name => !/^(accept|content-type|user-agent|x-correlation-id|mcp-protocol-version)$/i.test(name))) this.deny();
       return existing;
@@ -236,7 +246,7 @@ export class McpJwtService {
     const { token, serverUrl: issuedEndpoint } = await this.issue(connectorId, userId);
     if (canonicalMcpEndpoint(issuedEndpoint) !== canonicalMcpEndpoint(serverUrl)) this.deny();
     return {
-      ...Object.fromEntries(Object.entries(existing).filter(([name]) => name.toLowerCase() !== 'authorization')),
+      ...Object.fromEntries(Object.entries(existing).filter(([name]) => !['authorization', 'x-yellowstorm-mcp-assertion'].includes(name.toLowerCase()))),
       Authorization: `Bearer ${token}`,
     };
   }
@@ -248,7 +258,22 @@ export class McpJwtService {
     const cleanEnv = Object.fromEntries(Object.entries(env).filter(([name]) => !/^YELLOWSTORM_MCP_JWT_/i.test(name)
       && name !== 'ADK_RUNTIME_MCP_RENEWAL_TOKEN'));
     if (policy.profile === 'public' && Object.keys(cleanEnv).length) this.deny();
-    return { headers: checkedHeaders, env: policy.profile === 'internal_jwt'
+    return { headers: checkedHeaders, env: policy.profile === 'internal_jwt' || policy.workspaceAuthorization
       ? { ...cleanEnv, YELLOWSTORM_MCP_JWT_CONNECTOR_ID: connectorId } : cleanEnv };
+  }
+
+  /** Same receiver, fixed standalone read routes; never sign for an arbitrary URL. */
+  async workspaceReadHeaders(connectorId: string, userId: string, endpoint: string,
+    workspaceIds: string[], existing: Record<string, string>): Promise<Record<string, string>> {
+    const connector = await this.load(connectorId);
+    const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
+    const destination = new URL(canonicalMcpEndpoint(endpoint));
+    const mcp = new URL(canonicalMcpEndpoint(connector.mcpServerUrl));
+    if (!policy.workspaceAuthorization || !['configured', 'internal_jwt'].includes(policy.profile)
+      || destination.origin !== mcp.origin || !['/search_native', '/search_native/batch'].includes(destination.pathname)
+      || !workspaceIds.length || workspaceIds.length > 100 || !this.workspaceShares) this.deny();
+    await this.workspaceShares.assertUserHasAccess(userId, workspaceIds);
+    const headers = await this.headers(connector.mcpServerUrl!, userId, existing, connectorId);
+    return { ...headers, 'Workspace-Id': [...new Set(workspaceIds)].join(',') };
   }
 }

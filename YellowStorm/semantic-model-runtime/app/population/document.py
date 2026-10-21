@@ -859,7 +859,7 @@ async def resolve_indexed_document(
         return {"gap": result}
     resolution = await resolve_document_candidates(
         connection, workspace_id=current["workspaceId"], file_name=current["originalName"],
-        uploader_user_id=current.get("uploaderUserId"))
+        uploader_user_id=current.get("uploaderUserId"), asset_id=current["assetId"])
     candidate = resolution["candidates"][0] if resolution["resolution"] == "resolved" else None
     observation = build_index_observation(
         asset_ref=asset_ref, document_pk=candidate["documentPk"] if candidate else None,

@@ -121,6 +121,8 @@ async def test_resolution_rejects_invalid_inputs():
         await resolve_document_candidates(conn, workspace_id="ws", file_name="a.pdf", limit=0)
     with pytest.raises(ReadOnlyIndexError):
         await resolve_document_candidates(conn, workspace_id="ws", file_name="a.pdf", limit=True)
+    with pytest.raises(ReadOnlyIndexError):
+        await resolve_document_candidates(conn, workspace_id="ws", file_name="a.pdf", asset_id=" ")
     assert conn.calls == []
 
 
@@ -199,3 +201,58 @@ async def test_a_run_of_spaces_and_underscores_matches_the_single_underscore_the
     result = await resolve_document_candidates(conn, workspace_id="ws", file_name="FP PRET EMPRUNT STEP UP_ REVERSE FLOATER_CHROME_v1.2.pdf")
     assert result["resolution"] == "resolved"
     assert [call[1][1] for call in conn.calls][-1] == stored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,stored", [
+    ("Attestation_Covenant_BLG_T2_2025.docx", "Attestation_Covenant_BLG_T2_2025.docx"),
+    (" .FP /A\\B: C\0_ report.pdf. ", "FP_A_B_C_report.pdf"),
+    ("x" * 260 + ".pdf", "x" * 230),
+    ("x" * 25 + "😀" * 115 + ".pdf", "😀" * 115),
+])
+async def test_authoritative_asset_storage_name_precedes_legacy_names(name, stored):
+    asset = "5cfa3ae38a88d6ae6f004dde"
+
+    class ExactStorage(FakeConnection):
+        async def fetch(self, sql, *params):
+            self.calls.append((sql, params))
+            assert "WHERE workspace_id = $1 AND file_name = $2 AND user_id = $3" in sql
+            assert "LIKE" not in sql
+            return [{"id": "indexed", "workspace_id": "ws", "file_name": params[1],
+                     "user_id": "u1"}] if params == ("ws", f"{asset}-{stored}", "u1") else []
+
+    conn = ExactStorage()
+    result = await resolve_document_candidates(conn, workspace_id="ws", file_name=name,
+                                               asset_id=asset, uploader_user_id="u1")
+    assert result["resolution"] == "resolved"
+    assert len(conn.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row_workspace,row_user,row_name,count,expected", [
+    ("ws", "u1", "wrong-report.pdf", 1, "unresolved"),
+    ("other", "u1", "asset-report.pdf", 1, "unresolved"),
+    ("ws", "other", "asset-report.pdf", 1, "unresolved"),
+    ("ws", "u1", "asset-report.pdf", 2, "ambiguous"),
+    ("ws", "u1", "report.pdf", 1, "resolved"),
+    ("ws", "u1", "report_file.pdf", 1, "resolved"),
+])
+async def test_asset_correlation_keeps_fences_ambiguity_and_legacy_fallback(
+        row_workspace, row_user, row_name, count, expected):
+    class ScopedRows(FakeConnection):
+        async def fetch(self, sql, *params):
+            self.calls.append((sql, params))
+            assert "WHERE workspace_id = $1 AND file_name = $2 AND user_id = $3" in sql
+            assert "LIKE" not in sql
+            return [{"id": str(i), "workspace_id": row_workspace, "file_name": row_name,
+                     "user_id": row_user} for i in range(count)] if params == (
+                         row_workspace, row_name, row_user) else []
+
+    conn = ScopedRows()
+    name = "report file.pdf" if row_name == "report_file.pdf" else "report.pdf"
+    result = await resolve_document_candidates(conn, workspace_id="ws", file_name=name,
+                                               asset_id="asset", uploader_user_id="u1")
+    assert result["resolution"] == expected
+    assert conn.calls[0][1][1] == "asset-" + name.replace(" ", "_")
+    if expected == "ambiguous":
+        assert len(conn.calls) == 1

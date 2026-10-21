@@ -23,7 +23,8 @@ describe('Workspace name lookup with real access JWTs and current workspace righ
   let app: INestApplication, status: string;
   beforeAll(async () => {
     const shares = new WorkspaceShareService(workspaces as never, shared as never, {} as never,
-      { setContext: jest.fn() } as never, {} as never, {} as never, {} as never);
+      { setContext: jest.fn() } as never, {} as never, {} as never, {} as never,
+      { get: () => 1000 } as never);
     const module = await Test.createTestingModule({
       imports: [PassportModule.register({ defaultStrategy: 'jwt' })],
       controllers: [WorkspaceInternalController],

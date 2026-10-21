@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -41,7 +41,7 @@ class DiscoveryConcept(BaseModel):
 
 
 class DiscoverySource(BaseModel):
-    # Asset metadata is reloaded by resolve_indexed_document, never trusted from the request.
+    # Interactive routes require a matching backend-authorized metadata handoff.
     model_config = ConfigDict(extra="allow")
     workspaceId: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
     assetId: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
@@ -51,6 +51,8 @@ class DiscoverySource(BaseModel):
 class FieldDiscoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     actorUserId: str = Field(min_length=1, max_length=200)
+    modelId: str | None = None
+    authorizedMetadata: dict[str, Any] | None = None
     sources: list[DiscoverySource] = Field(min_length=1, max_length=MAX_DOCUMENTS)
     concept: DiscoveryConcept
 
@@ -194,7 +196,8 @@ def _suggestions(raw: Any, concept: DiscoveryConcept, documents: list[dict[str, 
     return suggestions
 
 
-async def discover_fields(pool: Any, body: FieldDiscoveryRequest, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+async def discover_fields(pool: Any, body: FieldDiscoveryRequest, *, client: httpx.AsyncClient | None = None,
+                          metadata_fetch: Callable[[dict, str], Awaitable[dict]] | None = None) -> dict[str, Any]:
     documents = []
     unread = []
     truncated = False
@@ -205,7 +208,7 @@ async def discover_fields(pool: Any, body: FieldDiscoveryRequest, *, client: htt
             continue
         seen.add(identity)
         resolved = await resolve_indexed_document(pool, {"source": source.model_dump(), "conceptId": body.concept.id,
-                                                       "fieldMappings": []}, body.actorUserId)
+                                                       "fieldMappings": []}, body.actorUserId, metadata_fetch=metadata_fetch)
         if "gap" in resolved:
             unread.append({"assetId": source.assetId, "status": resolved["gap"]["gaps"][0]["kind"]})
             continue

@@ -25,8 +25,7 @@ class Settings:
     timeout_seconds: float
     port: int
     max_response_bytes: int
-    service_token: str = ""
-    auth_mode: str = "Bearer"
+    auth_mode: str = "JWT"
     jwt_public_key_file: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = "mcp-semantic-model"
@@ -35,18 +34,13 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         environment = os.getenv("ENVIRONMENT", "development")
-        auth_mode = os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE")
-        if auth_mode is None:
-            if environment == "production":
-                raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be explicitly set to JWT or Bearer in production")
-            auth_mode = "Bearer"
+        auth_mode = os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE", "JWT")
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
-            ingress_token=os.getenv("SEMANTIC_MODEL_MCP_INGRESS_TOKEN", ""),
+            ingress_token="",
             timeout_seconds=float(os.getenv("SEMANTIC_MODEL_MCP_TIMEOUT_SECONDS", "120")),
             port=int(os.getenv("MCP_PORT", "8027")),
             max_response_bytes=int(os.getenv("SEMANTIC_MODEL_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
-            service_token=os.getenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", ""),
             auth_mode=auth_mode,
             jwt_public_key_file=os.getenv("SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("SEMANTIC_MODEL_MCP_JWT_ISSUER", ""),
@@ -55,20 +49,10 @@ class Settings:
         )
 
     def validate(self) -> None:
-        if not self.service_token.strip() or self.service_token != self.service_token.strip():
-            # WP07.2: every backend assistant call authenticates the
-            # semantic-model-mcp service principal; without the scoped secret
-            # the backend rejects the server, so fail at startup.
-            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
-        if self.environment == "production" and len(self.service_token) < 32:
-            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN must be at least 32 characters in production")
-        if self.auth_mode not in ("JWT", "Bearer"):
-            raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT or Bearer")
-        if self.auth_mode == "JWT":
-            if not self.jwt_public_key_file or not self.jwt_issuer or not self.jwt_audience:
-                raise ValueError("JWT mode requires a public key file, issuer and audience")
-        elif not self.ingress_token:
-            raise ValueError("SEMANTIC_MODEL_MCP_INGRESS_TOKEN is required")
+        if self.auth_mode != "JWT":
+            raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT")
+        if not all(value.strip() for value in (self.jwt_public_key_file, self.jwt_issuer, self.jwt_audience)):
+            raise ValueError("JWT mode requires a public key file, issuer and audience")
         if not self.backend_url.startswith(("http://", "https://")):
             raise ValueError("YELLOWSTORM_BACKEND_URL must be an HTTP(S) URL")
         if not 1 <= self.port <= 65535:

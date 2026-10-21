@@ -49,7 +49,32 @@ interface OpenUiAnswerProps {
 export function OpenUiAnswer(props: Readonly<OpenUiAnswerProps>) {
   const actorId = useContext(AuthContext)?.user?.id ?? '';
   const sourceKey = !props.isStreaming && /\bMiniApp\s*\(/.test(props.content) ? props.content : '';
-  return <ScopedOpenUiAnswer key={`${actorId}:${props.conversationId}:${props.messageId}:${props.partId ?? ''}:${sourceKey}`} {...props} actorId={actorId} />;
+  return <VisibleOpenUiAnswer key={`${actorId}:${props.conversationId}:${props.messageId}:${props.partId ?? ''}:${sourceKey}`} {...props} actorId={actorId} />;
+}
+/** Activate once: scrolling away must not discard form values, reports or image caches.
+ * Private MiniApps stay eager because saved-view exports require their mounted guards/captures. */
+function VisibleOpenUiAnswer(props: Readonly<OpenUiAnswerProps & { actorId: string }>) {
+  const { t } = useModuleTranslation('conversation');
+  const eager = props.isStreaming || /\bMiniApp\s*\(/.test(props.content) || typeof IntersectionObserver === 'undefined';
+  const [activated, setActivated] = useState(eager);
+  const element = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (eager) { setActivated(true); return; }
+    if (activated || !element.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setActivated(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '200px 0px' });
+    observer.observe(element.current);
+    return () => observer.disconnect();
+  }, [activated, eager]);
+  return <div ref={element} data-openui-deferred={activated || eager ? undefined : props.partId ?? ''} className='min-w-0'>
+    {activated || eager ? <ScopedOpenUiAnswer {...props} /> : <div className='flex items-center' style={{ minHeight: Math.min(640, Math.max(160, Math.ceil(props.content.length / 80) * 20)) }}>
+      <Button variant='outline' size='sm' onClick={() => setActivated(true)}>{t('openui.viewAnswer')}</Button>
+    </div>}
+  </div>;
 }
 function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, citations, artifacts, partId, actorId }: Readonly<OpenUiAnswerProps & { actorId: string }>) {
   const { t } = useModuleTranslation('conversation');

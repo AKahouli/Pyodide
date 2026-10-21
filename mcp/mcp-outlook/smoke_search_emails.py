@@ -1,19 +1,22 @@
-"""Live smoke test for `search_emails` — needs a real Microsoft Graph token.
+"""Live smoke test for `search_emails` — needs a real delegated Microsoft Graph token.
 
-    set M365_ACCESS_TOKEN=<bearer>
+    set M365_GRAPH_TOKEN=<delegated graph bearer>
     python smoke_search_emails.py ssnousi@yellowsys.fr
     python smoke_search_emails.py --domain yellowsys.fr
 
 Pages through `search_emails` with the cursor and prints how many messages come
 back, which is the number the old `search_m365` could never get past 25. Read-only:
-it only lists mail.
+it only lists mail. The token is bound per run, never read from a server-wide
+environment credential.
 """
 import asyncio
 import json
 import logging
+import os
 import sys
 
 import server
+from graph_helpers import _delegated_provider_token
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,11 @@ async def main() -> None:
     if not args:
         logger.info(__doc__)
         return
+    token = os.getenv("M365_GRAPH_TOKEN", "").strip()
+    if not token:
+        logger.error("ERROR: set M365_GRAPH_TOKEN to the acting user's delegated Graph token")
+        return
+    _delegated_provider_token.set(token)
     if args[0] == "--domain":
         await page_through(sender_domain=args[1])
     else:

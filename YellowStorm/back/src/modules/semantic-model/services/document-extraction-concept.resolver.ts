@@ -95,7 +95,7 @@ export class DocumentExtractionConceptResolver implements ConceptResolver {
     }];
     const sections: SemanticModelNativeSearchSection[] = [];
     for (let index = 0; index < requests.length; index += 10) {
-      const results = await this.nativeSearch.searchBatch(requests.slice(index, index + 10), DOCUMENT_SEARCH_TIMEOUT_MS, 1);
+      const results = await this.nativeSearch.searchBatch(requests.slice(index, index + 10), DOCUMENT_SEARCH_TIMEOUT_MS, 1, input.userId);
       for (const result of results) if (!result.error) sections.push(...result.sections);
     }
     const unique = new Map<string, EvidenceItem>();

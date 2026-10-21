@@ -12,16 +12,12 @@ See [developer user guide](DEVELOPER-SETUP.md) for installation and daily use, a
 | Installed personal runtime/agents/skills | `%USERPROFILE%\.config\opencode/{plugins,lib,agents,skills}` |
 | Personal OpenCode/provider settings | `%USERPROFILE%\.config\opencode/opencode.json` or `.jsonc` |
 | Harness installation backups | `%USERPROFILE%\.config\opencode/.sdlc-backups/<timestamp-id>` |
-| Memory client enrollment/config | `%USERPROFILE%\.hindsight/coding-agent.json` |
-| Experience storage / provider profile | Developer's WSL Hindsight daemon/profile; not the Git repo |
-| Local transcript diagnostics | `%USERPROFILE%\.hindsight/coding-agents-logs/diag.jsonl` |
 | Task state and integration health; legacy baselines | `<worktree>/.opencode/sdlc/checkpoints.sqlite` and SQLite WAL/SHM |
-| Structural graph | `<worktree>/.code-review-graph/graph.db` |
-| Shared graph watcher enrollment | `%USERPROFILE%\.code-review-graph/watch.toml` |
+| Structural graph | `<worktree>/graphify-out/graph.json` |
+| Graph freshness hooks | `<worktree>/.git/hooks` via `graphify hook install`; check with `graphify hook status` |
 | Sanitized browser evidence | `<repo>/qa-artifacts/<task-id>/<run-id>/` |
 
-Each developer owns credentials and experience storage. Linked worktrees can
-share their developer's repository memory bank; they keep separate graphs and
+Each developer owns their credentials. Linked worktrees keep separate graphs and
 checkpoint stores. A ZIP release never transfers those runtime databases.
 
 ## Troubleshooting
@@ -32,13 +28,9 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Old loaded version / same failures in new chats | Stop the entire host, reinstall from the intended source commit, restart. New chat alone cannot reload cached plugin code. |
 | Checkpoints FAIL / missing policy | Launch in the intended Git checkout; verify `tools/opencode-harness/policy.json`, committed HEAD, local writable `.opencode/sdlc/` and routed documents. |
 | Checkpoint initialization lock budget exceeded | Identify competing writers, live owner or a nonlocal/symlinked store; recover the environment, then refresh health. Continue normal coding while recovering checkpoint memory. |
-| Graph FAIL / MCP connection | Continue coding using focused source/search/tests. Check the current host's `code-review-graph` MCP, Windows PATH, pinned core package and index in parallel; rebuild only for a missing/empty/corrupt index. |
-| Graph nonempty but stale | Verify watcher registration/running state, branch/source changes; run scoped incremental `update --repo`. Startup availability is not freshness. |
-| Graph failure mentioning PyTorch/DLL | Use core `code-review-graph==2.3.9`, without `[embeddings]`; vector embeddings are optional. |
-| Hindsight FAIL / connection | Continue coding using Git docs/checkpoints; do not claim memory saved. Start the configured WSL profile, inspect `/health`, port 9077 and client `self-hosted` API URL in parallel. |
-| Hindsight FAIL / opt-in or bank 404 | Correct the actual owning worktree's enrollment/mapping and initialize its exact bank once. Restart after config changes. |
-| Health PASS but experience absent | Run the real write/read and automatic-capture checks. Check provider sign-in, asynchronous extraction, recall types and session-scoped diagnostic events. |
-| Retention fails after final response | It may surface at the next health/turn check; recover provider/API access and verify the next `retain_ok`. Do not claim that response text proves memory saved. |
+| Graph FAIL / missing index | Continue coding using focused source/search/tests. Check `graphify --version`, that `graphify-out/graph.json` and `.graphify_root` exist in the current worktree, and that the CLI is on PATH; run `graphify extract <root> --code-only` only when the index is missing/empty. |
+| Graph nonempty but stale | The git hooks rebuild after commits/checkouts in the background; after `git pull` or a merge run `graphify update .`. Verify with `graphify hook status`. Startup availability is not freshness. |
+| Graphify query fails or names are ambiguous | Inspect the command error; exit 3 lists candidates (retry with the exact name), exit 4 means no match (fall back to source search). |
 | Context7 unavailable | Configure personal service access if required, or use official library docs and state the limitation; it is not a startup check. |
 | QA cannot sign in | `AUTH_REQUIRED`; developer signs into the owned private context, then resumes the same child/context. Login recipes are not reusable cookies. |
 | Browser isolation or page routing missing | Install the pinned Chrome MCP and proper flags, fully restart. Never use a shared default tab as fallback. |
@@ -51,7 +43,7 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 
 After repairing a real failure, `sdlc_health(refresh: true)` reruns native checks.
 Repeated health reads do not repair services. Never manufacture PASS or borrow
-another session's receipt. Graph/memory failures remain visible and advisory;
+another session's receipt. Graph failures remain visible and advisory;
 checkpoint failures are advisory and parallel editing uses normal coordination.
 
 ## Updates and rollback
@@ -59,19 +51,18 @@ checkpoint failures are advisory and parallel editing uses normal coordination.
 1. Fetch/check out the reviewed harness source commit. Inspect its changelog/diff
    and dependency version changes; preserve the team's repository docs.
 2. Park unfinished tasks and save their exact next action. Stop OpenCode hosts.
-3. Back up personal OpenCode/Hindsight configuration separately; the installer
-   backs up only the files it owns. Keep secrets local.
+3. Back up personal OpenCode configuration separately; the installer backs up
+   only the files it owns. Keep secrets local.
 4. Install the pinned dependencies if changed, then run `install.ps1`. Reapply
    your available-model override and reconcile personal instructions from backup.
-5. Restart services only if their configuration/version changed; restart all
-   OpenCode hosts after any runtime/agent/plugin update.
-6. Run behavioral tests, real startup checks, and affected memory/browser checks.
+5. Restart all OpenCode hosts after any runtime/agent/plugin update.
+6. Run behavioral tests, real startup checks, and affected browser checks.
    Native service checks remain per-session; no model diagnostics are required
    on a healthy ordinary startup.
 
 Rollback: choose the previous reviewed harness commit and reinstall it, or restore
 only the named owned files from a known installation backup. Do not overwrite
-provider config with a runtime backup, delete memory/checkpoint state, or mix
+provider config with a runtime backup, delete checkpoint state, or mix
 runtime files from different revisions. A future checkpoint format migration
 would need explicit compatibility instructions; this release adds no such
 migration. Fully restart and verify the rollback.
@@ -95,4 +86,4 @@ instead of overwriting an earlier release.
 Distribution review: confirm there are no auth caches, real keys, `.env`, private
 logs/transcripts, databases, browser state or `node_modules`. Configuration
 examples contain placeholders and local service addresses only. Do not attach
-personal backups or raw Hindsight diagnostics to the developer package.
+personal backups or private diagnostics to the developer package.

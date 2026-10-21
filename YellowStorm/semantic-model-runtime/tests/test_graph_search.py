@@ -128,6 +128,7 @@ async def test_embeddings_are_ordered_unit_vectors_and_queries_carry_the_instruc
         await embed(PROFILE, ["q"], query=True, client=client)
     assert [vector[0] for vector in vectors] == [1.0, 1.0]
     assert seen[0]["input"] == ["a", "b"] and seen[0]["model"] == "qwen3-embedding"
+    assert [body["dimensions"] for body in seen] == [3072, 3072]
     assert seen[1]["input"][0].startswith("Instruct: ") and seen[1]["input"][0].endswith("Query: q")
     assert vector_literal([0.5, 0.25]) == "[0.5,0.25]"
 
@@ -138,6 +139,10 @@ async def test_embeddings_are_ordered_unit_vectors_and_queries_carry_the_instruc
     (httpx.Response(429), "embedding_http_429", True),
     (httpx.Response(400), "embedding_http_400", False),
     (httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 2.0]}]}),
+     "embedding_dimension_mismatch", False),
+    (httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.01] * 2560}]}),
+     "embedding_dimension_mismatch", False),
+    (httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.01] * 4096}]}),
      "embedding_dimension_mismatch", False),
     (httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.0] * STORAGE_DIMENSION}]}),
      "embedding_zero_vector", False),
@@ -156,3 +161,56 @@ def test_the_fingerprint_names_the_vector_space() -> None:
     other = EmbeddingProfile(base_url="http://litellm", api_key="k", model="another-model",
                              dimension=STORAGE_DIMENSION)
     assert PROFILE.fingerprint == same.fingerprint != other.fingerprint
+
+
+def test_3072_profile_never_reuses_2560_vectors() -> None:
+    from dataclasses import replace
+
+    current = replace(PROFILE, dimension=3072)
+    old = replace(PROFILE, dimension=2560)
+    assert current.fingerprint != old.fingerprint
+    assert not set(current.cache_fingerprints) & set(old.cache_fingerprints)
+
+
+def test_storage_default_is_3072() -> None:
+    import os
+    import subprocess
+    import sys
+
+    env = {key: value for key, value in os.environ.items() if key != "SEMANTIC_EMBEDDING_DIMENSION"}
+    subprocess.run([sys.executable, "-c", "from app.graph_search.embeddings import STORAGE_DIMENSION; "
+                    "assert STORAGE_DIMENSION == 3072"], env=env, check=True)
+
+
+@pytest.mark.parametrize("dimension", ["2560", "4096", "garbage", ""])
+def test_conflicting_environment_cannot_change_fixed_storage_or_admit_a_profile(monkeypatch, dimension) -> None:
+    from app.graph_search import embeddings
+
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_DIMENSION", dimension)
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_BASE_URL", "http://litellm")
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_MODEL", "m")
+    assert embeddings.STORAGE_DIMENSION == 3072
+    with pytest.raises(EmbeddingError, match="embedding_dimension_unsupported"):
+        embeddings.profile_from_env()
+
+
+def test_matching_environment_uses_fixed_storage_profile(monkeypatch) -> None:
+    from app.graph_search import embeddings
+
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_DIMENSION", "3072")
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_BASE_URL", "http://litellm")
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_MODEL", "m")
+    assert embeddings.profile_from_env().dimension == 3072
+
+
+@pytest.mark.asyncio
+async def test_conflicting_dimension_is_rejected_before_build_admission(monkeypatch) -> None:
+    from app.graph_search import indexer
+
+    monkeypatch.setenv("SEMANTIC_EMBEDDING_DIMENSION", "4096")
+
+    async def admit(**kwargs):
+        raise AssertionError("a conflicting dimension must not admit work")
+
+    with pytest.raises(EmbeddingError, match="embedding_dimension_unsupported"):
+        await indexer.request_index(None, admit, revision_id="r")

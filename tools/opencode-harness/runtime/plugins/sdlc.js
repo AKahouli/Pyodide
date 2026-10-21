@@ -1,10 +1,10 @@
 import { tool } from '@opencode-ai/plugin/tool';
 import path from 'node:path';
 import { openHarness } from '../lib/sdlc-core.mjs';
-import { probeStartup, healthLine, captureFailure } from '../lib/startup-health.mjs';
+import { probeStartup, healthLine } from '../lib/startup-health.mjs';
 
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-14-advisory-checkpoints';
+  const harnessVersion = '2026-10-20-graphify';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
@@ -13,19 +13,20 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
   const startup = new Map();
   const notices = new Map();
   const observedCalls = new Map();
+  const graphifyCalls = new Map();
   const generations = new Map();
   const startedAt = new Map();
   let inFlight;
   const probe = (refresh) => {
     if (refresh || !inFlight) {
-      const current = probeStartup({ root, hostDirectory: directory, client, checkpointError });
+      const current = probeStartup({ root, checkpointError });
       inFlight = current;
       current.finally(() => { if (inFlight === current) inFlight = undefined; }).catch(() => {});
     }
     return inFlight;
   };
   const notify = async report => {
-    const failures = ['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status === 'FAIL');
+    const failures = ['graph', 'checkpoints'].filter(key => report[key].status === 'FAIL');
     if (!failures.length) return;
     const signature = JSON.stringify(failures.map(key => [key, report[key].reason]));
     if (notices.get(report.sessionID) === signature) return;
@@ -36,8 +37,9 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     try { await client?.tui?.showToast({ body: { title: blocked ? 'OpenCode checkpoint protection unavailable' : 'OpenCode integration warning — coding can continue', message, variant: blocked ? 'error' : 'warning', duration: 12000 } }); } catch { /* System context and stderr retain the failure if the UI is unavailable. */ }
   };
   const persist = (sessionID, report) => {
-    try { return harness ? harness.health(sessionID, report) : { ...report, sessionID }; }
-    catch { return { ...report, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Checkpoint memory unavailable; continue coding and retry sdlc_health after recovery.' } }; }
+    const withCount = { ...report, graphifyInvocations: graphifyCalls.get(sessionID) ?? 0 };
+    try { return harness ? harness.health(sessionID, withCount) : { ...withCount, sessionID }; }
+    catch { return { ...withCount, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Checkpoint memory unavailable; continue coding and retry sdlc_health after recovery.' } }; }
   };
   const check = async (sessionID, refresh = false) => {
     if (refresh) startup.delete(sessionID);
@@ -51,10 +53,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       await notify(report);
       return report;
     })());
-    const current = await startup.get(sessionID);
-    const failure = captureFailure(sessionID, startedAt.get(sessionID) ?? current.checkedAt);
-    if (failure && current.hindsight.status !== 'FAIL') return record(sessionID, 'hindsight', failure);
-    return current;
+    return startup.get(sessionID);
   };
   const record = async (sessionID, key, value, generation = generations.get(sessionID)) => {
     const prior = startup.get(sessionID) ?? check(sessionID);
@@ -66,14 +65,12 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     startup.set(sessionID, next);
     const updated = await next; await notify(updated); return updated;
   };
-  const startupText = report => `${healthLine(report)} ${['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')} Graph/Hindsight failures are advisory: continue coding with focused source/tests and Git docs/checkpoints. Checkpoint failures are advisory and do not block editing. Policy and reporting follow AGENTS.md.`;
-  const healthTool = tool({ description: 'Read automatic per-session graph/memory/checkpoint health. Optional status/recovery tool, not required for normal startup. refresh:true retries after failure recovery. Cannot manufacture PASS.', args: { refresh: tool.schema.boolean().optional() }, execute: async (args, context) => JSON.stringify(await check(context.sessionID, args.refresh)) });
+  const startupText = report => `${healthLine(report)} ${['graph', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')} Graph failures are advisory: continue coding with focused source/tests and Git docs/checkpoints. Checkpoint failures are advisory and do not block editing. Policy and reporting follow AGENTS.md.`;
+  const healthTool = tool({ description: 'Read automatic per-session graph/checkpoint health. Optional status/recovery tool, not required for normal startup. refresh:true retries after failure recovery. Cannot manufacture PASS.', args: { refresh: tool.schema.boolean().optional() }, execute: async (args, context) => JSON.stringify(await check(context.sessionID, args.refresh)) });
   if (!harness) return {
     tool: { sdlc_health: healthTool },
     'chat.message': async input => { await check(input.sessionID); },
     'experimental.chat.system.transform': async (input, output) => { if (input.sessionID) output.system.push(startupText(await check(input.sessionID))); },
-    'tool.execute.before': async (input, output) => {
-    },
     event: async ({ event }) => { if (event.type === 'session.created' && event.properties?.info?.id) await check(event.properties.info.id); },
   };
   const resumeNotices = new Map();
@@ -126,7 +123,10 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
     },
     'tool.execute.before': async (input, output) => {
-      if (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(input.tool) || input.tool === 'hindsight_diagnose') {
+      if (input.tool === 'bash' && /^graphify\s/.test(String(output.args?.command ?? '').trimStart())) {
+        graphifyCalls.set(input.sessionID, (graphifyCalls.get(input.sessionID) ?? 0) + 1);
+        const cached = await startup.get(input.sessionID);
+        if (cached) startup.set(input.sessionID, Promise.resolve(persist(input.sessionID, cached)));
         await check(input.sessionID);
         observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });
       }
@@ -145,11 +145,10 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         }
         if (event.type === 'session.idle') harness.park(sessionID);
         if (event.type === 'session.error') harness.park(sessionID, 'interrupted');
-        if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error' && (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(part.tool) || part.tool === 'hindsight_diagnose')) {
+        if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error' && part.tool === 'bash') {
           const observed = observedCalls.get(part.callID);
           observedCalls.delete(part.callID);
-          const key = part.tool === 'hindsight_diagnose' ? 'hindsight' : 'graph';
-          if (observed && observed.sessionID === sessionID && observed.generation === generations.get(sessionID)) await record(sessionID, key, { status: 'FAIL', reason: 'Native integration probe failed.', action: 'Inspect the tool error, recover the integration, then retry sdlc_health(refresh:true).' }, observed.generation);
+          if (observed && observed.sessionID === sessionID && observed.generation === generations.get(sessionID)) await record(sessionID, 'graph', { status: 'FAIL', reason: 'Graphify CLI query failed.', action: 'Inspect the command error, recover the graphify installation/index, then retry sdlc_health(refresh:true).' }, observed.generation);
         }
       } catch (error) {
         // Transferred old sessions cannot mutate their new owner's checkpoint.

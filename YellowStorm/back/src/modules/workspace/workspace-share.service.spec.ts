@@ -10,7 +10,7 @@ const WS = new Types.ObjectId().toString();
 
 // D.10 cutover: the service now reads through the WorkspaceStore/ShareStore
 // contracts, so the harness injects store mocks shaped per test.
-function build(overrides: { workspaceStore?: any; shareStore?: any; outbox?: any; semanticGrantRevocations?: any } = {}) {
+function build(overrides: { workspaceStore?: any; shareStore?: any; outbox?: any; semanticGrantRevocations?: any; maxIds?: number } = {}) {
   const workspaceStore: any = {
     findById: jest.fn().mockResolvedValue(null),
     filterOwned: jest.fn().mockResolvedValue([]),
@@ -39,12 +39,34 @@ function build(overrides: { workspaceStore?: any; shareStore?: any; outbox?: any
     {} as unknown as UserService,
     {} as unknown as NotificationsService,
     semanticGrantRevocations as never,
+    { get: jest.fn().mockReturnValue(overrides.maxIds ?? 1000) } as never,
     overrides.outbox,
   );
   return { svc, workspaceStore, shareStore, semanticGrantRevocations };
 }
 
 describe('WorkspaceShareService — public access', () => {
+  it('fails closed on overflowing MCP snapshots without truncating permissions', async () => {
+    const findReadableIds = jest.fn().mockResolvedValue(Array.from({ length: 1001 }, () => WS));
+    const { svc } = build({ workspaceStore: { findReadableIds } });
+    await expect(svc.readableWorkspaceScope(USER)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findReadableIds).toHaveBeenCalledWith(USER, 1001);
+    findReadableIds.mockResolvedValueOnce([]);
+    await expect(svc.readableWorkspaceScope(USER)).resolves.toEqual([]);
+  });
+  it('accepts broad readable sets below the configured bound', async () => {
+    const ids = Array.from({ length: 152 }, (_value, index) => index.toString(16).padStart(24, '0'));
+    const findReadableIds = jest.fn().mockResolvedValue(ids);
+    const { svc } = build({ workspaceStore: { findReadableIds } });
+    await expect(svc.readableWorkspaceScope(USER)).resolves.toEqual(ids);
+    expect(findReadableIds).toHaveBeenCalledWith(USER, 1001);
+  });
+  it('honors a lower configured bound', async () => {
+    const findReadableIds = jest.fn().mockResolvedValue(Array.from({ length: 51 }, () => WS));
+    const { svc } = build({ workspaceStore: { findReadableIds }, maxIds: 50 });
+    await expect(svc.readableWorkspaceScope(USER)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findReadableIds).toHaveBeenCalledWith(USER, 51);
+  });
   it('hasAccess returns true for a non-owner when the workspace is public', async () => {
     const { svc, workspaceStore } = build({
       workspaceStore: {

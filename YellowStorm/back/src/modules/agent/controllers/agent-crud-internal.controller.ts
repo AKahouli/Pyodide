@@ -14,7 +14,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { AgentMcpServiceGuard } from '../../auth/guards/internal-service-principal.guard';
 import { DelegatedActorGuard, actingUserIdFrom, McpRouteAudience } from '../../auth/guards/delegated-actor.guard';
 import { AgentService } from '../agent.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
@@ -34,8 +33,8 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 @ApiTags('Agent CRUD Internal')
 @Public()
 @Controller('internal/agent-crud')
-@McpRouteAudience('mcp-agent')
-@UseGuards(AgentMcpServiceGuard, DelegatedActorGuard)
+@McpRouteAudience('mcp-agent', 'mcp-platform')
+@UseGuards(DelegatedActorGuard)
 export class AgentCrudInternalController {
   constructor(
     private readonly agentService: AgentService,

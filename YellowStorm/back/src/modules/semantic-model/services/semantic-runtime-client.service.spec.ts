@@ -30,6 +30,26 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
+  it('builds actor/model/exact-document metadata handoffs for interactive calls only', async () => {
+    const client = new SemanticRuntimeClientService(config() as never);
+    const source = { workspaceId: 'workspace', assetId: 'document', originalName: 'contract.pdf',
+      mimeType: 'application/pdf', sizeBytes: 123 };
+    const injected = { actorUserId: 'spoof', modelId: 'other', sources: [] };
+    fetchMock.mockImplementation(async () => jsonResponse({ status: 'read', fields: {} }));
+    await client.previewDocumentFields({ actorUserId: 'actor', modelId: 'model',
+      entry: { conceptId: 'concept', source, fieldMappings: [] }, ...{ authorizedMetadata: injected } });
+    await client.suggestDocumentFields({ actorUserId: 'actor', modelId: 'model', sources: [source],
+      concept: { id: 'concept', label: 'Concept', description: '', attributes: [] },
+      ...{ authorizedMetadata: injected } });
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(options.headers['X-Semantic-Service-Key']).toBe('secret');
+      expect(JSON.parse(options.body).authorizedMetadata).toEqual({
+        actorUserId: 'actor', modelId: 'model', sources: [source],
+      });
+    }
+    expect(assetGrants.admit).not.toHaveBeenCalled();
+  });
+
   it('preserves safe diagnostic details through authenticated job and index status reads', async () => {
     const errorDetails = { code: 'DataError', errorType: 'DataError', message: 'Database argument has an incompatible type.',
       occurredAt: '2026-10-15T09:02:15Z', jobId: 'job-1', sqlState: '22000',

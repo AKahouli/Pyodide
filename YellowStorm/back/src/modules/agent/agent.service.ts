@@ -49,7 +49,6 @@ import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
 } from './constants/platform-copilot.constants';
-import { canonicalMcpEndpoint } from '../connector/utils/mcp-destination-policy.util';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -126,10 +125,6 @@ export interface PlaybookPlannerAgentOption {
   description?: string;
   model: string | null;
 }
-
-const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
-  'assess_playbook_request', 'continue_playbook_clarification', 'start_playbook_construction',
-]);
 
 @Injectable()
 export class AgentService {
@@ -2177,30 +2172,6 @@ export class AgentService {
     return new Map(
       selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
     );
-  }
-
-  private buildRuntimeConnectorActionKeysByConnectorId(
-    agent: Pick<IAgentForStream, 'agentTypeSlug' | 'connectorActionSelections'>,
-    connectorIds: string[],
-    connectorsMap: Map<string, RuntimeConnectorDefinition>,
-  ): Map<string, Set<string>> | undefined {
-    const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
-    if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
-
-    // The Copilot uses every current action of the playbook MCP (the connector pointing at PLAYBOOK_MCP_SERVER_URL).
-    const playbookMcpUrl = canonicalMcpEndpoint(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', '') ?? '');
-    const runtimeSelections = new Map(selected ?? []);
-    for (const connectorId of connectorIds) {
-      const connector = connectorsMap.get(connectorId);
-      if (connector && playbookMcpUrl && canonicalMcpEndpoint(connector.mcpServerUrl) === playbookMcpUrl) {
-        runtimeSelections.set(connectorId, new Set(
-          connector.actions
-            .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
-            .map((action) => action.key),
-        ));
-      }
-    }
-    return runtimeSelections.size ? runtimeSelections : undefined;
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {

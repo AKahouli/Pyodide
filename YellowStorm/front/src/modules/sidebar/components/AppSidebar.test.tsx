@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ const featureVisibility = vi.hoisted(() => ({
 
 const storeFns = vi.hoisted(() => ({
   fetchConversations: vi.fn(),
+  conversationsHasMore: false,
   deleteConversation: vi.fn(async () => undefined),
   updateConversation: vi.fn(async () => undefined),
   currentConversationId: 'c1',
@@ -37,6 +38,7 @@ const convoState = vi.hoisted(() => ({
   ],
   loading: false,
 }));
+const v2PointersState = vi.hoisted(() => ({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn(), loading: false, nextCursor: null as string | null }));
 const defaultConversations = vi.hoisted(() => [
   { id: 'c1', title: 'First', updatedAt: '2026-09-13T10:00:00.000Z' },
   { id: 'c2', title: 'Second', updatedAt: '2026-09-13T09:00:00.000Z' },
@@ -87,19 +89,16 @@ vi.mock('@/modules/playbook/components/PlaybookButton', () => ({ PlaybookButton:
 vi.mock('@/modules/governance', () => ({ GovernanceButton: () => <div>governance-btn</div> }));
 vi.mock('@/modules/worky/components/WorkyButton', () => ({ WorkyButton: () => <div>worky-btn</div> }));
 vi.mock('@/modules/app-builder', () => ({ AppBuilderButton: () => <div>app-builder-btn</div> }));
-vi.mock('@/modules/admin', () => ({
-  AdminButton: () => <div>admin-btn</div>,
-  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, playbook: true, governance: true, appBuilder: true, worky: true, agents: true },
-  getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
+vi.mock('@/modules/admin/constants', async original => ({ ...await original<typeof import('@/modules/admin/constants')>(),
+  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, semanticModel: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
 }));
-vi.mock('@/modules/admin', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/modules/admin')>();
+vi.mock('@/modules/admin/api', () => ({ getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })) }));
+vi.mock('@/modules/admin/hooks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/admin/hooks')>();
+  const { DEFAULT_NAVIGATION_SETTINGS } = await import('@/modules/admin/navigation');
   return {
     ...actual,
-    AdminButton: () => <div>admin-btn</div>,
-    DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, semanticModel: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
-    getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
-    useNavigationSettings: () => actual.DEFAULT_NAVIGATION_SETTINGS,
+    useNavigationSettings: () => DEFAULT_NAVIGATION_SETTINGS,
   };
 });
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({
@@ -127,7 +126,7 @@ vi.mock('@/modules/conversation/store', () => ({
 }));
 
 vi.mock('@/modules/app-builder-studio/store', () => ({
-  useAppBuilderStudioPointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
+  useAppBuilderStudioPointersStore: (selector: (state: typeof v2PointersState) => unknown) => selector(v2PointersState),
   useAppBuilderStudioStore: (
     selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
   ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
@@ -158,6 +157,9 @@ describe('AppSidebar', () => {
     autoCollapseState.isMobile = false;
     autoCollapseState.state = 'expanded';
     convoState.loading = false;
+    storeFns.conversationsHasMore = false;
+    storeFns.fetchConversations.mockReset();
+    Object.assign(v2PointersState, { loading: false, nextCursor: null });
     convoState.conversations = defaultConversations;
     storeFns.currentConversationId = 'c1';
     permissionState.governance = true;
@@ -240,7 +242,7 @@ describe('AppSidebar', () => {
     expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 25 });
   });
 
-  it('shows five recent chats without date headings and anchors All chats in the footer', () => {
+  it('shows all loaded chats in the scrolling middle and anchors All chats in the footer', () => {
     convoState.conversations = Array.from({ length: 30 }, (_, i) => ({
       id: `c${i}`,
       title: `Chat ${i}`,
@@ -254,7 +256,7 @@ describe('AppSidebar', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getAllByText(/^conversation-c\d+$/)).toHaveLength(5);
+    expect(screen.getAllByText(/^conversation-c\d+$/)).toHaveLength(30);
     const allChatsLink = screen.getByRole('link', { name: /recentChats\.allChats/ });
     const history = screen.getByRole('button', { name: 'History' }).closest<HTMLElement>('[data-slot="collapsible"]');
     expect(allChatsLink).toHaveAttribute('href', '/chats');
@@ -264,6 +266,64 @@ describe('AppSidebar', () => {
     expect(allChatsLink.closest('[data-sidebar="footer"]')).toBeInTheDocument();
     expect(screen.queryByText('recentChats.today')).not.toBeInTheDocument();
     expect(screen.queryByText('recentChats.older')).not.toBeInTheDocument();
+  });
+
+  it('appends history near the bottom and prevents duplicate requests', async () => {
+    storeFns.conversationsHasMore = true;
+    v2PointersState.nextCursor = 'next-v2';
+    const view = <MemoryRouter><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>;
+    const { container } = render(view);
+    const nav = container.querySelector('nav')!;
+    Object.defineProperties(nav, { scrollHeight: { value: 1000 }, clientHeight: { value: 400 }, scrollTop: { value: 0, writable: true } });
+    storeFns.fetchConversations.mockClear();
+    v2PointersState.fetch.mockClear();
+    fireEvent.scroll(nav);
+    expect(storeFns.fetchConversations).not.toHaveBeenCalled();
+    let finish!: () => void;
+    storeFns.fetchConversations.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    nav.scrollTop = 500;
+    fireEvent.scroll(nav);
+    fireEvent.scroll(nav);
+    expect(storeFns.fetchConversations).toHaveBeenCalledTimes(1);
+    expect(storeFns.fetchConversations).toHaveBeenCalledWith({ limit: 25 });
+    expect(v2PointersState.fetch).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+  });
+
+  it('does not load another page after both histories are exhausted', () => {
+    const { container } = render(<MemoryRouter><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    storeFns.fetchConversations.mockClear();
+    v2PointersState.fetch.mockClear();
+    fireEvent.scroll(container.querySelector('nav')!);
+    expect(storeFns.fetchConversations).not.toHaveBeenCalled();
+    expect(v2PointersState.fetch).not.toHaveBeenCalled();
+  });
+
+  it('restores older pinned rows before loaded history without duplicating loaded pins', () => {
+    localStorage.setItem('sidebar:pins:u1', JSON.stringify([
+      { kind: 'v1', id: 'older', title: 'Old pinned chat', sortTime: 1 },
+      { kind: 'v1', id: 'c2', title: 'Second', sortTime: 2 },
+    ]));
+    render(<MemoryRouter><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    expect(screen.getAllByText(/^conversation-/).map((node) => node.textContent)).toEqual([
+      'conversation-older', 'conversation-c2', 'conversation-c1',
+    ]);
+    expect(screen.getByText('recentChats.pinned')).toBeInTheDocument();
+  });
+
+  it('does not fetch history while loading or when the history section is closed', async () => {
+    storeFns.conversationsHasMore = true;
+    convoState.loading = true;
+    const { container, rerender } = render(<MemoryRouter><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    const nav = container.querySelector('nav')!;
+    storeFns.fetchConversations.mockClear();
+    fireEvent.scroll(nav);
+    expect(storeFns.fetchConversations).not.toHaveBeenCalled();
+    convoState.loading = false;
+    rerender(<MemoryRouter><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    fireEvent.scroll(nav);
+    expect(storeFns.fetchConversations).not.toHaveBeenCalled();
   });
 
   it('does not remap the agents target when its permission is denied', () => {

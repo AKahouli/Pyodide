@@ -1,18 +1,21 @@
-from contextvars import ContextVar
+﻿from contextvars import ContextVar
 from dataclasses import dataclass
-from hmac import compare_digest
 import json
 import re
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 try:  # Unified logging is provided by the shared runtime when deployed.
-    from structlog.contextvars import bind_contextvars, unbind_contextvars
+    from structlog.contextvars import bind_contextvars, reset_contextvars
 except Exception:  # pragma: no cover - optional dependency in bare test installs
     def bind_contextvars(**_kwargs):
         return ()
 
-    def unbind_contextvars(*_args):
+    def reset_contextvars(**_kwargs):
         return None
 
 
@@ -21,6 +24,14 @@ _OBJECT_ID = re.compile(r"^[0-9a-fA-F]{24}$")
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,254}$")
 _LEGACY_HEADER = b"x-pyodide-mcp-token"
 _HEALTH_PATHS = ("/health/live", "/health/ready")
+
+# JWT mode fallbacks for the optional trace fields: the acting user id is the
+# only security-relevant identity; agent/conversation/correlation are
+# traceability aids, and the backend delegated-actor guard (ADR-0024) requires a
+# non-empty correlation id.
+_UNKNOWN_AGENT = "unknown-agent"
+_UNKNOWN_CONVERSATION = "unknown-conversation"
+_UNKNOWN_CORRELATION = "unknown-correlation"
 
 
 def _input_file_names(value: str) -> tuple[str, ...]:
@@ -53,41 +64,46 @@ class PlatformActorContext:
 
 actor_context: ContextVar[PlatformActorContext | None] = ContextVar("pyodide_actor_context", default=None)
 acting_user_id: ContextVar[str | None] = ContextVar("pyodide_acting_user_id", default=None)
+# The verified, backend-issued MCP JWT of the current call (ADR-0024/ADR-0033). Forwarded
+# to the backend as the signed actor assertion; never logged.
+verified_mcp_jwt: ContextVar[str | None] = ContextVar("pyodide_verified_mcp_jwt", default=None)
 workspace_id: ContextVar[str | None] = ContextVar("pyodide_workspace_id", default=None)
 input_file_names: ContextVar[tuple[str, ...]] = ContextVar("pyodide_input_file_names", default=())
 
 
-def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: str) -> bool:
-    if not ingress_token:
-        return False
-
-    authorization_values = [
-        value for name, value in headers if name.lower() == b"authorization"
-    ]
-    if len(authorization_values) != 1:
-        return False
-    if any(name.lower() == _LEGACY_HEADER for name, _value in headers):
-        return False
-
-    parts = authorization_values[0].decode("utf-8", errors="replace").split()
-    return (
-        len(parts) == 2
-        and parts[0].lower() == "bearer"
-        and compare_digest(parts[1], ingress_token)
-    )
-
-
 class TrustedIdentityMiddleware:
-    """Trusts the platform identity carried on the internal connector binding.
+    """JWT-only ingress (ADR-0033): the backend-signed RS256 assertion is the
+    only credential; static tokens and naked user-id headers never authenticate."""
 
-    Only ``X-YellowStorm-User-Id`` is mandatory for execution; the agent, conversation and correlation
-    headers are optional tracing context. A request that is missing the ingress bearer token, presents a
-    spoofed identity, or carries a malformed identity value is rejected before reaching the MCP runtime.
-    """
-
-    def __init__(self, app: ASGIApp, ingress_token: str) -> None:
+    def __init__(self, app: ASGIApp, jwt_public_key: str, jwt_issuer: str, jwt_audience: str) -> None:
+        if not jwt_issuer or not jwt_audience or not isinstance(load_pem_public_key(jwt_public_key.encode()), RSAPublicKey):
+            raise ValueError("JWT authentication requires an RSA public key, issuer and audience")
         self.app = app
-        self.ingress_token = ingress_token
+        self.jwt_public_key = jwt_public_key
+        self.jwt_issuer = jwt_issuer
+        self.jwt_audience = jwt_audience
+
+    def _jwt_identity(self, headers: list[tuple[bytes, bytes]]) -> tuple[str, str]:
+        values = [value for name, value in headers if name.lower() == b"authorization"]
+        if len(values) != 1:
+            return "", ""
+        parts = values[0].decode("utf-8", errors="replace").split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return "", ""
+        try:
+            claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
+                issuer=self.jwt_issuer, audience=self.jwt_audience,
+                options={"require": ["sub", "iss", "aud", "iat", "exp"]})
+            issued_at, expires_at = claims["iat"], claims["exp"]
+            if (type(issued_at) is not int or type(expires_at) is not int
+                    or not 0 < expires_at - issued_at <= 300):
+                return "", ""
+            user_id = claims["sub"]
+            # The acting user is a YellowStorm user (Mongo ObjectId); anything
+            # else never authenticates.
+            return (user_id, parts[1]) if isinstance(user_id, str) and _OBJECT_ID.fullmatch(user_id) else ("", "")
+        except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
+            return "", ""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -95,6 +111,8 @@ class TrustedIdentityMiddleware:
             return
 
         raw_headers = scope.get("headers", [])
+        # The retired static credential is rejected before anything else,
+        # including the health routes (fail-closed, ADR-0033).
         if any(name.lower() == _LEGACY_HEADER for name, _value in raw_headers):
             await _unauthorized(send)
             return
@@ -104,8 +122,13 @@ class TrustedIdentityMiddleware:
             return
 
         headers = {key.lower(): value for key, value in raw_headers}
+        jwt_user_id, assertion = self._jwt_identity(raw_headers)
+        header_user_id = headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
+        if header_user_id and header_user_id != jwt_user_id:
+            await _unauthorized(send)
+            return
         values = {
-            "user_id": headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
+            "user_id": jwt_user_id,
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
             "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
             "correlation_id": headers.get(b"x-correlation-id", b"").decode("utf-8", errors="replace").strip(),
@@ -114,34 +137,48 @@ class TrustedIdentityMiddleware:
             value and not _IDENTIFIER.fullmatch(value)
             for value in values.values()
         )
-        if not _has_valid_bearer_auth(raw_headers, self.ingress_token) or invalid_identity:
+        if not jwt_user_id or invalid_identity:
             await _unauthorized(send)
             return
 
+        # The signed sub already carries the identity; fill the trace fields
+        # so the forwarded headers stay well-formed for the backend guard.
+        values["agent_id"] = values["agent_id"] or _UNKNOWN_AGENT
+        values["conversation_id"] = values["conversation_id"] or _UNKNOWN_CONVERSATION
+        values["correlation_id"] = values["correlation_id"] or _UNKNOWN_CORRELATION
         context = PlatformActorContext(
             user_id=values["user_id"],
             agent_id=values["agent_id"],
             conversation_id=values["conversation_id"],
             correlation_id=values["correlation_id"],
-        ) if values["user_id"] else None
+        )
         workspace_raw = headers.get(b"workspace_id", b"").decode("utf-8", errors="replace").strip()
         files_raw = headers.get(b"x-yellowstorm-input-files", b"").decode("utf-8", errors="replace").strip()
-        user_token = acting_user_id.set(values["user_id"] or None)
+        # Parse connector-binding context BEFORE any ContextVar mutation: a parser
+        # failure (e.g. RecursionError on a deeply nested workspace_id array) must
+        # not leave a half-installed identity behind the cleanup boundary.
+        workspace_value = _first_workspace_id(workspace_raw)
+        files_value = _input_file_names(files_raw)
+        user_token = acting_user_id.set(values["user_id"])
         actor_token = actor_context.set(context)
-        workspace_token = workspace_id.set(_first_workspace_id(workspace_raw))
-        files_token = input_file_names.set(_input_file_names(files_raw))
-        bound = bind_contextvars(
-            username=values["user_id"] or "",
-            agent_id=values["agent_id"] or "",
-            conversation_id=values["conversation_id"] or "",
-            request_id=values["correlation_id"] or "",
-        )
+        assertion_token = verified_mcp_jwt.set(assertion)
+        workspace_token = workspace_id.set(workspace_value)
+        files_token = input_file_names.set(files_value)
+        bound: dict = {}
         try:
+            bound = bind_contextvars(
+                username=values["user_id"],
+                agent_id=context.agent_id,
+                conversation_id=context.conversation_id,
+                request_id=context.correlation_id,
+            )
             await self.app(scope, receive, send)
         finally:
-            unbind_contextvars(*bound)
+            if bound:
+                reset_contextvars(**bound)
             input_file_names.reset(files_token)
             workspace_id.reset(workspace_token)
+            verified_mcp_jwt.reset(assertion_token)
             actor_context.reset(actor_token)
             acting_user_id.reset(user_token)
 

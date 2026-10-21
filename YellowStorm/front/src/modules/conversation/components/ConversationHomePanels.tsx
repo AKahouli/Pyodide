@@ -7,7 +7,8 @@ import { fetchConversations, fetchRecentConversationArtifacts, getArtifactDownlo
 import type { ConversationSummary, RecentConversationArtifact } from '../types';
 import { fetchRecentPlaybookArtifacts, getPlaybooks, requestPlaybookArtifactAccess } from '@/modules/playbook/api';
 import type { PlaybookSummary, RecentPlaybookArtifact } from '@/modules/playbook/types';
-import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { DEFAULT_FEATURE_VISIBILITY } from '@/modules/admin/constants';
+import { getFeatureVisibility } from '@/modules/admin/api';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import type { FeatureVisibility } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';

@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import input_file_names, require_actor_context, workspace_id
+from auth import input_file_names, require_actor_context, verified_mcp_jwt, workspace_id
 
 
 class PyodideBackendError(RuntimeError):
@@ -15,34 +15,26 @@ class YellowStormPyodideClient:
     def __init__(
         self,
         base_url: str,
-        internal_token: str,
         timeout_seconds: float = 100,
         max_response_bytes: int = 512 * 1024,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        if not internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
-        self._internal_token = internal_token
         self._max_response_bytes = max_response_bytes
 
     async def close(self) -> None:
         await self._client.aclose()
 
     async def execute(self, payload: dict[str, Any]) -> Any:
-        headers = {
-            "X-Internal-Token": self._internal_token,
-            **self._actor_headers(),
-        }
         try:
             response = await self._client.post(
                 "/api/v1/internal/pyodide-runtime/execute",
                 json=payload,
-                headers=headers,
+                headers=self._actor_headers(),
             )
         except httpx.TimeoutException as exc:
             raise PyodideBackendError("PYODIDE_EXECUTION_TIMEOUT", "Pyodide execution timed out") from exc
@@ -72,13 +64,20 @@ class YellowStormPyodideClient:
     @staticmethod
     def _actor_headers() -> dict[str, str]:
         context = require_actor_context()
-        headers = {"X-YellowStorm-User-Id": context.user_id}
+        assertion = verified_mcp_jwt.get()
+        # Fail closed: only the verified backend-signed assertion authorizes the relay call.
+        if not assertion:
+            raise PyodideBackendError("PYODIDE_MCP_UNAUTHORIZED", "Missing verified MCP assertion")
+        headers = {
+            # Execution selectors are checked against backend-owned turn bindings;
+            # only the signed assertion supplies the acting user identity.
+            "X-YellowStorm-Mcp-Assertion": assertion,
+            "X-Correlation-Id": context.correlation_id,
+        }
         if context.agent_id:
             headers["X-YellowStorm-Agent-Id"] = context.agent_id
         if context.conversation_id:
             headers["X-YellowStorm-Conversation-Id"] = context.conversation_id
-        if context.correlation_id:
-            headers["X-Correlation-Id"] = context.correlation_id
         workspace = workspace_id.get()
         if workspace:
             headers["X-YellowStorm-Workspace-Id"] = workspace

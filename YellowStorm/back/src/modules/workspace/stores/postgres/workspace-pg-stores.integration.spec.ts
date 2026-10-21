@@ -47,6 +47,22 @@ describeIntegration('workspace PG stores (internal write paths)', () => {
   });
   afterAll(close);
 
+  it('read scope includes ownership, sharing and public access and refreshes after revocation', async () => {
+    const actor = newObjectId();
+    const own = await createWorkspace({ createdBy: actor });
+    const shared = await createWorkspace();
+    const publicId = await createWorkspace();
+    await workspaceStore.updateFields(publicId, { isPublic: true });
+    const denied = await createWorkspace();
+    const share = await shareStore.create({ workspaceId: shared, ownerId: OWNER,
+      sharedWithUserId: actor, permission: 'read', sharedBy: OWNER });
+    const ids = await workspaceStore.findReadableIds(actor, 101);
+    expect(ids).toEqual(expect.arrayContaining([own, shared, publicId]));
+    expect(ids).not.toContain(denied);
+    await shareStore.deleteById(share.id);
+    expect(await workspaceStore.findReadableIds(actor, 101)).not.toContain(shared);
+  });
+
   it('simultaneous upload reservations cannot exceed quota and remain workspace isolated', async () => {
     const id = await createWorkspace({ allocatedStorage: 1024 });
     const other = await createWorkspace({ allocatedStorage: 1024, createdBy: USER2 });

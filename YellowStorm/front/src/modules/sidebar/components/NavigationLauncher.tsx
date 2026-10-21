@@ -3,7 +3,8 @@ import { LayoutGrid } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { SidebarMenuButton } from '@/components/ui/sidebar';
-import { NAVIGATION_TARGETS, navigationLabel, type NavigationNode, type NavigationSettings } from '@/modules/admin';
+import { NAVIGATION_TARGETS, navigationLabel } from '@/modules/admin/navigation';
+import type { NavigationNode, NavigationSettings } from '@/modules/admin';
 import { NAVIGATION_TARGET_ICONS } from './ManagedNavigation';
 
 interface NavigationLauncherProps {

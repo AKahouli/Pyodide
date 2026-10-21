@@ -8,8 +8,6 @@ steps: 20
 permission:
   "*": deny
   sdlc_health: allow
-  "code-review-graph_list_graph_stats_tool": allow
-  hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
   read:
@@ -25,27 +23,26 @@ permission:
   bash:
     "*": deny
     "git status*": allow
+    "graphify query*": allow
+    "graphify path*": allow
+    "graphify explain*": allow
+    "graphify affected*": allow
+    "graphify god-nodes*": allow
+    "graphify hook status*": allow
     "git diff*": allow
     "git log*": allow
     "git show*": allow
   task: deny
-  "code-review-graph_semantic_search_nodes_tool": allow
-  "code-review-graph_query_graph_tool": allow
-  "code-review-graph_get_impact_radius_tool": allow
-  "code-review-graph_get_affected_flows_tool": allow
-  "code-review-graph_get_minimal_context_tool": allow
-  "code-review-graph_get_architecture_overview_tool": allow
-  "code-review-graph_list_communities_tool": allow
   "context7_*": allow
   skill:
     "*": deny
-    crg-navigation: allow
+    graphify-navigation: allow
     context7-mcp: allow
 ---
 
 You produce a minimal, verifiable implementation plan. You never modify code.
 
-Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests. A graph failure does not block coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 ## Invoke for
 
@@ -85,4 +82,4 @@ Constraints: ...
 
 Be precise without dictating incidental details. Keep it under 30 lines; identify independent work that can run in parallel.
 
-Return this handoff to the primary agent only; no human completion report or Experience follow-up. State the exact next action when work remains.
+Return this handoff to the primary agent only; no human completion report. State the exact next action when work remains.
