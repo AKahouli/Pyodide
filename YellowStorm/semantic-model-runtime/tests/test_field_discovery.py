@@ -38,7 +38,7 @@ def profile(monkeypatch):
 def indexed(monkeypatch):
     authorized = []
 
-    async def resolve(pool, entry, actor):
+    async def resolve(pool, entry, actor, **kwargs):
         authorized.append((entry["source"]["assetId"], actor))
         return {"current": {**SOURCE, **entry["source"], "originalName": "authoritative.pdf"},
                 "candidate": {"documentPk": 42}}
@@ -49,6 +49,55 @@ def indexed(monkeypatch):
     monkeypatch.setattr(module, "resolve_indexed_document", resolve)
     monkeypatch.setattr(module, "_whole_document", whole)
     return authorized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["preview", "suggestions"])
+@pytest.mark.parametrize("spoof", [None, "missing", "actor", "model", "document"])
+async def test_interactive_routes_require_exact_backend_metadata(monkeypatch, route, spoof):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.api.population_routes import preview_document_fields, suggest_document_fields
+
+    source = {**SOURCE, "sizeBytes": 123, "indexingStatus": "pending"}
+    body = {**REQUEST, "modelId": "model", "sources": [source]}
+    body["authorizedMetadata"] = {"actorUserId": "actor", "modelId": "model", "sources": [deepcopy(source)]}
+    if route == "preview":
+        body.pop("concept")
+        body.pop("sources")
+        body["entry"] = {"source": source, "fieldMappings": [{"mode": "metadata", "targetAttribute": "name",
+                                                             "sourceField": "document_name"}]}
+    if spoof == "missing":
+        body.pop("authorizedMetadata")
+    elif spoof in {"actor", "model"}:
+        body["authorizedMetadata"]["actorUserId" if spoof == "actor" else "modelId"] = "other"
+    elif spoof == "document":
+        body["authorizedMetadata"]["sources"][0]["assetId"] = "c" * 24
+
+    async def capabilities(*args):
+        return {"capabilities": {"structure": False}}
+
+    async def never(*args, **kwargs):
+        pytest.fail("Interactive requests must not mint task grants or fetch asset metadata")
+
+    monkeypatch.setattr(document, "detect_capabilities", capabilities)
+    monkeypatch.setattr(document, "fetch_workspace_asset_metadata", never)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(index_pool=object())))
+
+    async def invoke():
+        if route == "preview":
+            return await preview_document_fields(body, request)
+        return await suggest_document_fields(module.FieldDiscoveryRequest.model_validate(body), request)
+
+    if spoof:
+        with pytest.raises(HTTPException) as error:
+            await invoke()
+        assert error.value.status_code == 403
+    else:
+        result = await invoke()
+        assert (result["status"] == "index_unavailable" if route == "preview"
+                else result["unread"][0]["status"] == "index_unavailable")
 
 
 async def run(payload, body=None, seen=None):
@@ -189,3 +238,52 @@ async def test_route_requires_service_key_and_validated_request(monkeypatch):
         response = await client.post(route, json={**REQUEST, "sources": [SOURCE] * 6},
                                      headers={"X-Semantic-Service-Key": "service-test"})
         assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_authenticated_interactive_reads_use_authorized_metadata_without_task(monkeypatch):
+    from app.main import create_app
+    from app.datasource import asset_delivery
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_SERVICE_KEY", "service-test")
+    monkeypatch.setenv("YELLOWSTORM_BACKEND_URL", "http://backend.test")
+    source = {**SOURCE, "sizeBytes": 123, "indexingStatus": "ready"}
+    authority = {"actorUserId": "actor", "modelId": "model", "sources": [source]}
+    common = {"actorUserId": "actor", "modelId": "model", "authorizedMetadata": authority}
+    preview = {**common, "entry": {"source": source, "fieldMappings": [
+        {"mode": "metadata", "sourceField": "document_name", "targetAttribute": "name"}]}}
+    suggestions = {**REQUEST, **common, "sources": [source]}
+
+    async def capabilities(*args):
+        return {"capabilities": {"structure": True}}
+
+    async def candidates(*args, **kwargs):
+        return {"resolution": "resolved", "candidates": [{"documentPk": 42}]}
+
+    async def whole(*args):
+        return sections(), True
+
+    async def completion(*args, **kwargs):
+        return {"suggestions": []}
+
+    monkeypatch.setattr(document, "detect_capabilities", capabilities)
+    monkeypatch.setattr(document, "resolve_document_candidates", candidates)
+    monkeypatch.setattr(module, "_whole_document", whole)
+    monkeypatch.setattr(module, "_completion", completion)
+    app = create_app()
+    app.state.index_pool = object()
+    assert asset_delivery._execution.get() is None
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://runtime") as client:
+        for path, body in (("document-preview", preview), ("document-field-suggestions", suggestions)):
+            url = f"/v1/semantic-model-population/{path}"
+            assert (await client.post(url, json=body)).status_code == 401
+            response = await client.post(url, json=body, headers={"X-Semantic-Service-Key": "service-test"})
+            assert response.status_code == 200, response.text
+            assert (response.json()["status"] == "read" if path == "document-preview"
+                    else response.json()["documentsRead"] == 1)
+    # Interactive authority never becomes ambient background-job authority.
+    assert asset_delivery._execution.get() is None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: pytest.fail("No network allowed"))) as client:
+        monkeypatch.setenv("YELLOWSTORM_BACKEND_URL", "http://backend.test")
+        with pytest.raises(RuntimeError, match="asset_execution_authority_missing"):
+            await asset_delivery.fetch_workspace_asset_metadata(source, "actor", client=client)

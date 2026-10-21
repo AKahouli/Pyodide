@@ -236,10 +236,13 @@ async def test_preview_and_population_accept_generated_value_with_supplied_citat
         return {"current": SOURCE, "assetRef": SOURCE, "capabilities": {"capabilities": {}}, "candidate": {"documentPk": 42}}
 
     monkeypatch.setattr(document, "resolve_indexed_document", resolved)
-    preview = await preview_document_fields({"actorUserId": "u1", "modelId": "model-1", "entry": ai_amendment_entry(
+    preview_entry = ai_amendment_entry(
         *AI_DETERMINISTIC,
         {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai"},
-    )}, SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(index_pool=object()))))
+    )
+    preview = await preview_document_fields({"actorUserId": "u1", "modelId": "model-1", "entry": preview_entry,
+        "authorizedMetadata": {"actorUserId": "u1", "modelId": "model-1", "sources": [preview_entry["source"]]}},
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(index_pool=object()))))
     assert preview["fields"]["effective_date"]["value"] == assertion["value"]
     assert preview["fields"]["effective_date"]["reason"] == "found"
 

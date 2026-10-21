@@ -142,9 +142,11 @@ export class SemanticAssetGrantService {
     const token = payload?.assetAdmission;
     const admission = this.open<Admission>(token as string, 'semantic-asset-admission');
     const created = new Date(task.createdAt).getTime() / 1000;
+    // App issuance uses whole seconds; DB creation uses its own transaction clock.
+    // Allow at most one second of early creation, never extend signed expiry.
     if (admission.nonce !== proof.jobId || !Number.isSafeInteger(admission.iat) || !Number.isSafeInteger(admission.exp)
       || admission.exp <= admission.iat || admission.exp - admission.iat > 300 || !Number.isFinite(created)
-      || created < admission.iat || created > admission.exp || typeof admission.command !== 'string'
+      || created < admission.iat - 1 || created > admission.exp || typeof admission.command !== 'string'
       || payload?.assetCommand !== admission.command) throw new UnauthorizedException('Canonical asset admission mismatch');
     const signed = JSON.parse(admission.command) as Record<string, unknown>;
     const signedPayload = signed.payload as Record<string, unknown>;

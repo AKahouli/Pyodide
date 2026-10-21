@@ -663,13 +663,16 @@ describe('SemanticSourceMappingService boundaries', () => {
     runtime.suggestDocumentFields = jest.fn().mockResolvedValue(suggestions);
     await expect(service.documentFieldSuggestions('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentIds: ['document-1', 'document-1'], description: 'Loan contracts',
+      ...{ actorUserId: 'spoofed-actor', modelId: 'spoofed-model',
+        authorizedMetadata: { sources: [{ assetId: 'spoofed-document' }] } },
     })).resolves.toEqual(suggestions);
     expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
     expect(documents.findById).toHaveBeenCalledTimes(1);
     expect(runtime.suggestDocumentFields).toHaveBeenCalledWith(expect.objectContaining({
-      actorUserId: 'user-1', concept: { id: 'concept-1', label: 'Contract', description: 'Loan contracts', attributes: [{ key: 'id', label: 'ID', type: 'text' }] },
+      actorUserId: 'user-1', modelId: 'model-1', concept: { id: 'concept-1', label: 'Contract', description: 'Loan contracts', attributes: [{ key: 'id', label: 'ID', type: 'text' }] },
       sources: [expect.objectContaining({ workspaceId: 'workspace-1', assetId: 'document-1', originalName: 'Source.pdf', mimeType: 'application/pdf' })],
     }));
+    expect(runtime.suggestDocumentFields.mock.calls[0][0]).not.toHaveProperty('authorizedMetadata');
     expect(database.query.mock.calls.every(([sql]) => /^SELECT/.test(String(sql).trim()))).toBe(true);
   });
 

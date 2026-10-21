@@ -1380,6 +1380,8 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
     """Readable gaps of a population: missing values per concept attribute,
     links that could not be resolved, and the other gap kinds grouped by
     concept. Bounded so a large population keeps a small coverage row."""
+    from app.jobs.error_details import _token
+
     entities = outcome.get("entities", [])
     missing_values = []
     for concept in specification.get("concepts", []):
@@ -1417,8 +1419,14 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
             other[key] = other.get(key, 0) + 1
             if gap.get("field"):
                 fields.setdefault(key, set()).add(gap["field"])
-            if gap.get("details") and key not in details:
+            if kind != "source_unavailable" and gap.get("details") and key not in details:
                 details[key] = {**gap["details"], **({"examples": gap["examples"]} if gap.get("examples") else {})}
+            if kind == "source_unavailable":
+                sources = details.setdefault(key, {}).setdefault("sources", [])
+                if len(sources) < MAX_GAP_SAMPLES_PER_GROUP:
+                    sources.append({"code": _token(gap.get("detail"), "source_unavailable"),
+                                    "asset": _asset(gap),
+                                    **({"fields": [gap["field"]]} if gap.get("field") else {})})
             if other[key] <= MAX_GAP_SAMPLES_PER_GROUP and len(row_samples) < MAX_GAP_SAMPLES:
                 row_samples.append({"conceptId": gap.get("conceptId"), "kind": kind,
                                     **({"field": gap["field"]} if gap.get("field") else {}),
