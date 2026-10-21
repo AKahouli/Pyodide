@@ -1,4 +1,9 @@
 {
+  "recentChats.pinned": "Épinglées",
+  "conversations.pin": "Épingler la conversation",
+  "conversations.unpin": "Désépingler la conversation",
+  "conversations.pinned": "Conversation épinglée",
+  "conversations.pinError": "Impossible d’enregistrer les conversations épinglées dans ce navigateur.",
   "actions.newChat.label": "Nouvelle discussion",
   "actions.newChat.tooltip": "Démarrer une nouvelle conversation",
   "actions.platformOverview.label": "Vue d'ensemble",

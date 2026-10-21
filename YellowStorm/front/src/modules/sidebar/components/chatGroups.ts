@@ -7,7 +7,7 @@ export type DayBucket = 'today' | 'yesterday' | 'last7' | 'older';
 
 export const DAY_BUCKETS: readonly DayBucket[] = ['today', 'yesterday', 'last7', 'older'] as const;
 
-/** Maximum rows rendered in the sidebar rail before the "All chats" link. */
+/** Page size for sidebar history and the shared history listing. */
 export const RECENT_CHATS_CAP = 25;
 
 const DAY_MS = 86_400_000;

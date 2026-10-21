@@ -46,6 +46,7 @@ interface ManagedNavigationProps {
   onNewConversation: () => void;
   historyRows: HistoryRow[];
   historyLoading: boolean;
+  onLoadMoreHistory?: () => void;
   showAllChatsLink: boolean;
   collapsed: boolean;
   hideHistory?: boolean;
@@ -72,7 +73,11 @@ export function ManagedNavigation(props: ManagedNavigationProps) {
   const historyNode = visibleNavigationItems(props.settings)
     .find((node) => node.targetKey === 'history' && navigationTargetAllowed('history', props));
   return (
-    <nav ref={navRef} className='flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto'>
+    <nav ref={navRef} className='flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain' onScroll={(event) => {
+      const nav = event.currentTarget;
+      if (!props.collapsed && nav.querySelector('[data-history-list]')
+        && nav.scrollHeight - nav.scrollTop - nav.clientHeight < 160) props.onLoadMoreHistory?.();
+    }}>
       {roots.map((node) => <RootNode key={node.id} node={node} {...props} hideNewChat hideHistory={!props.collapsed} />)}
       {!props.collapsed && historyNode && <RootNode node={historyNode} {...props} hideNewChat />}
     </nav>
@@ -149,7 +154,7 @@ function TreeNode({ node, ...props }: { node: NavigationNode } & ManagedNavigati
     return (
       <Collapsible open={open} onOpenChange={setOpen}>
         <SidebarMenuItem><CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} isActive={active}><History /><span>{label}</span><ChevronRight className={cn('ms-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger></SidebarMenuItem>
-        <CollapsibleContent className='ps-2'><RecentChats rows={props.historyRows} loading={props.historyLoading} showAllChatsLink={props.showAllChatsLink} compact /></CollapsibleContent>
+        <CollapsibleContent className='ps-2'><RecentChats rows={props.historyRows} loading={props.historyLoading} showAllChatsLink={props.showAllChatsLink} compact includeSavedPins /></CollapsibleContent>
       </Collapsible>
     );
   }

@@ -1,6 +1,6 @@
 import { useState, useCallback, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { MoreHorizontal, Pencil, Loader2, Share, Share2, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
+import { MoreHorizontal, Pencil, Pin, PinOff, Loader2, Share, Share2, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuAction, useSidebar } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
@@ -37,6 +37,8 @@ export interface ConversationItemProps {
   isGroup?: boolean;
   isShared?: boolean;
   mentionCount?: number;
+  pinned?: boolean;
+  onTogglePin?: () => void;
   onRename?: (newTitle: string) => Promise<void>;
   onDelete?: () => Promise<void>;
   onShare?: () => void;
@@ -56,6 +58,8 @@ export const ConversationItem = memo(function ConversationItem({
   isGroup,
   isShared,
   mentionCount,
+  pinned,
+  onTogglePin,
   onRename,
   onDelete,
   onShare,
@@ -147,6 +151,7 @@ export const ConversationItem = memo(function ConversationItem({
               />
             )}
             <span className='truncate'>{displayTitle}</span>
+            {pinned && <Pin aria-label={t('conversations.pinned')} className='h-3 w-3 shrink-0 text-muted-foreground' />}
             {icon}
           </NavLink>
         </SidebarMenuButton>
@@ -163,6 +168,10 @@ export const ConversationItem = memo(function ConversationItem({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent side='right' align='start'>
+            {onTogglePin && <DropdownMenuItem onClick={onTogglePin} className='cursor-pointer'>
+              {pinned ? <PinOff className='me-2 h-4 w-4' /> : <Pin className='me-2 h-4 w-4' />}
+              {t(pinned ? 'conversations.unpin' : 'conversations.pin')}
+            </DropdownMenuItem>}
             <DropdownMenuItem onClick={handleRenameClick} className='cursor-pointer'>
               <Pencil className='me-2 h-4 w-4' />
               {t('conversations.rename')}

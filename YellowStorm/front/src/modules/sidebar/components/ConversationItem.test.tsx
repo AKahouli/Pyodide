@@ -111,6 +111,17 @@ describe('ConversationItem', () => {
     expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
   });
 
+  it('offers pin and unpin actions without navigating', async () => {
+    const toggle = vi.fn();
+    const { rerender } = render(<MemoryRouter><ConversationItem id='c1' title='My convo' onTogglePin={toggle} /></MemoryRouter>);
+    await userEvent.click(screen.getByRole('button', { name: 'conversations.pin' }));
+    expect(toggle).toHaveBeenCalledTimes(1);
+    rerender(<MemoryRouter><ConversationItem id='c1' title='My convo' onTogglePin={toggle} pinned /></MemoryRouter>);
+    expect(screen.getByLabelText('conversations.pinned')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'conversations.unpin' }));
+    expect(toggle).toHaveBeenCalledTimes(2);
+  });
+
   it('renders the streaming spinner only when streaming', () => {
     const { container, rerender } = render(
       <MemoryRouter>
