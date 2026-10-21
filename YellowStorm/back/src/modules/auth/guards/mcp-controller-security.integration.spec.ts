@@ -18,6 +18,9 @@ import { PlaybookAssistantService } from '@modules/playbook-flow/assistant/playb
 import { PlaybookAssistantContextService } from '@modules/playbook-flow/assistant/playbook-assistant-context.service';
 import { SemanticModelAssistantInternalController } from '@modules/semantic-model/controllers/semantic-model-assistant-internal.controller';
 import { SemanticModelAssistantService } from '@modules/semantic-model/services/semantic-model-assistant.service';
+import { PyodideRuntimeInternalController } from '@modules/pyodide-runtime/pyodide-runtime-internal.controller';
+import { PyodideFileResolver } from '@modules/pyodide-runtime/pyodide-file.resolver';
+import { PyodideRuntimeDispatcher } from '@modules/pyodide-runtime/pyodide-runtime.dispatcher';
 import { UserService } from '@modules/user/user.service';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { Permissions } from '@modules/authorization/constants/permissions';
@@ -33,20 +36,31 @@ jest.mock('@modules/workspace/workspace-share.service', () => ({ WorkspaceShareS
 interface HttpProbe {
   set(name: string, value: string | string[]): HttpProbe;
   set(headers: Record<string, string>): HttpProbe;
+  send(body: unknown): HttpProbe;
   expect(status: number): Promise<{ body: unknown }>;
 }
 function request(server: Server): { get(path: string): HttpProbe; post(path: string): HttpProbe } {
   function probeFor(path: string, method: string): HttpProbe {
     const headers: Record<string, string | string[]> = {};
+    let payload: unknown;
     const probe: HttpProbe = {
       set(name: string | Record<string, string>, value?: string | string[]): HttpProbe {
         if (typeof name === 'string') headers[name] = value!;
         else Object.assign(headers, name);
         return probe;
       },
+      send(value: unknown): HttpProbe {
+        payload = value;
+        return probe;
+      },
       async expect(status: number) {
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('Missing test HTTP listener');
+        if (payload !== undefined) {
+          const serialized = JSON.stringify(payload);
+          headers['Content-Length'] = String(Buffer.byteLength(serialized));
+          headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+        }
         return new Promise((resolve, reject) => {
           const req = httpRequest({ hostname: '127.0.0.1', port: address.port, path, method, headers }, response => {
             const chunks: Buffer[] = [];
@@ -61,6 +75,7 @@ function request(server: Server): { get(path: string): HttpProbe; post(path: str
             });
           });
           req.on('error', reject);
+          if (payload !== undefined) req.write(JSON.stringify(payload));
           req.end();
         });
       },
@@ -93,6 +108,8 @@ describe('MCP controller security boundary over HTTP', () => {
   const team = { findAllForUser: jest.fn(async () => [{ id: 'team' }]) };
   const playbook = { searchPlaybooks: jest.fn(async () => [{ id: 'playbook' }]) };
   const semantic = { listModels: jest.fn(async () => [{ id: 'semantic' }]), createModel: jest.fn(async () => ({ id: 'created' })) };
+  const pyodideDispatcher = { execute: jest.fn(async () => ({ ok: true, stdout: '', stderr: '', execution: { runtime: 'pyodide', durationMs: 1, coldStart: false, loadedPackages: [] } })) };
+  const pyodideResolver = { resolveInputs: jest.fn(async () => []), persistOutputs: jest.fn(async () => []) };
   const audit = { logSuccess: jest.fn() };
   let accountStatus: string;
   let permissions: string[];
@@ -125,14 +142,14 @@ describe('MCP controller security boundary over HTTP', () => {
       NODE_ENV: 'production', MCP_JWT_PRIVATE_KEY_FILE: keyPath, MCP_JWT_ISSUER: 'ws01-test',
     };
     const module = await Test.createTestingModule({
-      controllers: [AgentCrudInternalController, TeamCrudInternalController, PlaybookAssistantInternalController, SemanticModelAssistantInternalController],
+      controllers: [AgentCrudInternalController, TeamCrudInternalController, PlaybookAssistantInternalController, SemanticModelAssistantInternalController, PyodideRuntimeInternalController],
       providers: [DelegatedActorGuard, McpJwtService,
-        { provide: ConfigService, useValue: { get: (key: string, fallback?: unknown) => values[key] ?? fallback } },
+        { provide: ConfigService, useValue: { get: (key: string, fallback?: unknown) => (key === 'pyodideRuntime.enabled' ? true : values[key as string] ?? fallback) } },
         { provide: UserService, useValue: { findById: jest.fn(async () => ({ id: userId, status: accountStatus, email: 'ws01@example.test' })) } },
         { provide: AuthorizationService, useValue: {
           getUserRoles: jest.fn(async () => [{ id: 'role' }]), getUserPermissions: jest.fn(async () => permissions),
         } },
-        { provide: PgConnectorStore, useValue: { findById: jest.fn(async (id: string) => [...targets, ...platformTargets].some(target => target.audience === id) ? {
+        { provide: PgConnectorStore, useValue: { findById: jest.fn(async (id: string) => [...targets, ...platformTargets, { audience: 'mcp-pyodide' }].some(target => target.audience === id) ? {
           id, isActive: active, mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
           mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user',
             allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
@@ -142,6 +159,7 @@ describe('MCP controller security boundary over HTTP', () => {
         { provide: TeamService, useValue: team },
         { provide: PlaybookAssistantService, useValue: playbook }, { provide: PlaybookAssistantContextService, useValue: {} },
         { provide: SemanticModelAssistantService, useValue: semantic },
+        { provide: PyodideRuntimeDispatcher, useValue: pyodideDispatcher }, { provide: PyodideFileResolver, useValue: pyodideResolver },
       ],
     }).compile();
     app = module.createNestApplication({ logger: false });
@@ -202,6 +220,55 @@ describe('MCP controller security boundary over HTTP', () => {
     await request(app.getHttpServer()).get(target.path).set(headers(target, assertion(foreign.audience)))
       .set('X-YellowStorm-Mcp-Audience', foreign.audience).expect(401);
     expectNoDomainWork();
+  });
+  describe('Pyodide relay surface', () => {
+    const PYODIDE_AUDIENCE = 'mcp-pyodide';
+    const execute = (token: string) => request(app.getHttpServer())
+      .post('/internal/pyodide-runtime/execute')
+      .set({
+        'X-YellowStorm-Mcp-Assertion': token,
+        'X-Correlation-Id': randomUUID(),
+        'X-YellowStorm-Workspace-Id': '65f0000000000000000000aa',
+      })
+      .send({ code: '1 + 1' });
+
+    it('accepts the current signed actor and dispatches with the verified subject', async () => {
+      const response = await execute(assertion(PYODIDE_AUDIENCE)).expect(200);
+      expect(pyodideDispatcher.execute).toHaveBeenCalledWith(userId, expect.objectContaining({ code: '1 + 1' }));
+      expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+        actorId: userId,
+        metadata: expect.objectContaining({ servicePrincipal: PYODIDE_AUDIENCE, connectorId: PYODIDE_AUDIENCE }),
+      }));
+      expect(response.body).toMatchObject({ ok: true });
+    });
+
+    it('rejects a foreign-audience assertion before the relay runs', async () => {
+      await execute(assertion('mcp-agent')).expect(401);
+      expect(pyodideDispatcher.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing assertion before the relay runs', async () => {
+      await execute('').expect(401);
+      expect(pyodideDispatcher.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects a spoofed user even with a valid assertion', async () => {
+      await execute(assertion(PYODIDE_AUDIENCE))
+        .set('X-YellowStorm-User-Id', '65f000000000000000000099').expect(401);
+      expect(pyodideDispatcher.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects a stale connector revision before the relay runs', async () => {
+      revision = 2;
+      await execute(assertion(PYODIDE_AUDIENCE)).expect(401);
+      expect(pyodideDispatcher.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects legacy machine credentials without a signed assertion', async () => {
+      await execute('').set('X-Internal-Token', 'retired-test-secret')
+        .set('X-YellowStorm-User-Id', userId).expect(401);
+      expect(pyodideDispatcher.execute).not.toHaveBeenCalled();
+    });
   });
   it.each([
     ['missing assertion', (): string => ''], ['invalid signature', (): string => 'not-a-jwt'],

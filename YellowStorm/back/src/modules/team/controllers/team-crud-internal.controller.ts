@@ -1,4 +1,4 @@
-import {
+﻿import {
   Controller,
   Get,
   Post,
@@ -13,7 +13,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { DelegatedActorGuard, actingUserIdFrom, McpRouteAudience } from '../../auth/guards/delegated-actor.guard';
+import { DelegatedActorGuard, actingUserIdFrom } from '../../auth/guards/delegated-actor.guard';
+import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { TeamService } from '../team.service';
 import { CreateTeamDto, UpdateTeamDto, UpdateHierarchyDto } from '../dto';
 import { ITeamResponse, ITeamWithAgentsResponse } from '../interfaces/team.interface';

@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
-import { DelegatedActorGuard, McpRouteAudience } from '@modules/auth/guards/delegated-actor.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
   AssistantCloneModelDto,

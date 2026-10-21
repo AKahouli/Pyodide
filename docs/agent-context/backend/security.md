@@ -26,6 +26,11 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 ## 15. Internal service principals and MCP egress (SEC-06/07/08)
 
 **JWT-only MCP callbacks:** semantic, Playbook and Agent/Team internal callbacks use
+the shared identity guard; Pyodide's `internal/pyodide-runtime/execute` also uses
+it with the dedicated `mcp-pyodide` audience. The browser relay dispatches using
+the verified subject; its former generic-key/custom user-header guard is retired.
+
+These callbacks use
 `DelegatedActorGuard` without a separate static service token. The forwarded signed
 assertion must satisfy the route-owned audience and current connector/revision,
 delegation and actor checks; domain permissions still apply. Audit principal comes

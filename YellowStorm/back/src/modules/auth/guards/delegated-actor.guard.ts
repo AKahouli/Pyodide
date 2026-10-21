@@ -1,7 +1,8 @@
 import { isObjectId } from '@common/postgres/object-id';
-import { CanActivate, ExecutionContext, Injectable, SetMetadata } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { assertUnambiguousSecurityHeaders } from './internal-service-principal.guard';
+import { MCP_ROUTE_AUDIENCE_METADATA, ROUTE_PRINCIPALS } from './mcp-route-audience';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
@@ -11,26 +12,7 @@ import { UserService } from '@modules/user/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 
 type Headers = Record<string, string | string[] | undefined>;
-const AUDIENCE_METADATA = 'yellowstorm:mcp-route-audience';
-const ROUTE_PRINCIPALS: Record<string, string> = {
-  'mcp-agent': 'mcp-agent',
-  'mcp-playbook': 'mcp-playbook',
-  'mcp-semantic-model': 'semantic-model-mcp',
-  'mcp-platform': 'mcp-platform',
-};
-export type McpRouteAudienceValue = 'mcp-agent' | 'mcp-playbook' | 'mcp-semantic-model' | 'mcp-platform';
-/**
- * Declare the trusted assertion audience(s) for an internal MCP surface in code.
- * Multiple audiences exist only for the platform-MCP migration: legacy per-server
- * audiences and the shared `mcp-platform` audience are accepted until the old
- * deployments retire, then each list collapses back to one entry.
- */
-export const McpRouteAudience = (...audiences: McpRouteAudienceValue[]) => {
-  if (!audiences.length || audiences.some((audience) => !ROUTE_PRINCIPALS[audience])) {
-    throw new Error('McpRouteAudience requires trusted audiences');
-  }
-  return SetMetadata(AUDIENCE_METADATA, audiences);
-};
+export { McpRouteAudience, McpRouteAudienceValue } from './mcp-route-audience';
 
 interface DelegatedRequest {
   headers: Headers;
@@ -85,7 +67,7 @@ export class DelegatedActorGuard implements CanActivate {
     if (typeof assertion !== 'string' || !assertion.trim()) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing MCP delegated actor assertion');
     }
-    const routeAudiences = this.reflector.getAllAndOverride<string[] | string>(AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
+    const routeAudiences = this.reflector.getAllAndOverride<string[] | string>(MCP_ROUTE_AUDIENCE_METADATA, [context.getHandler(), context.getClass()]);
     const allowed = (Array.isArray(routeAudiences) ? routeAudiences : routeAudiences ? [routeAudiences] : [])
       .filter((audience) => Boolean(ROUTE_PRINCIPALS[audience]));
     if (!allowed.length) throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Missing trusted MCP route audience');

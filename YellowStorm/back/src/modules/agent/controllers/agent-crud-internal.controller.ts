@@ -1,4 +1,4 @@
-import { isObjectId } from '@common/postgres/object-id';
+﻿import { isObjectId } from '@common/postgres/object-id';
 import {
   Controller,
   Get,
@@ -14,7 +14,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
-import { DelegatedActorGuard, actingUserIdFrom, McpRouteAudience } from '../../auth/guards/delegated-actor.guard';
+import { DelegatedActorGuard, actingUserIdFrom } from '../../auth/guards/delegated-actor.guard';
+import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { AgentService } from '../agent.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { ModelsService } from '../../models/models.service';

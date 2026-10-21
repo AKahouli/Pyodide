@@ -3,10 +3,10 @@ import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId } from '@common/postgres/object-id';
 import { Public } from '@modules/auth/decorators/public.decorator';
-import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
+import { actingUserIdFrom, DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
 import { ExecutePyodideDto } from './dto/execute-pyodide.dto';
-import { PyodideActorGuard, pyodideActingUserIdFrom } from './guards/pyodide-actor.guard';
 import { PyodideFileError, PyodideFileResolver } from './pyodide-file.resolver';
 import { PyodideRuntimeDispatcher } from './pyodide-runtime.dispatcher';
 import { PyodideErrorCode, PyodideExecutionResult } from './pyodide-runtime.types';
@@ -19,9 +19,11 @@ interface ActorRequest {
 }
 
 /**
- * Trusted service-to-service surface for mcp-pyodide. The acting user and the workspace come from the
- * headers (never the body), and the request stays open until the browser worker finishes, errors, times
- * out or disconnects.
+ * Trusted service-to-service surface for mcp-pyodide (ADR-0033 baseline). Identity
+ * comes only from the forwarded, backend-signed assertion verified by
+ * {@link DelegatedActorGuard} — never from a caller-selected user header — and the
+ * request stays open until the browser worker finishes, errors, times out or
+ * disconnects.
  *
  * Responses skip the global `{ success, data, meta }` wrapper: the MCP reads the execution contract off
  * the raw body.
@@ -30,7 +32,8 @@ interface ActorRequest {
 @SkipResponseWrap()
 @ApiTags('Pyodide Runtime Internal')
 @Controller('internal/pyodide-runtime')
-@UseGuards(InternalServiceGuard, PyodideActorGuard)
+@UseGuards(DelegatedActorGuard)
+@McpRouteAudience('mcp-pyodide')
 export class PyodideRuntimeInternalController {
   constructor(
     private readonly dispatcher: PyodideRuntimeDispatcher,
@@ -41,14 +44,14 @@ export class PyodideRuntimeInternalController {
   @Post('execute')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Relay a Python execution to the acting user browser runtime' })
-  @ApiHeader({ name: 'X-Internal-Token', required: true })
-  @ApiHeader({ name: 'X-YellowStorm-User-Id', required: true })
+  @ApiHeader({ name: 'X-YellowStorm-Mcp-Assertion', required: true })
+  @ApiHeader({ name: 'X-Correlation-Id', required: true })
   @ApiHeader({ name: 'X-YellowStorm-Workspace-Id', required: false })
   async execute(@Req() request: ActorRequest, @Body() dto: ExecutePyodideDto): Promise<PyodideExecutionResult> {
     if (!this.config.get<boolean>('pyodideRuntime.enabled', false)) {
       return this.offline();
     }
-    const userId = pyodideActingUserIdFrom(request.headers);
+    const userId = actingUserIdFrom(request.headers);
     const workspaceId = this.workspaceIdFrom(request.headers);
     // The model's explicit inputs win; otherwise fall back to the node's trusted input files (§27).
     const requestedInputs = dto.inputs?.length ? dto.inputs : this.inputFileNamesFrom(request.headers);

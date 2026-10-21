@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Logger, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, Delete, Get, Headers, Logger, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
@@ -24,7 +24,8 @@ import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execut
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookAssistantContextService } from '../assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { DelegatedActorGuard, McpRouteAudience } from '@modules/auth/guards/delegated-actor.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { UserService } from '@modules/user';
 import { AgentService } from '@modules/agent/agent.service';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
