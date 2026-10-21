@@ -215,6 +215,12 @@ Webhook endpoint for 3rd party indexing API to report status updates.
 - Sets `lastIndexedAt` timestamp on success
 - Sets `indexingError` message on failure
 - Sends real-time notification to document owner via SSE
+- File listing, document responses and owner SSE expose existing persisted
+  `indexingAttemptStartedAt` / `indexingAttemptCompletedAt` as ISO timestamps or
+  explicit `null`. These measure the current attempt from actual processing start
+  through success/failure, excluding queued time. Retry clears the old completion;
+  repeated terminal callbacks retain the first completion timestamp. Missing
+  historical timestamps are not inferred.
 - Repeated status/step notifications include `data.silent: true`, so progress
   updates the file row without another popup. The first start/failure/success
   transition keeps the popup; duplicate terminal callbacks are silent too.

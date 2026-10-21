@@ -89,7 +89,12 @@ export interface PaginatedWorkspaces {
 
 // ===== Document Types =====
 
-export interface WorkspaceDocument {
+export interface IndexingAttemptTiming {
+  indexingAttemptStartedAt?: string | null;
+  indexingAttemptCompletedAt?: string | null;
+}
+
+export interface WorkspaceDocument extends IndexingAttemptTiming {
   id: string;
   filename: string;
   originalName: string;
@@ -149,7 +154,7 @@ export interface WorkspaceFolder {
 
 export type AssignmentSource = 'manual' | 'playbook' | null;
 
-export interface WorkspaceFile {
+export interface WorkspaceFile extends IndexingAttemptTiming {
   id: string;
   workspaceId: string;
   name: string;

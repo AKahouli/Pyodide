@@ -1,4 +1,8 @@
 {
+  "indexing.elapsed": "Processing time: {{duration}}",
+  "indexing.duration.seconds": "{{seconds}}s",
+  "indexing.duration.minutes": "{{minutes}}m {{seconds}}s",
+  "indexing.duration.hours": "{{hours}}h {{minutes}}m {{seconds}}s",
   "indexing.summary": "Workspace indexing totals",
   "indexing.count.total": "Total files",
   "indexing.count.indexed": "Indexed",

@@ -18,6 +18,10 @@ overall file result also takes precedence over stale progress returned by a list
 Failed files without a detailed schedule show their server error beside the
 status, with the full reason available on hover. Step notifications update rows
 without popup toasts when the backend marks them silent.
+Per-file processing time uses the server's `indexingAttemptStartedAt` and
+`indexingAttemptCompletedAt` timestamps. It ticks each second during processing,
+freezes on success/failure, survives reloads and clears on an explicit retry reset.
+Missing or invalid attempt times do not display an invented duration.
 
 Admin → Workspace separates maximum per-file upload size, the default total quota
 for new conversation workspaces, and the quota of an existing workspace loaded by

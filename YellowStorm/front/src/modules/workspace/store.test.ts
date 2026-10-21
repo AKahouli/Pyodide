@@ -472,6 +472,19 @@ describe('workspace store', () => {
     expect(useWorkspaceStore.getState().documents.get(1)?.[0].metadata?.indexingProgress).toBeUndefined();
     expect(useWorkspaceStore.getState().documents.get(1)?.[0].metadata?.source).toBe('upload');
 
+    const timing = { indexingAttemptStartedAt: '2026-10-21T10:00:00.000Z', indexingAttemptCompletedAt: null };
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined, undefined, undefined, undefined, undefined, indexingProgress, timing);
+    expect(useWorkspaceStore.getState().pageFiles[0]).toMatchObject(timing);
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0]).toMatchObject(timing);
+    const completed = '2026-10-21T10:01:23.000Z';
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'ready', undefined, undefined, undefined, undefined, undefined, undefined, undefined, { indexingAttemptCompletedAt: completed });
+    expect(useWorkspaceStore.getState().pageFiles[0]).toMatchObject({ ...timing, indexingAttemptCompletedAt: completed });
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0]).toMatchObject({ ...timing, indexingAttemptCompletedAt: completed });
+    const reset = { indexingAttemptStartedAt: null, indexingAttemptCompletedAt: null };
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'pending', undefined, undefined, undefined, undefined, undefined, undefined, null, reset);
+    expect(useWorkspaceStore.getState().pageFiles[0]).toMatchObject(reset);
+    expect(useWorkspaceStore.getState().documents.get(1)?.[0]).toMatchObject(reset);
+
     useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined, undefined, undefined, undefined, undefined, indexingProgress);
     useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing');
     expect(useWorkspaceStore.getState().pageFiles[0].indexingProgress).toEqual(indexingProgress);

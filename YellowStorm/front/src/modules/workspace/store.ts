@@ -18,6 +18,7 @@ import type {
   Workspace,
   WorkspaceDocument,
   IndexingProgress,
+  IndexingAttemptTiming,
   WorkspaceSetting,
   CreateWorkspaceData,
   UpdateWorkspaceData,
@@ -234,7 +235,7 @@ interface WorkspaceActions {
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
   renameDocument: (workspaceId: string, docId: string, name: string) => Promise<void>;
-  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number, indexingProgress?: IndexingProgress | null) => void;
+  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number, indexingProgress?: IndexingProgress | null, timing?: IndexingAttemptTiming) => void;
 
   // Template operations
   fetchTemplates: () => Promise<void>;
@@ -975,8 +976,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }));
       },
 
-      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size, indexingProgress) => {
+      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size, indexingProgress, timing) => {
         const state = get();
+        const timingUpdate = {
+          ...(timing?.indexingAttemptStartedAt !== undefined ? { indexingAttemptStartedAt: timing.indexingAttemptStartedAt } : {}),
+          ...(timing?.indexingAttemptCompletedAt !== undefined ? { indexingAttemptCompletedAt: timing.indexingAttemptCompletedAt } : {}),
+        };
         // Null resets a retry; legacy terminal events must not retain an old live step.
         const replaceProgress = indexingProgress !== undefined || indexingStatus === 'failed' || indexingStatus === 'ready';
         const newCache = new Map(state.documents);
@@ -996,6 +1001,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               indexingTaskId,
               detected_language,
               chunk_size,
+              ...timingUpdate,
               ...(replaceProgress ? { indexingProgress: indexingProgress ?? undefined, metadata } : {}),
             };
             newCache.set(page, updatedDocuments);
@@ -1011,6 +1017,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                   ...f,
                   indexingStatus: indexingStatus as WorkspaceFile['indexingStatus'],
                   indexingError,
+                  ...timingUpdate,
                   ...(replaceProgress ? { indexingProgress: indexingProgress ?? undefined } : {}),
                 }
               : f,

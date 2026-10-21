@@ -193,6 +193,8 @@ export class ClassifierFileService {
       indexingStatus: (doc.indexingStatus ?? 'none') as IClassifierFileResponse['indexingStatus'],
       indexingError: doc.indexingError,
       indexingProgress: readIndexingProgress(doc.metadata),
+      indexingAttemptStartedAt: doc.indexingAttemptStartedAt?.toISOString() ?? null,
+      indexingAttemptCompletedAt: doc.indexingAttemptCompletedAt?.toISOString() ?? null,
       lastIndexedAt: doc.lastIndexedAt instanceof Date
         ? doc.lastIndexedAt.toISOString()
         : (doc.lastIndexedAt) ?? undefined,

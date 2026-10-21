@@ -67,6 +67,16 @@ Focused regressions cover both paths and silent progress versus terminal events.
 Workspace rows show the stored failure reason even when detailed steps are absent.
 Timeout is a local missing-completion result, not provider-confirmed failure.
 
+Elapsed time uses the existing persisted indexing-attempt start/completion
+timestamps. Classifier file listing, workspace document serialization and owner
+SSE expose them as ISO strings or explicit null for reset/missing data. The
+workspace timer advances only during processing and freezes at the server's
+success/failure time; it survives reload and excludes time spent pending. A retry
+uses its own start and clears the previous end. Duplicate terminal callbacks
+preserve the first completion time. No historical duration is fabricated when
+timestamps are unavailable. Backend projection/SSE and duplicate-terminal tests
+cover the contract; frontend timer, cache and notification tests cover display.
+
 ## 19. Health Checks
 
 | Route | Purpose |

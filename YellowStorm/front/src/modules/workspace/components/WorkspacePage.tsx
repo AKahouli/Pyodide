@@ -22,6 +22,7 @@ import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, Work
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
 import { IndexingStatusDot } from './IndexingStatusDot';
 import { FileIndexingProgress } from './FileIndexingProgress';
+import { FileIndexingDuration } from './FileIndexingDuration';
 import { WorkspaceIndexingSummary } from './WorkspaceIndexingSummary';
 import { groupBySourceRoot } from '../lib/source-groups';
 import { SourceGroupRow } from './SourceGroupRow';
@@ -974,6 +975,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
           <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
             {isConverting ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />}
             {t(`indexing.${isConverting ? 'processing' : file.indexingStatus ?? 'none'}`)}
+            <FileIndexingDuration status={file.indexingStatus} indexingAttemptStartedAt={file.indexingAttemptStartedAt} indexingAttemptCompletedAt={file.indexingAttemptCompletedAt} />
           </span>
           {(file.indexingProgress || (file.indexingStatus === 'failed' && file.indexingError)) && <FileIndexingProgress progress={file.indexingProgress} status={file.indexingStatus} error={file.indexingError} />}
         </div>

@@ -1,4 +1,8 @@
 {
+  "indexing.elapsed": "وقت المعالجة: {{duration}}",
+  "indexing.duration.seconds": "{{seconds}}ث",
+  "indexing.duration.minutes": "{{minutes}}د {{seconds}}ث",
+  "indexing.duration.hours": "{{hours}}س {{minutes}}د {{seconds}}ث",
   "indexing.summary": "إجمالي فهرسة مساحة العمل",
   "indexing.count.total": "إجمالي الملفات",
   "indexing.count.indexed": "مفهرسة",

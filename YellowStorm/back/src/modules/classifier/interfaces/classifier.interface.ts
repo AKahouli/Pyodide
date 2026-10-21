@@ -28,6 +28,8 @@ export interface IClassifierFileResponse {
   indexingStatus: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
   indexingError?: string;
   indexingProgress?: IndexingProgress;
+  indexingAttemptStartedAt: string | null;
+  indexingAttemptCompletedAt: string | null;
   lastIndexedAt?: string;
   type: 'doc' | 'url';
   sourceUrl?: string;

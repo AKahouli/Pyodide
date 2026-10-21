@@ -535,6 +535,11 @@ export class IndexingService {
       });
     }
 
+    // Repeated terminal callbacks must not extend the completed attempt's duration.
+    if (patch.indexingAttemptCompletedAt && patch.indexingStatus === previousStatus && document.indexingAttemptCompletedAt) {
+      patch.indexingAttemptCompletedAt = document.indexingAttemptCompletedAt;
+    }
+
     await this.documentWritePort.updateIndexingState(documentId, patch);
     const updatedDocument = { ...document, ...patch, metadata: { ...document.metadata, ...patch.metadataMerge } };
     await this.recordIndexingEvent(
@@ -607,6 +612,8 @@ export class IndexingService {
           indexingTaskName: document.indexingTaskName,
           indexingTaskId: document.indexingTaskId,
           indexingProgress: readIndexingProgress(document.metadata) ?? null,
+          indexingAttemptStartedAt: document.indexingAttemptStartedAt?.toISOString() ?? null,
+          indexingAttemptCompletedAt: document.indexingAttemptCompletedAt?.toISOString() ?? null,
           lastIndexedAt: document.lastIndexedAt?.toISOString(),
           originalName: document.originalName,
           detected_language: document.detected_language,
