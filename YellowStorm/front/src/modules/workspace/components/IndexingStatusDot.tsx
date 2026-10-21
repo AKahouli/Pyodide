@@ -1,17 +1,20 @@
 import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../types';
+import { useModuleTranslation } from '@/modules/localization';
 
 /** Small colored dot reflecting a file's vectorstore indexing status. */
 export function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexingStatus']; error?: string }) {
-  const config: Record<NonNullable<WorkspaceFile['indexingStatus']>, { color: string; pulse?: boolean; label: string }> = {
-    ready: { color: 'bg-green-500', label: 'Indexé' },
-    failed: { color: 'bg-red-500', label: "Échec de l'indexation" },
-    pending: { color: 'bg-orange-500', pulse: true, label: 'Indexation en attente' },
-    processing: { color: 'bg-orange-500', pulse: true, label: 'Indexation en cours' },
-    none: { color: 'bg-muted-foreground/40', label: 'Non indexé' },
+  const { t } = useModuleTranslation('workspace');
+  const config: Record<NonNullable<WorkspaceFile['indexingStatus']>, { color: string; pulse?: boolean }> = {
+    ready: { color: 'bg-green-500' },
+    failed: { color: 'bg-red-500' },
+    pending: { color: 'bg-orange-500', pulse: true },
+    processing: { color: 'bg-orange-500', pulse: true },
+    none: { color: 'bg-muted-foreground/40' },
   };
   const cfg = config[status ?? 'none'] ?? config.none;
-  const title = status === 'failed' && error ? `${cfg.label} : ${error}` : cfg.label;
+  const label = t(`indexing.${status ?? 'none'}`);
+  const title = status === 'failed' && error ? `${label}: ${error}` : label;
   return (
     <span
       className={cn('inline-block h-2 w-2 shrink-0 rounded-full', cfg.color, cfg.pulse && 'animate-pulse')}

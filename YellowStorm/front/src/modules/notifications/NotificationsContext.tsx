@@ -68,7 +68,7 @@ export function NotificationsProvider({
           }));
 
           // Show toast
-          if (showToasts) {
+          if (showToasts && notification.data?.silent !== true) {
             const toastFn = {
               info: toast.info,
               warning: toast.warning,

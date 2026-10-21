@@ -11,6 +11,18 @@ export type DocumentStatus = 'pending' | 'uploading' | 'processing' | 'completed
 
 export type IndexingStatus = 'none' | 'pending' | 'processing' | 'ready' | 'failed';
 
+export interface IndexingProgress {
+  currentStep: number;
+  totalSteps: number;
+  steps: Array<{ number: number; name: string; key: string; task_id?: string }>;
+  stepStatus?: 'PROCESSING' | 'FINISH' | 'FAIL';
+  processingStatus: 'PROCESSING' | 'FINISH' | 'FAIL';
+  message?: string;
+  processingTaskName?: string;
+  processingTaskId?: string;
+  processingTaskKey?: string;
+}
+
 export type WorkspaceArtifactType = 'decision_flow';
 export type WorkspaceArtifactStatus = 'queued' | 'generating' | 'ready' | 'failed';
 export type DecisionFlowNodeType = 'start' | 'information' | 'decision' | 'result' | 'end';
@@ -77,7 +89,12 @@ export interface PaginatedWorkspaces {
 
 // ===== Document Types =====
 
-export interface WorkspaceDocument {
+export interface IndexingAttemptTiming {
+  indexingAttemptStartedAt?: string | null;
+  indexingAttemptCompletedAt?: string | null;
+}
+
+export interface WorkspaceDocument extends IndexingAttemptTiming {
   id: string;
   filename: string;
   originalName: string;
@@ -96,6 +113,7 @@ export interface WorkspaceDocument {
   indexingError?: string;
   indexingTaskName?: string;
   indexingTaskId?: string;
+  indexingProgress?: IndexingProgress | null;
   lastIndexedAt?: string;
   parentId?: string;
   isFolder: boolean;
@@ -136,7 +154,7 @@ export interface WorkspaceFolder {
 
 export type AssignmentSource = 'manual' | 'playbook' | null;
 
-export interface WorkspaceFile {
+export interface WorkspaceFile extends IndexingAttemptTiming {
   id: string;
   workspaceId: string;
   name: string;
@@ -151,6 +169,7 @@ export interface WorkspaceFile {
   indexingStatus?: IndexingStatus;
   indexingError?: string;
   lastIndexedAt?: string;
+  indexingProgress?: IndexingProgress | null;
   /** Discriminates uploaded documents ('doc') from website links ('url'). */
   type?: 'doc' | 'url';
   /** Original website URL when type === 'url'. */

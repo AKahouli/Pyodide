@@ -92,3 +92,29 @@ describe('IndexingService CODE_ONLY guard', () => {
     );
   });
 });
+
+describe('IndexingService local failure notifications', () => {
+  it.each(['submission', 'timeout'] as const)('publishes the persisted failed state for %s failures', async source => {
+    const document = { id: 'doc-1', workspaceId: 'workspace-1', createdBy: 'owner-1',
+      originalName: 'report.pdf', filename: 'report.pdf', status: 'completed', indexingStatus: 'pending',
+      path: 'owner/workspace/report.pdf', mimeType: 'application/pdf', size: 10, isFolder: false,
+      type: 'doc', createdAt: new Date(), updatedAt: new Date(), metadata: {} } satisfies WorkspaceDocumentRecord;
+    const sendToUser = jest.fn().mockResolvedValue(undefined);
+    const updateIndexingState = jest.fn().mockResolvedValue(undefined);
+    const service = Object.create(IndexingService.prototype) as IndexingService;
+    Object.assign(service, { enabled: true, batchSize: 10, indexingTimeoutMs: 3600000,
+      documentReadPort: {findById: jest.fn().mockResolvedValue(document),
+        find: jest.fn().mockResolvedValue([{...document,indexingStatus:'processing'}])},
+      documentWritePort: {updateIndexingState}, workspaceReadPort: {findById: jest.fn().mockResolvedValue({storagePrefix:'workspace'})},
+      workspaceSettingReadPort: {}, documentService: {getBlobUrl: jest.fn().mockReturnValue('https://example.test/report.pdf')},
+      indexingClient: {indexDocument: jest.fn().mockRejectedValue(new Error('Indexing API unavailable'))},
+      notificationsService: {sendToUser},
+      logger: {debug:jest.fn(),log:jest.fn(),warn:jest.fn(),error:jest.fn()},
+    });
+    if (source === 'submission') await expect(service.processDocument(document.id)).rejects.toThrow('Indexing API unavailable');
+    else await service.timeoutStaleIndexing();
+    expect(updateIndexingState).toHaveBeenLastCalledWith('doc-1', expect.objectContaining({indexingStatus:'failed'}));
+    expect(sendToUser).toHaveBeenLastCalledWith('owner-1',expect.objectContaining({type:'error',
+      data:expect.objectContaining({indexingStatus:'failed',indexingError:expect.any(String)})}));
+  });
+});

@@ -55,6 +55,26 @@ export interface IndexStatus {
   processedAt?: Date;
 }
 
+/** The schedule is supplied by the indexing provider, never inferred from file type. */
+export interface IndexingProgress {
+  currentStep: number;
+  totalSteps: number;
+  steps: { number: number; name: string; key: string; task_id: string }[];
+  stepStatus?: 'PROCESSING' | 'FINISH' | 'FAIL';
+  processingStatus?: string;
+  processingTaskName?: string;
+  processingTaskKey?: string;
+  processingTaskId?: string;
+  message?: string;
+}
+
+export function readIndexingProgress(metadata?: Record<string, string>): IndexingProgress | undefined {
+  const value = metadata?.indexingProgress;
+  if (!value) return undefined;
+  // Written only by the validated indexing webhook; empty string resets a retry.
+  return JSON.parse(value) as IndexingProgress;
+}
+
 export interface IndexingClient {
   indexDocument(document: IndexDocumentRequest): Promise<IndexDocumentResponse>;
   getIndexStatus(documentId: string): Promise<IndexStatus>;

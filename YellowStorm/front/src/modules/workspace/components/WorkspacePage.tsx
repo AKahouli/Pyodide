@@ -21,6 +21,9 @@ import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
 import { IndexingStatusDot } from './IndexingStatusDot';
+import { FileIndexingProgress } from './FileIndexingProgress';
+import { FileIndexingDuration } from './FileIndexingDuration';
+import { WorkspaceIndexingSummary } from './WorkspaceIndexingSummary';
 import { groupBySourceRoot } from '../lib/source-groups';
 import { SourceGroupRow } from './SourceGroupRow';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
@@ -419,6 +422,7 @@ export function WorkspacePage() {
       <ScrollArea className='flex-1'>
         <div className='mx-auto w-full max-w-7xl px-6 py-6 space-y-6'>
           <WorkspaceUploadDropZone />
+          {activeWorkspaceId && !isInitialLoading && <WorkspaceIndexingSummary files={files} workspaceId={activeWorkspaceId} />}
           {isInitialLoading ? (
             <WorkspaceContentLoading />
           ) : visibleFolders.length === 0 && visibleFiles.length === 0 ? (
@@ -949,17 +953,9 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   const primaryContent = <>
     <Icon className='h-5 w-5 shrink-0 text-muted-foreground' />
     <div className='min-w-0 flex-1 flex items-center gap-2'>
-      {isConverting ? (
-        <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
-          <Loader2 className='h-3.5 w-3.5 animate-spin' />
-        </span>
-      ) : (
-        <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />
-      )}
       <span className='truncate text-sm'>{file.name}</span>
       {totalArtifactCount > 0 && <span className='text-xs text-muted-foreground'>{t('artifacts.count', { count: totalArtifactCount })}</span>}
     </div>
-    <span className='hidden md:inline text-xs text-muted-foreground tabular-nums whitespace-nowrap'>{formatBytes(file.size)}</span>
   </>;
 
   return (
@@ -974,6 +970,16 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
         {viewable
           ? <button type='button' className='flex min-w-0 flex-1 cursor-pointer items-center gap-4 text-start' onClick={handleView}>{primaryContent}</button>
           : <div className='flex min-w-0 flex-1 items-center gap-4'>{primaryContent}</div>}
+
+        <div className='flex min-w-0 max-w-[50%] flex-col items-end gap-1'>
+          <span className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+            {isConverting ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <IndexingStatusDot status={file.indexingStatus} error={file.indexingError} />}
+            {t(`indexing.${isConverting ? 'processing' : file.indexingStatus ?? 'none'}`)}
+            <FileIndexingDuration status={file.indexingStatus} indexingAttemptStartedAt={file.indexingAttemptStartedAt} indexingAttemptCompletedAt={file.indexingAttemptCompletedAt} />
+          </span>
+          {(file.indexingProgress || (file.indexingStatus === 'failed' && file.indexingError)) && <FileIndexingProgress progress={file.indexingProgress} status={file.indexingStatus} error={file.indexingError} />}
+        </div>
+        <span className='shrink-0 text-xs text-muted-foreground tabular-nums whitespace-nowrap'>{formatBytes(file.size)}</span>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

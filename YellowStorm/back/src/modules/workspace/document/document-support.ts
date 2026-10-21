@@ -222,6 +222,8 @@ export class WorkspaceDocumentSupport {
       indexingError: document.indexingError,
       indexingTaskName: document.indexingTaskName,
       indexingTaskId: document.indexingTaskId,
+      indexingAttemptStartedAt: document.indexingAttemptStartedAt?.toISOString() ?? null,
+      indexingAttemptCompletedAt: document.indexingAttemptCompletedAt?.toISOString() ?? null,
       lastIndexedAt: document.lastIndexedAt?.toISOString(),
       detected_language: document.detected_language,
       chunk_size: document.chunk_size,

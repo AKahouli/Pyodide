@@ -25,6 +25,7 @@ import { PgWorkspaceSettingReadAdapter } from '../workspace/persistence/postgres
 import { PgWorkspaceReadAdapter } from '../workspace/persistence/postgres/pg-workspace-read.adapter';
 import { PgWorkspaceDocumentWriteAdapter } from '../workspace/persistence/postgres/pg-workspace-document-write.adapter';
 import { PgWorkspaceDocumentReadAdapter } from '../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { readIndexingProgress, type IndexingProgress } from './interfaces/indexing.interface';
 
 @Injectable()
 export class IndexingService {
@@ -100,6 +101,7 @@ export class IndexingService {
         indexingError: undefined,
         indexingTaskName: undefined,
         indexingTaskId: undefined,
+        metadataMerge: { indexingProgress: '' },
         indexingAttemptId: randomUUID(),
         indexingAttemptStartedAt: undefined,
         indexingAttemptCompletedAt: undefined,
@@ -171,13 +173,14 @@ export class IndexingService {
       indexingError: undefined,
       indexingTaskName: undefined,
       indexingTaskId: undefined,
+      metadataMerge: { indexingProgress: '' },
       indexingStartedAt,
       indexingAttemptId: record.indexingAttemptId ?? randomUUID(),
       indexingAttemptStartedAt: indexingStartedAt,
       indexingAttemptCompletedAt: undefined,
     };
     await this.documentWritePort.updateIndexingState(documentId, processingPatch);
-    const document = { ...record, ...processingPatch };
+    const document = { ...record, ...processingPatch, metadata: { ...record.metadata, indexingProgress: '' } };
     await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingStartedV1, document);
 
     // Send notification so frontend sees pending → processing transition
@@ -240,8 +243,7 @@ export class IndexingService {
       // Store API response IDs in metadata, keep status as PROCESSING
       // The webhook callback will set the final status (READY or FAILED)
       await this.documentWritePort.updateIndexingState(documentId, {
-        metadata: {
-          ...document.metadata,
+        metadataMerge: {
           download_id: result.download_id,
           indexing_id: result.indexing_id,
         },
@@ -276,7 +278,7 @@ export class IndexingService {
       });
 
       // Send failure notification
-      await this.sendIndexingStatusNotification(document);
+      await this.sendIndexingStatusNotification({ ...document, ...failurePatch });
 
       throw error;
     }
@@ -335,6 +337,7 @@ export class IndexingService {
     const { download_id: _downloadId, indexing_id: _indexingId, ...restMetadata } = record.metadata || {};
     reindexPatch.metadata = {
       ...restMetadata,
+      indexingProgress: '',
       deepSearchRequested: deepSearch === true ? 'true' : 'false',
       ...(idempotencyKey ? { governanceReindexIdempotencyKey: idempotencyKey } : {}),
     };
@@ -463,6 +466,7 @@ export class IndexingService {
       processingTaskName?: string;
       processingTaskId?: string;
       errorMessage?: string;
+      indexingProgress?: IndexingProgress;
     } = {},
   ): Promise<void> {
     this.logger.debug('Webhook received', {
@@ -487,6 +491,14 @@ export class IndexingService {
 
     // Save detected language from webhook
     const patch: IndexingStatePatch = { detected_language: detectedLanguage || 'fr' };
+    if (details.indexingProgress) {
+      const progress = details.indexingProgress;
+      const previous = readIndexingProgress(document.metadata);
+      // Some legacy callbacks omit the schedule. Keep the last supplied schedule.
+      patch.metadataMerge = { indexingProgress: JSON.stringify({
+        ...progress, steps: progress.steps.length ? progress.steps : previous?.steps ?? [],
+      }) };
+    }
 
     if (details.processingTaskName) {
       patch.indexingTaskName = details.processingTaskName;
@@ -496,10 +508,15 @@ export class IndexingService {
     }
 
     // Update document status based on webhook
- if (status === 'START' || status === 'PROCESSING' || details.processingStatus === 'PROCESSING') {
+    const processingStatus = details.processingStatus || status;
+    if (details.indexingProgress?.stepStatus === 'FAIL' || processingStatus === 'FAIL') {
+      patch.indexingStatus = IndexingStatus.FAILED;
+      patch.indexingError = details.errorMessage || details.indexingProgress?.message || 'Document indexing failed. Please try again later.';
+      patch.indexingAttemptCompletedAt = new Date();
+    } else if (processingStatus === 'START' || processingStatus === 'PROCESSING') {
       patch.indexingStatus = IndexingStatus.PROCESSING;
       patch.indexingError = undefined;
-    } else if (status === 'FINISH') {
+    } else if (processingStatus === 'FINISH') {
       patch.indexingStatus = IndexingStatus.READY;
       patch.lastIndexedAt = new Date();
       patch.indexingAttemptCompletedAt = patch.lastIndexedAt;
@@ -518,8 +535,13 @@ export class IndexingService {
       });
     }
 
+    // Repeated terminal callbacks must not extend the completed attempt's duration.
+    if (patch.indexingAttemptCompletedAt && patch.indexingStatus === previousStatus && document.indexingAttemptCompletedAt) {
+      patch.indexingAttemptCompletedAt = document.indexingAttemptCompletedAt;
+    }
+
     await this.documentWritePort.updateIndexingState(documentId, patch);
-    const updatedDocument = { ...document, ...patch };
+    const updatedDocument = { ...document, ...patch, metadata: { ...document.metadata, ...patch.metadataMerge } };
     await this.recordIndexingEvent(
       updatedDocument.indexingStatus === IndexingStatus.READY
         ? WorkspaceIntegrationEvents.IndexingReadyV1
@@ -537,7 +559,7 @@ export class IndexingService {
     });
 
     // Send notification to document owner
-    await this.sendIndexingStatusNotification(updatedDocument);
+    await this.sendIndexingStatusNotification(updatedDocument, previousStatus === updatedDocument.indexingStatus);
   }
 
   /**
@@ -546,6 +568,7 @@ export class IndexingService {
    */
   async sendIndexingStatusNotification(
     document: WorkspaceDocumentRecord,
+    silent = false,
   ): Promise<void> {
     try {
       const userId = document.createdBy.toString();
@@ -581,12 +604,16 @@ export class IndexingService {
         message,
         data: {
           eventType: 'indexing_status_change',
+          silent,
           documentId: document.id,
           workspaceId: document.workspaceId,
           indexingStatus: status,
           indexingError: document.indexingError,
           indexingTaskName: document.indexingTaskName,
           indexingTaskId: document.indexingTaskId,
+          indexingProgress: readIndexingProgress(document.metadata) ?? null,
+          indexingAttemptStartedAt: document.indexingAttemptStartedAt?.toISOString() ?? null,
+          indexingAttemptCompletedAt: document.indexingAttemptCompletedAt?.toISOString() ?? null,
           lastIndexedAt: document.lastIndexedAt?.toISOString(),
           originalName: document.originalName,
           detected_language: document.detected_language,
@@ -739,7 +766,7 @@ export class IndexingService {
           indexingStartedAt: document.indexingStartedAt,
         });
 
-        await this.sendIndexingStatusNotification(document);
+        await this.sendIndexingStatusNotification({ ...document, ...timeoutPatch });
       }
 
       this.logger.debug('Cron: finished timeout check', {
