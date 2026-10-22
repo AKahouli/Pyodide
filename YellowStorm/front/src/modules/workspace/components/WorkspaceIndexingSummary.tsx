@@ -1,5 +1,7 @@
 import { useModuleTranslation } from '@/modules/localization';
+import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../types';
+import { INDEXING_TONE, type IndexingTone } from './indexing-status-tone';
 
 /** Receives the complete workspace list, before folder and search filtering. */
 export function WorkspaceIndexingSummary({ files, workspaceId }: { files: WorkspaceFile[]; workspaceId: string }) {
@@ -12,12 +14,14 @@ export function WorkspaceIndexingSummary({ files, workspaceId }: { files: Worksp
     else if (file.indexingStatus === 'failed') counts.failed++;
     else if (file.indexingStatus === 'processing' || file.indexingStatus === 'pending' || (file.type === 'url' && file.status === 'processing')) counts.processing++;
   }
+  // The totals carry the colour of the state they count, like the file rows do.
+  const tones: Record<keyof typeof counts, IndexingTone> = { total: 'idle', indexed: 'done', failed: 'failed', processing: 'inProgress' };
   return (
     <dl className='flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground' aria-label={t('indexing.summary')}>
       {(Object.keys(counts) as Array<keyof typeof counts>).map((key) => (
         <div key={key} className='flex items-center gap-2'>
           <dt>{t(`indexing.count.${key}`)}</dt>
-          <dd className='font-medium tabular-nums text-foreground'>{counts[key]}</dd>
+          <dd className={cn('font-medium tabular-nums', key === 'total' ? 'text-foreground' : INDEXING_TONE[tones[key]].text)}>{counts[key]}</dd>
         </div>
       ))}
     </dl>

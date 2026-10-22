@@ -63,6 +63,10 @@ describe('FileIndexingDetails', () => {
     expect(steps[0]).toHaveTextContent('1. Document download — Completed');
     expect(steps[1]).toHaveTextContent('2. Block embedding — Processing');
     expect(steps[2]).toHaveTextContent('3. Document storage — Pending');
+    // The schedule reads like the status: finished steps green, the running step orange.
+    expect(steps[0]).toHaveClass('text-green-700');
+    expect(steps[1]).toHaveClass('text-orange-700');
+    expect(steps[1]).not.toHaveClass('text-destructive');
   });
 
   it('shows nothing while the file has no schedule and no failure', () => {
@@ -92,5 +96,10 @@ describe('FileIndexingDetails', () => {
     render(<FileIndexingSteps file={file({ indexingStatus: 'failed', indexingError: 'Worker stopped.', indexingProgress: schedule })} />);
     expect(screen.getByRole('status')).toHaveTextContent('Worker stopped.');
     expect(screen.queryByText('Embedding blocks.')).not.toBeInTheDocument();
+  });
+
+  it('keeps a running file orange even when its schedule still reports an old failure', () => {
+    render(<FileIndexingSteps file={file({ indexingStatus: 'processing', indexingProgress: { ...schedule, processingStatus: 'FAIL', stepStatus: 'FAIL', message: 'Old failure from a previous run.' } })} />);
+    expect(screen.getByRole('status').closest('summary')).toHaveClass('text-orange-700');
   });
 });
