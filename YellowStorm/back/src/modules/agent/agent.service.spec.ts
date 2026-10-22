@@ -1,7 +1,7 @@
 import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
-import { AgentService } from './agent.service';
+import { AgentService, updateRequestsRootPolicy } from './agent.service';
 import { freezeRootCapabilityCeiling, scopeCandidateToFrozenCeiling } from '../conversation/root-work/root-capability-ceiling';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
@@ -1587,5 +1587,18 @@ describe('AgentService root binding resolution (WP01)', () => {
 
     agentRepository.findDefaultByType.mockResolvedValue(null);
     await expect(service.resolveRootForConversation(userId)).resolves.toBeNull();
+  });
+});
+
+describe('updateRequestsRootPolicy', () => {
+  it('ignores the empty allowlist arrays the agent form always sends', () => {
+    expect(updateRequestsRootPolicy({ delegateAgentIds: [], delegateTeamIds: [] })).toBe(false);
+  });
+
+  it('detects an explicit policy payload or a non-empty allowlist', () => {
+    expect(updateRequestsRootPolicy({ rootExecutionPolicy: {} })).toBe(true);
+    expect(updateRequestsRootPolicy({ rootExecutionPolicy: null })).toBe(true);
+    expect(updateRequestsRootPolicy({ delegateAgentIds: ['507f1f77bcf86cd799439011'] })).toBe(true);
+    expect(updateRequestsRootPolicy({ delegateTeamIds: ['507f1f77bcf86cd799439012'] })).toBe(true);
   });
 });

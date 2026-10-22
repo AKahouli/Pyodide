@@ -7,19 +7,20 @@ export const NAVIGATION_TARGETS: Record<NavigationTargetKey, {
   feature?: keyof FeatureVisibility;
 }> = {
   platform: { permission: 'menu.platform', path: '/platform', defaultLabels: { en: 'Overview', fr: "Vue d'ensemble", ar: 'نظرة عامة' } },
-  newChat: { permission: 'menu.new_chat', path: '/', defaultLabels: { en: 'New chat', fr: 'Nouvelle discussion', ar: 'محادثة جديدة' }, feature: 'conversation' },
-  projects: { permission: 'menu.projects', path: '/', defaultLabels: { en: 'Projects', fr: 'Projets', ar: 'المشاريع' } },
-  history: { permission: 'menu.history', path: '/chats', defaultLabels: { en: 'History', fr: 'Historique', ar: 'السجل' } },
-  workspace: { permission: 'menu.workspace', path: '/workspace', defaultLabels: { en: 'Workspace', fr: 'Espaces de travail', ar: 'مساحة العمل' }, feature: 'workspace' },
-  semanticModels: { permission: 'menu.semantic_models', path: '/semantic-models', defaultLabels: { en: 'Business models', fr: 'Modeles metier', ar: 'نماذج الأعمال' }, feature: 'semanticModel' },
-  playbook: { permission: 'menu.playbook', path: '/playbooks', defaultLabels: { en: 'Playbooks', fr: 'Playbooks', ar: 'Playbooks' }, feature: 'playbook' },
-  agents: { permission: 'menu.agents', path: '/agents', defaultLabels: { en: 'Agents', fr: 'Agents', ar: 'الوكلاء' }, feature: 'agents' },
-  teams: { permission: 'menu.teams', path: '/teams', defaultLabels: { en: 'Teams', fr: 'Equipes', ar: 'الفرق' } },
-  groups: { permission: 'menu.groups', path: '/groups', defaultLabels: { en: 'Groups', fr: 'Groupes', ar: 'المجموعات' } },
-  worky: { permission: 'menu.worky', path: '/worky', defaultLabels: { en: 'Worky', fr: 'Worky', ar: 'Worky' }, feature: 'worky' },
-  connectedApps: { permission: 'menu.connected_apps', path: '/apps', defaultLabels: { en: 'Connected apps', fr: 'Applications connectees', ar: 'التطبيقات المتصلة' } },
-  appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications", ar: 'متجر التطبيقات' }, feature: 'appBuilder' },
-  governance: { permission: 'menu.governance', path: '/governance', defaultLabels: { en: 'Governance', fr: 'Gouvernance', ar: 'الحوكمة' }, feature: 'governance' },
+  newChat: { permission: 'menu.new_chat', path: '/', defaultLabels: { en: 'New chat', fr: 'Nouvelle discussion' }, feature: 'conversation' },
+  projects: { permission: 'menu.projects', path: '/', defaultLabels: { en: 'Projects', fr: 'Projets' } },
+  history: { permission: 'menu.history', path: '/chats', defaultLabels: { en: 'History', fr: 'Historique' } },
+  workspace: { permission: 'menu.workspace', path: '/workspace', defaultLabels: { en: 'Workspace', fr: 'Espaces de travail' }, feature: 'workspace' },
+  semanticModels: { permission: 'menu.semantic_models', path: '/semantic-models', defaultLabels: { en: 'Business models', fr: 'Modeles metier' }, feature: 'semanticModel' },
+  playbook: { permission: 'menu.playbook', path: '/playbooks', defaultLabels: { en: 'Playbooks', fr: 'Playbooks' }, feature: 'playbook' },
+  agents: { permission: 'menu.agents', path: '/agents', defaultLabels: { en: 'Agents', fr: 'Agents' }, feature: 'agents' },
+  teams: { permission: 'menu.teams', path: '/teams', defaultLabels: { en: 'Teams', fr: 'Equipes' } },
+  groups: { permission: 'menu.groups', path: '/groups', defaultLabels: { en: 'Groups', fr: 'Groupes' } },
+  worky: { permission: 'menu.worky', path: '/worky', defaultLabels: { en: 'Worky', fr: 'Worky' }, feature: 'worky' },
+  connectedApps: { permission: 'menu.connected_apps', path: '/apps', defaultLabels: { en: 'Connected apps', fr: 'Applications connectees' } },
+  appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications" }, feature: 'appBuilder' },
+  governance: { permission: 'menu.governance', path: '/governance', defaultLabels: { en: 'Governance', fr: 'Gouvernance' }, feature: 'governance' },
+  evaluationLogicalSearch: { permission: 'menu.evaluation_logical_search', path: '/evaluation-logical-search', defaultLabels: { en: 'Logical search evaluation', fr: 'Evaluation recherche logique' }, feature: 'governance' },
   admin: { permission: 'menu.admin', path: '/admin', defaultLabels: { en: 'Administration', fr: 'Administration', ar: 'الإدارة' } },
 };
 
@@ -46,7 +47,8 @@ export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
     { id: 'history', type: 'item', parentId: 'ask', position: 1, visible: true, labels: NAVIGATION_TARGETS.history.defaultLabels, targetKey: 'history' },
     { id: 'govern', type: 'group', parentId: null, position: 4, visible: true, labels: { en: 'Govern', fr: 'Gouverner', ar: 'الحوكمة' } },
     { id: 'governance', type: 'item', parentId: 'govern', position: 0, visible: true, labels: NAVIGATION_TARGETS.governance.defaultLabels, targetKey: 'governance' },
-    { id: 'admin', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
+    { id: 'evaluation-logical-search', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels, targetKey: 'evaluationLogicalSearch' },
+    { id: 'admin', type: 'item', parentId: 'govern', position: 2, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
   ],
 };
 
@@ -95,6 +97,49 @@ export function withDefaultArabicLabels(settings: NavigationSettings): Navigatio
 
 export function findNavigationTarget(settings: NavigationSettings, targetKey: NavigationTargetKey) {
   return settings.nodes.find((node) => node.targetKey === targetKey);
+}
+
+/**
+ * Ensures the evaluation logical search entry is always present in the managed
+ * navigation, right after Governance in the same group. This keeps the entry
+ * reachable even when the backend returns navigation settings persisted before
+ * the target existed (the injected node is not part of the persisted payload).
+ */
+export function ensureEvaluationTarget(settings: NavigationSettings): NavigationSettings {
+  if (settings.nodes.some((node) => node.targetKey === 'evaluationLogicalSearch')) {
+    return settings;
+  }
+
+  const governance = settings.nodes.find((node) => node.targetKey === 'governance');
+  const governGroup = settings.nodes.find(
+    (node) => node.type === 'group' && (node.id === 'govern' || node.id === governance?.parentId),
+  );
+  const parentId = governance?.parentId ?? governGroup?.id ?? null;
+  const siblings = settings.nodes.filter((node) => node.parentId === parentId);
+  const anchor = siblings.find((node) => node.targetKey === 'governance');
+  const position = anchor
+    ? anchor.position + 1
+    : siblings.length
+      ? Math.max(...siblings.map((node) => node.position)) + 1
+      : 0;
+
+  const nodes = settings.nodes.map((node) =>
+    node.parentId === parentId && node.position >= position
+      ? { ...node, position: node.position + 1 }
+      : node,
+  );
+  nodes.push({
+    id: 'evaluation-logical-search',
+    type: 'item',
+    parentId,
+    position,
+    visible: true,
+    launcherVisible: true,
+    labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels,
+    targetKey: 'evaluationLogicalSearch',
+  });
+
+  return { ...settings, nodes };
 }
 
 export function isNavigationNodeVisible(settings: NavigationSettings, id: string, placement: 'sidebar' | 'launcher' = 'sidebar'): boolean {

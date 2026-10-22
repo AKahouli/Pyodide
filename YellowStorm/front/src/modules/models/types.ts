@@ -16,7 +16,7 @@ export interface Model {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
-  isConversationV2Default: boolean;
+  __WIRE__isConversationV2Default__: boolean;
   omitTemperature: boolean;
   conversationApi?: 'chat_completions' | 'responses';
   responsesHistoryMode?: 'application' | 'provider';
@@ -71,8 +71,8 @@ export interface ModelsActions {
   // Refresh models (force fetch)
   refreshModels: () => Promise<void>;
 
-  /** Push Conversation V2 default change to all consumers (chat, composer) without refetch. */
-  syncConversationV2Default: (modelId: string | null) => void;
+  /** Push App Builder default change to all consumers (chat, composer) without refetch. */
+  syncAppBuilderDefault: (modelId: string | null) => void;
 
   /** Push the global default model change (star on /admin/models) to all consumers without refetch. */
   syncDefaultModel: (modelId: string | null) => void;

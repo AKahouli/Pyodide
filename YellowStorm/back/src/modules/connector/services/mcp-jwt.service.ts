@@ -6,7 +6,7 @@ import { createPrivateKey, createPublicKey, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { assertAccountApproved } from '../../user/utils/assert-account-accessible';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { hasPermission } from '@modules/authorization/constants/permissions';

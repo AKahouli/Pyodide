@@ -1,5 +1,5 @@
-import type { BrowserRuntimeHost } from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
-import { waitUntilPreviewReachable } from '@/modules/conversation-v2/runtime/PreviewController';
+import type { BrowserRuntimeHost } from '@/modules/app-builder-studio/runtime/BrowserRuntimeHost';
+import { waitUntilPreviewReachable } from '@/modules/app-builder-studio/runtime/PreviewController';
 
 const CAPTURE_READY_TIMEOUT_MS = 45_000;
 const INSPECT_POLL_MS = 500;

@@ -19,7 +19,9 @@ OPERATIONAL_FIELDS = {"assetAdmission", "assetCommand"}
 
 def without_asset_authority(dump: dict) -> dict:
     payload = dump.get("payload")
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not any(field in payload for field in OPERATIONAL_FIELDS):
+        # Nothing to strip: return the input unchanged so callers that did not
+        # carry asset authority keep the original object identity.
         return dump
     return {**dump, "payload": {k: v for k, v in payload.items() if k not in OPERATIONAL_FIELDS}}
 

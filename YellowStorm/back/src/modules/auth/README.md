@@ -33,6 +33,7 @@ The authentication module provides:
 - **Session Management**: View and revoke active sessions
 - **Email Verification**: Magic link verification flow
 - **Password Reset**: Forgot password / reset password flow with secure tokens
+- **Email Invitations**: Resolve a super-admin invitation token and gate registration on it; an invited signup is created pre-approved (`active` + `approved`) with the roles/plan chosen by the inviter
 - **Security Alerts**: New login location notifications
 - **RBAC Integration**: Role-based permissions embedded in JWT
 
@@ -45,34 +46,25 @@ The authentication module provides:
 │                         AUTHENTICATION MODULE                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
-│  │  AuthController  │───►│   AuthService    │───►│  SESSION_STORE   │       │
-│  │  (REST API)      │    │ (Business Logic) │    │ (PgSessionStore) │       │
-│  └────────┬─────────┘    └────────┬─────────┘    └──────────────────┘       │
-│           │                       │                                          │
-│           │                       ▼                                          │
-│           │              ┌──────────────────┐                                │
-│           │              │    JwtService    │                                │
-│           │              │ (Token Signing)  │                                │
-│           │              └──────────────────┘                                │
-│           │                       │                                          │
-│           │                       ▼                                          │
-│           │              ┌──────────────────────────────┐                    │
-│           │              │ RegistrationApprovalService  │                    │
-│           │              │ (UserModule — Super Admin    │                    │
-│           │              │  registration notice)        │                    │
-│           │              └──────────────────────────────┘                    │
+│  ┌──────────────────┐   thin REST layer, one controller                      │
+│  │  AuthController  │   delegates each flow to a focused service             │
+│  └────────┬─────────┘                                                        │
 │           │                                                                  │
-│           ▼                                                                  │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
-│  │   JwtAuthGuard   │───►│   JwtStrategy    │───►│   UserService    │       │
-│  │  (Global Guard)  │    │ (Token Validate) │    │  (User Lookup)   │       │
-│  └──────────────────┘    └──────────────────┘    └──────────────────┘       │
+│  ┌────────┴─────────────────────────────────────────────────────────────┐    │
+│  │ services/                                                            │    │
+│  │   AuthService         login, lockout, password reset, verification    │    │
+│  │   RegistrationService account creation (invitation) + provisioning    │    │
+│  │   SessionService      sessions, JWT minting, atomic refresh rotation  │    │
+│  │   AuthEmailService    transactional e-mails (verification/reset/alert)│    │
+│  └────────┬───────────────┬────────────────────┬────────────────────────┘    │
+│           ▼               ▼                    ▼                             │
+│    UserService      PgSessionStore      Email / Usage / Workspace /          │
+│                     (SessionStore )     HumainAgent / Authz modules          │
 │                                                                              │
-│  External Dependencies:                                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │ UserModule  │  │ EmailModule │  │ UsageModule │  │ AuthzModule │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
+│  ┌──────────────────┐───►┌──────────────────┐───►┌──────────────────┐       │
+│  │   JwtAuthGuard   │    │   JwtStrategy    │    │  UserService /   │       │
+│  │  (Global Guard)  │    │ (Token Validate) │    │  SessionService  │       │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘       │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -99,30 +91,35 @@ The authentication module provides:
 ```
 auth/
 ├── auth.module.ts              # Module definition
-├── auth.controller.ts          # REST API endpoints
-├── auth.service.ts             # Authentication business logic
 ├── index.ts                    # Public exports
+├── auth-cookie-path.ts         # Refresh-cookie path helper
+├── controllers/
+│   └── auth.controller.ts      # REST API endpoints (thin; delegates)
+├── services/
+│   ├── auth.service.ts         # Login, lockout, password reset, verification
+│   ├── registration.service.ts # Account creation (invitation-gated) + provisioning
+│   ├── session.service.ts      # Sessions, token minting, atomic refresh rotation
+│   └── auth-email.service.ts   # Transactional auth e-mails
 ├── strategies/
 │   └── jwt.strategy.ts         # Passport JWT strategy
-├── guards/
-│   └── jwt-auth.guard.ts       # Global authentication guard
-├── decorators/
-│   ├── public.decorator.ts     # @Public() - bypass auth
-│   └── current-user.decorator.ts # @CurrentUser() - get user
-├── schemas/
-│   └── session.schema.ts       # Session/refresh token model
-├── interfaces/
-│   ├── auth.interface.ts       # Auth response types
-│   ├── jwt-payload.interface.ts # JWT token payload
-│   └── session.interface.ts    # Session types
-└── dto/
-    ├── register.dto.ts         # Registration validation
-    ├── login.dto.ts            # Login validation
-    ├── verify-email.dto.ts     # Email verification
-    ├── forgot-password.dto.ts  # Forgot password (email)
-    ├── reset-password.dto.ts   # Reset password (token + new password)
-    └── microsoft-auth.dto.ts   # OAuth (future)
+├── guards/                     # JwtAuthGuard, InternalServiceGuard, ApiKeyGuard, AgentCrudActorGuard
+├── throttle/                   # AuthThrottleService, LoginLockoutService
+├── persistence/                # session.store.ts (port), pg-session.store.ts (Drizzle), session-store.fake.ts
+├── utils/                      # device-info, session-store-errors, rotation-receipt.crypto
+├── decorators/                 # @Public(), @CurrentUser()
+├── interfaces/                 # auth.interface.ts, jwt-payload.interface.ts
+├── dto/                        # register, login, forgot-password, reset-password
+└── constants/                  # jwt.constants.ts
 ```
+
+### Service responsibilities
+
+| Service | Owns | Depends on |
+|---------|------|------------|
+| `AuthService` | Login (lockout + anti-enumeration decoy hash), new-location alert, password reset, verification resend | `UserService`, `SessionService`, `AuthEmailService`, `AuthorizationService`, `HumainAgentService`, `LoginLockoutService` |
+| `RegistrationService` | Account creation, invitation grant (roles / pre-approval / plan), best-effort plan + workspace + human-agent provisioning, anti-enumeration padding | `UserService`, `UserInvitationService`, `AuthEmailService`, `UsageService`, `WorkspaceInitializerService`, `HumainAgentService`, `SystemService` |
+| `SessionService` | Session issue/list/revoke, access-JWT minting, **atomic refresh rotation**, lost-response receipt recovery, reuse detection | `PgSessionStore`, `JwtService`, `AuthorizationService`, `UserService`, `PlatformSettingsService`, `SystemService` |
+| `AuthEmailService` | Verification, password-reset and new-location e-mails (best-effort) | `EmailService`, `EmailTemplateRenderer` |
 
 ---
 
@@ -166,6 +163,7 @@ auth/
 | `/auth/resend-verification` | 3 | 5 minutes |
 | `/auth/forgot-password` | 3 | 5 minutes |
 | `/auth/reset-password` | 5 | 1 minute |
+| `/auth/invite` | 10 | 1 minute |
 
 ---
 
@@ -174,15 +172,19 @@ auth/
 ### Registration Flow
 
 ```
-1. POST /auth/register { email, password }
-2. AuthService.register()
+1. POST /auth/register { email, password, inviteToken? }
+2. RegistrationService.register()
+   ├── If inviteToken: UserInvitationService.assertUsableForEmail(token, email) → { roleIds, planId }
+   │     └── unknown/used → ERR_1132, expired → ERR_1133, other email → ERR_1134
    ├── UserService.create()
    │   ├── hash password, generate verification token
-   │   └── persist status: inactive, registrationApproval: pending
-   ├── UsageService.getDefaultPlan() - get free plan
+   │   ├── classic: status: inactive, registrationApproval: pending
+   │   └── invited: status: active,   registrationApproval: approved + granted roles
+   ├── If inviteToken: UserInvitationService.markConsumed(token) (after the user exists)
+   ├── Plan: the invited plan when granted and still available, otherwise the default plan
    ├── UserService.assignPlan() - assign to new user
    ├── Send verification email (best-effort)
-   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
+   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (classic signups only)
 3. Return { message } (an already-registered email returns the same body and status, with no side effects)
 4. User clicks email link
 5. GET /auth/verify-email?token=xxx
@@ -190,7 +192,7 @@ auth/
    (status and registrationApproval are unchanged)
 ```
 
-New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account.
+New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account. A **classic** signup is created `inactive` + `pending` and waits for Super Admin approval. An **invited** signup is created `active` + `approved` with the roles and plan chosen at invitation, so it needs no manual review and never shows the pending page — it still verifies its email first, exactly like a classic signup. The invitation token is claimed only **after** the user row is created, so a rejected or failed registration never burns the link.
 
 ### Login Flow
 
@@ -204,7 +206,7 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
    ├── UserService.validatePassword() - bcrypt compare
    ├── Check emailVerified === true
    ├── Check for new login location
-   ├── AuthService.generateTokens()
+   ├── SessionService.generateTokens()
    │   ├── Create session with hashed refresh token
    │   ├── Get permissions from AuthorizationService
    │   ├── Sign access token with permissions in payload
@@ -219,7 +221,7 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
 
 ```
 1. POST /auth/refresh (refresh token in cookie)
-2. AuthService.refreshTokens()
+2. SessionService.refreshTokens()
    ├── Parse sessionId from token (format: sessionId.randomBytes)
    ├── Find session by ID
    ├── Verify session.isValid (detect reuse)
@@ -236,11 +238,13 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
 4. Return { accessToken, expiresIn }
 ```
 
+The optional `X-Refresh-Attempt-Id` request header (`[A-Za-z0-9_-]{8,64}`) makes a retried refresh idempotent: retries of one logical rotation reuse the same id, and a concurrent rotation answers `ERR_1131` instead of invalidating the token family. The id is not an auth credential.
+
 ### Logout Flow
 
 ```
 1. POST /auth/logout
-2. AuthService.logout()
+2. SessionService.logout()
    └── Set session.isValid = false
 3. Clear refresh token cookie
 4. Return { message: 'Logged out successfully' }
@@ -328,7 +332,7 @@ Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Appr
 | Surface | Inactive (`ERR_1202`) | Suspended (`ERR_1110`) |
 |---------|----------------------|------------------------|
 | `AuthService.login()` | Forbidden, before password check | same |
-| `AuthService.refreshTokens()` | Forbidden + all sessions invalidated | same |
+| `SessionService.refreshTokens()` | Forbidden + all sessions invalidated | same |
 | `JwtStrategy.validate()` | Unauthorized | same |
 | OAuth login of an **existing** linked user | Forbidden | same |
 
@@ -339,7 +343,7 @@ Helper messages:
 
 ### Super Admin notification (best-effort)
 
-After the verification email, `AuthService.register()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()`. Failures never fail registration (SMTP down, send error, missing role, or no recipients → log/warn).
+After the verification email, `RegistrationService.register()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()`. Failures never fail registration (SMTP down, send error, missing role, or no recipients → log/warn).
 
 Recipients: users with role `super_admin` and `status: active`. One email per recipient (other Super Admin addresses are not exposed in To/CC).
 
@@ -399,7 +403,7 @@ Example: 507f1f77bcf86cd799439011.a1b2c3d4e5f6...
 
 ### Session Schema
 
-Sessions are persisted in the Postgres table `identity.sessions` (Drizzle: `postgres/schema/identity.schema.ts`) behind the `SESSION_STORE` port, bound to `PgSessionStore`. `user_id` has an `ON DELETE CASCADE` FK to `identity.users`; `device_info` is `jsonb`. Refresh-token rotation bookkeeping (`rotated_from_session_id`, `rotated_to_session_id`, `rotation_attempt_id`, `rotated_at`, `rotation_receipt_*`) is stored on the same row, and rotation runs inside a `withTransaction` block. The shape below is the logical model:
+Sessions are persisted in the Postgres table `identity.sessions` (Drizzle: `postgres/schema/identity.schema.ts`) behind the `SessionStore` port interface, implemented by `PgSessionStore`. `user_id` has an `ON DELETE CASCADE` FK to `identity.users`; `device_info` is `jsonb`. Refresh-token rotation bookkeeping (`rotated_from_session_id`, `rotated_to_session_id`, `rotation_attempt_id`, `rotated_at`, `rotation_receipt_*`) is stored on the same row, and rotation runs inside a `withTransaction` block. The shape below is the logical model:
 
 ```typescript
 class Session {
@@ -460,7 +464,8 @@ When an old refresh token is used:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/auth/register` | Register new user |
+| POST | `/auth/register` | Register new user (optional `inviteToken`) |
+| GET | `/auth/invite?token=xxx` | Resolve a super-admin invitation token (invited email + expiry) |
 | POST | `/auth/login` | Login with credentials |
 | POST | `/auth/refresh` | Refresh access token |
 | GET | `/auth/verify-email?token=xxx` | Verify email address |
@@ -499,7 +504,26 @@ Content-Type: application/json
 }
 ```
 
-The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
+The created classic user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
+
+A super-admin invitation is supplied as an optional `inviteToken` (see the [User Invitations](../user/README.md#user-invitations) flow in the user module). It must be unused, unexpired, and issued for the same address or registration is refused with `ERR_1132` / `ERR_1133` / `ERR_1134`. An invited signup is created `active` with `registrationApproval: approved` and the `roleIds` / `planId` grants applied at creation, so it skips the manual review and the pending page; without a token, registration is unchanged.
+
+**Resolve Invitation (public):**
+```http
+GET /api/v1/auth/invite?token=<raw-invite-token>
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "invitee@example.com",
+    "expiresAt": "2026-10-15T13:45:39.295Z"
+  }
+}
+```
+
+Returns only the invited email and expiry — never the token. Unknown, already-used, or expired tokens fail with `ERR_1132` / `ERR_1133`.
 
 **Login:**
 ```http
@@ -668,6 +692,12 @@ class RegisterDto {
   @MaxLength(128)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
   password: string;
+
+  // Optional: super-admin invitation token from the invite link.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  inviteToken?: string;
 }
 ```
 
@@ -817,8 +847,20 @@ APP_FRONTEND_URL=https://app.yellostorm.com
     UsageModule,
     AuthorizationModule,
   ],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy],
+  providers: [
+    AuthService,
+    SessionService,
+    RegistrationService,
+    AuthEmailService,
+    JwtStrategy,
+    JwtAuthGuard,
+    InternalServiceGuard,
+    AgentCrudActorGuard,
+    AuthThrottleService,
+    LoginLockoutService,
+    PgSessionStore, // implements the SessionStore port
+  ],
+  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
 })
 ```
 
@@ -847,6 +889,11 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 | ERR_1116 | AUTH_RESET_TOKEN_INVALID | Password reset token invalid or already used |
 | ERR_1117 | AUTH_RESET_TOKEN_EXPIRED | Password reset token has expired |
 | ERR_1120 | AUTH_TOKEN_MISSING | Auth token missing (SSE) |
+| ERR_1130 | AUTH_DEPENDENCY_UNAVAILABLE | Auth dependency temporarily unavailable |
+| ERR_1131 | AUTH_ROTATION_CONFLICT | Concurrent refresh of the same session; retry |
+| ERR_1132 | AUTH_INVITE_TOKEN_INVALID | Invitation token invalid or already used |
+| ERR_1133 | AUTH_INVITE_TOKEN_EXPIRED | Invitation token has expired |
+| ERR_1134 | AUTH_INVITE_EMAIL_MISMATCH | Invitation was issued for a different email |
 | ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (login / refresh / JWT / existing OAuth login) |
 
 ---
@@ -901,6 +948,21 @@ Contains:
 ```
 
 Rejection does not send mail to the applicant.
+
+### Account Invitation (super-admin)
+
+Sent by the user module's `UserInvitationService` when a Super Admin invites an address from `/#/admin/users` (best-effort at the transport level, but a send failure surfaces as `ERR_1203`): 
+
+```
+Subject: You are invited to join YelloStorm
+
+Contains:
+- Branded HTML template (user-invite.html)
+- Unique, single-use invite link valid 24h: {APP_FRONTEND_URL}/#/?invite=<token>
+- Plain text fallback
+```
+
+It does not pre-fill only: an invited signup is created `active` + `approved` with the roles/plan carried by the invite, so it needs no Super Admin approval (the invitee still verifies email first). See [User Invitations](../user/README.md#user-invitations).
 
 ### Password Reset Email
 
@@ -968,10 +1030,10 @@ export class HealthController {
 // In other services
 @Injectable()
 export class SomeService {
-  constructor(private authService: AuthService) {}
+  constructor(private sessionService: SessionService) {}
 
   async checkSession(sessionId: string) {
-    const isValid = await this.authService.isSessionValid(sessionId);
+    const isValid = await this.sessionService.isSessionValid(sessionId);
     if (!isValid) {
       throw new UnauthorizedException('Session expired');
     }
@@ -983,5 +1045,5 @@ export class SomeService {
 
 ```typescript
 // When user changes password, is suspended, or is inactive at refresh
-await this.authService.invalidateAllUserSessions(userId);
+await this.sessionService.invalidateAllUserSessions(userId);
 ```

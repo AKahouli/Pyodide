@@ -91,7 +91,7 @@ export type ToolInvokeEnvelope =
     }
   | { ok: false; toolCallId: string; error: RuntimeToolError };
 
-/** Payload of the runtime ticket handed to the browser by Conversation V2. */
+/** Payload of the runtime ticket handed to the browser by App Builder. */
 export interface RuntimeTicketResult {
   runtimeSessionId: string;
   ticket: string;

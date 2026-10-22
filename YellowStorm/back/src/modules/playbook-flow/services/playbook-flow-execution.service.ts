@@ -1,7 +1,8 @@
 import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
+import type { IGrpcCompaction } from '@modules/agent/interfaces/agent.interface';
 import {
   EXECUTION_TERMINAL_STATUSES,
   ExecutionRepository,
@@ -72,7 +73,7 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './playbook-flow-repl
 import { PlaybookFlowTokenBufferService } from './playbook-flow-token-buffer.service';
 import { PlaybookFlowExecutionLeaseService } from './playbook-flow-execution-lease.service';
 export { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
-import { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
+import { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue, fromGrpcValue } from '../execution/grpc/grpc-struct.mapper';
 import { PlaybookFlowRuntimeClientService } from '../execution/grpc/playbook-flow-runtime-client.service';
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { PlaybookExecutionDispatcherService } from '../execution/runtime/playbook-execution-dispatcher.service';
@@ -90,6 +91,74 @@ import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/
 import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
 import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { PlaybookInputContractService } from './playbook-input-contract.service';
+
+export interface EvaluationQueryRunResult {
+  status: 'completed' | 'failed';
+  generatedAnswer: string;          // réponse de l'agent cible (eval-target)
+  targetAnswer: string;             // alias pour compatibilité
+  judgeScore?: number;              // score 0-1 du LLM Judge (correctness)
+  judgeFaithfulnessScore?: number;  // score 0-1 du LLM Judge (faithfulness)
+  judgeReasoning?: string;          // justification du LLM Judge
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  targetDurationMs?: number;        // durée de l'étape 1 (eval-target)
+  judgeDurationMs?: number;         // durée de l'étape 2 (eval-judge)
+  durationMs: number;               // somme des deux étapes
+  error: string | null;
+}
+
+export interface EvaluationAgentContext {
+  /** Conversation-parity knobs forwarded to the agent builder for eval runs. */
+  semanticSchemaName?: string;
+  webConnectorAccessEnabled?: boolean;
+  compaction?: IGrpcCompaction;
+}
+
+export interface EvaluationTargetRunResult {
+  status: 'completed' | 'failed';
+  targetAnswer: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
+  durationMs: number;
+  error: string | null;
+}
+
+export interface EvaluationJudgeRunResult {
+  status: 'completed' | 'failed';
+  judgeScore?: number;
+  judgeFaithfulnessScore?: number;
+  judgeReasoning?: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
+  durationMs: number;
+  error: string | null;
+}
+
+interface EvaluationStreamResult {
+  status: 'completed' | 'failed';
+  targetAnswer: string;
+  judgeScore?: number;
+  judgeFaithfulnessScore?: number;
+  judgeReasoning?: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
+  durationMs: number;
+  error: string | null;
+}
 
 const RUNTIME_AGENT_METADATA_KEYS = [
   'agent_name',
@@ -147,6 +216,65 @@ function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<st
     delete sanitizedMetadata[key];
   }
   return sanitizedMetadata;
+}
+
+function extractEvaluationAnswer(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    // Handle dict-like strings embedded in trace
+    if (text.includes("'content':") || text.includes('"content":')) {
+      const match = text.match(/['"]content['"]\s*:\s*['"](.+?)['"](?:\s*,\s*['"]output_port_id|['"]\s*})/s);
+      if (match) return match[1].trim();
+    }
+    return text;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['content', 'answer', 'text', 'message', 'output']) {
+      const candidate = obj[key];
+      if (typeof candidate === 'string') return candidate.trim();
+    }
+    for (const nested of Object.values(obj)) {
+      const extracted = extractEvaluationAnswer(nested);
+      if (extracted) return extracted;
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      const extracted = extractEvaluationAnswer(item);
+      if (extracted) parts.push(extracted);
+    }
+    return parts.length > 0 ? parts.join('\n') : null;
+  }
+  return String(value).trim() || null;
+}
+
+/** Parse the LLM Judge's output: {reasoning, correctness_score, ...} JSON, tolerating fences and prose. */
+function parseEvalJudgeOutput(
+  raw: string,
+): { score?: number; additionalScore?: number; reasoning?: string; parsed: boolean } {
+  const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const blockMatch = text.match(/\{[\s\S]*\}/);
+  if (!blockMatch) return { parsed: false };
+  try {
+    const obj = JSON.parse(blockMatch[0]);
+    if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
+      const result: { score?: number; additionalScore?: number; reasoning?: string; parsed: true } = { parsed: true };
+      // Legacy {score} contract, superseded by the FinanceBench {correctness_score, faithfulness_score} contract.
+      if (typeof obj.score === 'number') { result.score = obj.score; result.additionalScore = obj.score; }
+      if (typeof obj.correctness_score === 'number') result.score = obj.correctness_score;
+      if (typeof obj.faithfulness_score === 'number') result.additionalScore = obj.faithfulness_score;
+      if (typeof obj.reasoning === 'string') result.reasoning = obj.reasoning;
+      return result;
+    }
+  } catch {
+    // fall back to unparsed text
+  }
+  return { parsed: false };
 }
 
 function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
@@ -967,7 +1095,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private getNodeAgentMetadataService(): PlaybookExecutionNodeAgentMetadataService {
-    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService);
+    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService, this.configService);
   }
 
   private requireInputContractService(): PlaybookInputContractService {
@@ -1423,6 +1551,430 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
       this.scheduleQueueDrain(ownerId);
     }
+  }
+
+  async runEvaluationQuery(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    answerNodeId?: string;
+  }): Promise<EvaluationQueryRunResult> {
+    const { executionId, flowId, ownerId, snapshot, inputContext } = input;
+    const target = await this.runEvaluationTarget({ executionId, flowId, ownerId, snapshot, inputContext });
+    if (target.status !== 'completed') {
+      return {
+        status: target.status,
+        generatedAnswer: target.targetAnswer,
+        targetAnswer: target.targetAnswer,
+        toolCalls: target.toolCalls,
+        targetDurationMs: target.durationMs,
+        judgeDurationMs: 0,
+        durationMs: target.durationMs,
+        error: target.error,
+      };
+    }
+
+    // Step 2: judge consumes step-1's answer + tool trace instead of the old binding
+    const retrievedContext = target.toolCalls.find((t) => t.nodeId === 'eval-target')?.trace ?? [];
+    const judge = await this.runEvaluationJudge({
+      executionId,
+      flowId,
+      ownerId,
+      snapshot,
+      inputContext,
+      targetAnswer: target.targetAnswer,
+      retrievedContext,
+    });
+
+    return {
+      status: judge.status === 'completed' ? 'completed' : 'failed',
+      generatedAnswer: target.targetAnswer,
+      targetAnswer: target.targetAnswer,
+      judgeScore: judge.judgeScore,
+      judgeFaithfulnessScore: judge.judgeFaithfulnessScore,
+      judgeReasoning: judge.judgeReasoning,
+      toolCalls: target.toolCalls,
+      targetDurationMs: target.durationMs,
+      judgeDurationMs: judge.durationMs,
+      durationMs: target.durationMs + judge.durationMs,
+      error: judge.error ?? target.error,
+    };
+  }
+
+  async runEvaluationTarget(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    agentContext?: EvaluationAgentContext;
+    timeoutMs?: number;
+  }): Promise<EvaluationTargetRunResult> {
+    const request = await this.buildEvaluationGrpcRequest({
+      ...input,
+      inputContext: { query: input.inputContext.query ?? '' },
+      nodeIds: ['eval-target'],
+    });
+    const result = await this.collectEvaluationStream(request, {
+      captureTarget: true,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      status: result.status,
+      targetAnswer: result.targetAnswer,
+      toolCalls: result.toolCalls,
+      tokenUsage: result.tokenUsage,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  }
+
+  async runEvaluationJudge(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    targetAnswer: string;
+    retrievedContext: unknown[];
+    agentContext?: EvaluationAgentContext;
+    timeoutMs?: number;
+  }): Promise<EvaluationJudgeRunResult> {
+    const request = await this.buildEvaluationGrpcRequest({
+      ...input,
+      inputContext: {
+        query: input.inputContext.query ?? '',
+        expected_answer: input.inputContext.expected_answer ?? '',
+      },
+      nodeIds: ['eval-judge'],
+      extraInputContext: {
+        target_answer: input.targetAnswer,
+        retrieved_context: input.retrievedContext,
+      },
+    });
+    const result = await this.collectEvaluationStream(request, {
+      captureJudge: true,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      status: result.status,
+      judgeScore: result.judgeScore,
+      judgeFaithfulnessScore: result.judgeFaithfulnessScore,
+      judgeReasoning: result.judgeReasoning,
+      toolCalls: result.toolCalls,
+      tokenUsage: result.tokenUsage,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  }
+
+  private async buildEvaluationGrpcRequest(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    nodeIds: string[];
+    extraInputContext?: Record<string, unknown>;
+    agentContext?: EvaluationAgentContext;
+  }): Promise<Record<string, unknown>> {
+    const { flowId, ownerId, snapshot, inputContext, nodeIds } = input;
+    // Checkpoints and connector scopes must be fresh even for a same-question retry.
+    const executionId = `eval-${randomUUID()}`;
+    const normalizedOwnerId = String(ownerId);
+    const allNodes = Array.isArray(snapshot.nodes) ? (snapshot.nodes as any[]) : [];
+    // Reuse library agent/model selection, never persisted workflow inputs or history.
+    const nodes = allNodes.filter((n) => nodeIds.includes(n.id)).map((n) => ({
+      id: n.id,
+      kind: 'step',
+      label: n.id === 'eval-judge' ? 'LLM Judge' : 'Target Answer',
+      modelId: n.modelId,
+      metadata: {
+        assignedAgentId: n.metadata?.assignedAgentId,
+        description: typeof inputContext.query === 'string' ? inputContext.query : '',
+      },
+    }));
+    const recursionLimit = Number((snapshot.settings as Record<string, unknown>)?.recursionLimit) || 25;
+    const maxParallelism = Number((snapshot.settings as Record<string, unknown>)?.maxParallelism) || 5;
+    const workspaceIds: string[] = Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [];
+
+    // Resolve agents present in the selected nodes only
+    const agentIds = new Set<string>();
+    for (const node of nodes) {
+      const assignedAgentId = node.metadata?.assignedAgentId;
+      if (assignedAgentId && typeof assignedAgentId === 'string') {
+        agentIds.add(assignedAgentId);
+      }
+    }
+    const agentMap = new Map<string, Record<string, unknown>>();
+    if (agentIds.size > 0) {
+      const resolved = await this.agentService.buildGrpcAgentsForPlaybook(
+        normalizedOwnerId,
+        [...agentIds],
+        undefined,
+        executionId,
+        { userId: normalizedOwnerId, scopeType: 'playbook', scopeId: `playbook:${executionId}`, laneId: 'main' },
+        input.agentContext?.compaction,
+        {
+          semanticSchemaName: input.agentContext?.semanticSchemaName,
+          webConnectorAccessEnabled: input.agentContext?.webConnectorAccessEnabled,
+        },
+      );
+      for (const agent of resolved) {
+        agentMap.set(agent.id, {
+          agent_name: agent.name,
+          agent_description: agent.description,
+          agent_model: agent.chatbot?.model,
+          agent_prompt: agent.prompt,
+          agent_type: agent.agent_type,
+          agent_tools: (agent.tools || []).filter((tool) => typeof tool.name !== 'string' || !['smart-memory', 'memory.retrieve', 'memory.write'].includes(tool.name)),
+          skills: agent.skills || [],
+          agent_params: agent.agent_params?.params || {},
+          connector_bindings: (agent.connector_bindings || []).filter((binding) => binding.connector_slug !== 'smart-memory'),
+          connector_ids: agent.connectorIds || [],
+          brain_context: workspaceIds.map((workspaceId) => ({ workspace_id: workspaceId, workspace_documents: [] })),
+          // Conversation-parity model knobs: reasoning effort and context window
+          // are resolved by the agent builder but were dropped here, so the flow
+          // runtime always ran the default effort. Carry them through.
+          agent_reasoning_effort: agent.chatbot?.reasoning_effort,
+          agent_input_modalities: agent.chatbot?.input_modalities,
+          agent_context_window_tokens: agent.chatbot?.context_window_tokens,
+          agent_compaction: agent.chatbot?.compaction,
+        });
+      }
+    }
+
+    // Enrich node metadata
+    const enrichedNodes = await Promise.all(nodes.map(async (n: any) => {
+      const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+      const assignedAgentId = n.metadata?.assignedAgentId;
+      const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
+      const runtimeAgentMetadata = await this.getNodeAgentMetadataService().buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+      const description = typeof n.description === 'string' && n.description.trim()
+        ? n.description.trim()
+        : typeof n.metadata?.description === 'string' && (n.metadata.description as string).trim()
+          ? (n.metadata.description as string).trim()
+          : '';
+      return {
+        ...n,
+        modelId: n.modelId || (runtimeAgentMetadata?.agent_model as string) || '',
+        metadata: { ...baseMetadata, ...(description ? { description } : {}), ...(runtimeAgentMetadata || {}) },
+      };
+    }));
+
+    // Workspace paths
+    const defaultWorkspaceId = workspaceIds[0] || '';
+    const workspacePathsById = this.workspaceService
+      ? await this.workspaceService.getStoragePathMapByIds(workspaceIds)
+      : {};
+    const runtimeInputContext = this.buildRuntimeInputContext({
+      ...inputContext,
+      ...input.extraInputContext,
+      __playbook_workspace_ids: workspaceIds,
+      __playbook_default_workspace_id: defaultWorkspaceId,
+      __playbook_workspace_paths: workspacePathsById,
+      __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
+    }, []);
+
+    return {
+      execution_id: executionId,
+      flow_id: flowId,
+      owner_id: normalizedOwnerId,
+      snapshot: {
+        nodes: (enrichedNodes as any[]).map((n) => ({
+          id: n.id,
+          kind: n.kind,
+          label: n.label || '',
+          task_template_id: n.taskTemplateId || '',
+          prompt_template_id: n.promptTemplateId || '',
+          output_format_id: n.outputFormatId || '',
+          input: n.input ? {
+            raw: n.input.raw || '',
+            ports: (n.input.ports || []).map((p: Record<string, unknown>) => ({ id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required) })),
+          } : undefined,
+          output: n.output ? {
+            raw: n.output.raw || '',
+            ports: (n.output.ports || []).map((p: Record<string, unknown>) => ({ id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required) })),
+          } : undefined,
+          router_config: n.routerConfig ? {
+            output_labels: n.routerConfig.outputLabels || [],
+            max_iterations: n.routerConfig.maxIterations || 0,
+            conditions: (n.routerConfig.conditions || []).map((condition: Record<string, unknown>) => ({
+              label: condition.label || '', source_node: condition.sourceNode || '', source_port: condition.sourcePort || '',
+              path: condition.path || '', operator: condition.operator || '', value: toGrpcValue(condition.value),
+            })),
+            default_label: n.routerConfig.defaultLabel || '',
+          } : undefined,
+          iterator_config: n.iteratorConfig ? { collection_path: n.iteratorConfig.collectionPath || '', max_items: n.iteratorConfig.maxItems || 0 } : undefined,
+          human_approval_config: buildGrpcHumanApprovalConfig(n.humanApprovalConfig),
+          retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
+          model_id: n.modelId || '',
+          metadata: toGrpcStruct(buildGrpcNodeMetadata(n, { hitlPolicy: { mode: 'off' } })),
+          dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
+        })),
+        control_edges: [],
+        data_bindings: [],
+        settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      },
+      input_context: toGrpcStruct(runtimeInputContext),
+      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+    };
+  }
+
+  private async collectEvaluationStream(
+    request: Record<string, unknown>,
+    opts: { captureTarget?: boolean; captureJudge?: boolean; timeoutMs?: number },
+  ): Promise<EvaluationStreamResult> {
+    const startedAt = Date.now();
+    // No implicit deadline: only enforce a timeout when a caller passes one, so
+    // evaluation runs can be investigated without being cut at 10 minutes.
+    const timeoutMs = typeof opts.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : null;
+    const call = await this.runRuntime(request);
+    return new Promise<EvaluationStreamResult>((resolve) => {
+      let targetAnswer = '';
+      let judgeScore: number | undefined;
+      let judgeFaithfulnessScore: number | undefined;
+      let judgeReasoning: string | undefined;
+      const tracesByNode = new Map<string, { nodeId: string; iteration: number; trace: unknown[] }>();
+      let tokenUsage: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: unknown } | undefined;
+      let status: 'completed' | 'failed' = 'failed';
+      let error: string | null = null;
+      let resolved = false;
+      let timer: NodeJS.Timeout | undefined;
+      const finalize = () => {
+        if (!resolved) {
+          resolved = true;
+          if (timer) clearTimeout(timer);
+          resolve({
+            status,
+            targetAnswer,
+            judgeScore,
+            judgeFaithfulnessScore,
+            judgeReasoning,
+            toolCalls: [...tracesByNode.values()],
+            tokenUsage,
+            durationMs: Date.now() - startedAt,
+            error,
+          });
+        }
+      };
+      if (timeoutMs !== null) {
+        timer = setTimeout(() => {
+          status = 'failed';
+          error = `Evaluation step timed out after ${String(timeoutMs / 1000)}s`;
+          call.cancel();
+          finalize();
+        }, timeoutMs);
+      }
+
+      call.on('data', (event: Record<string, unknown>) => {
+        try {
+          const eventType = String(event.event_type || '');
+          const nodeId = String(event.node_id || '');
+          const iteration = Number(event.iteration ?? 0);
+          const rawPayload = (event.payload as Record<string, unknown>) || {};
+          const payload = (fromGrpcValue(rawPayload) as Record<string, unknown>) || {};
+
+          // Tool trace (matches python evaluator._collect_tool_trace: replace on >= length)
+          const trace = payload.tool_trace;
+          if (Array.isArray(trace) && trace.length > 0) {
+            const key = `${nodeId}:${iteration}`;
+            const existing = tracesByNode.get(key);
+            if (!existing || trace.length >= existing.trace.length) {
+              tracesByNode.set(key, {
+                nodeId,
+                iteration,
+                trace: trace.filter((item): item is Record<string, unknown> =>
+                  item !== null && typeof item === 'object' && !Array.isArray(item)),
+              });
+            }
+          }
+
+          // Token usage extraction from LLM response events. The flow engine
+          // emits accumulated usage under payload.usage (UsageSummary asdict:
+          // input_tokens/output_tokens/total_tokens/model).
+          const usage = payload.token_usage ?? payload.usage_metadata ?? payload.llm_token_usage ?? payload.usage;
+          if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
+            const u = usage as Record<string, unknown>;
+            const total = u.total_tokens ?? u.totalTokens;
+            const prompt = u.prompt_tokens ?? u.promptTokens ?? u.input_tokens;
+            const completion = u.completion_tokens ?? u.completionTokens ?? u.output_tokens;
+            if (typeof total === 'number' || typeof prompt === 'number' || typeof completion === 'number') {
+              tokenUsage = {
+                ...tokenUsage,
+                total_tokens: typeof total === 'number' ? total : tokenUsage?.total_tokens,
+                prompt_tokens: typeof prompt === 'number' ? prompt : tokenUsage?.prompt_tokens,
+                completion_tokens: typeof completion === 'number' ? completion : tokenUsage?.completion_tokens,
+              };
+            }
+          }
+
+          if (opts.captureTarget && nodeId === 'eval-target' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+            const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
+            const outputs = nodeExecution?.outputs || payload.outputs || null;
+            let candidate: unknown = null;
+            if (outputs) {
+              if (typeof outputs === 'object' && outputs !== null && !Array.isArray(outputs)) {
+                const outObj = outputs as Record<string, unknown>;
+                candidate = outObj.text || outObj.answer || outObj.output || outputs;
+              } else {
+                candidate = outputs;
+              }
+            }
+            if (!candidate || typeof candidate === 'object') {
+              candidate = payload.output || payload.raw_llm_output || payload.text || null;
+            }
+            const extracted = extractEvaluationAnswer(candidate);
+            if (extracted) targetAnswer = extracted;
+          }
+
+          if (opts.captureJudge && nodeId === 'eval-judge' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+            const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
+            const outputs = nodeExecution?.outputs || payload.outputs || null;
+            let candidate: unknown = null;
+            if (outputs) {
+              if (typeof outputs === 'object' && outputs !== null && !Array.isArray(outputs)) {
+                const outObj = outputs as Record<string, unknown>;
+                candidate = outObj.text || outObj.answer || outObj.output || outputs;
+              } else {
+                candidate = outputs;
+              }
+            }
+            if (!candidate || typeof candidate === 'object') {
+              candidate = payload.output || payload.raw_llm_output || payload.text || null;
+            }
+            const extracted = extractEvaluationAnswer(candidate);
+            if (extracted) {
+              const judge = parseEvalJudgeOutput(extracted);
+              if (judge.parsed && (judge.score !== undefined || judge.reasoning !== undefined)) {
+                if (judge.score !== undefined) judgeScore = judge.score;
+                if (judge.additionalScore !== undefined) judgeFaithfulnessScore = judge.additionalScore;
+                if (judge.reasoning !== undefined) judgeReasoning = judge.reasoning;
+              } else {
+                // Unparseable JSON → keep the raw text as reasoning
+                judgeReasoning = extracted;
+              }
+            }
+          }
+
+          if (eventType === 'ExecutionCompleted') status = 'completed';
+          else if (eventType === 'ExecutionFailed') {
+            status = 'failed';
+            error = (typeof payload.error === 'string' ? payload.error : null) ?? 'Execution failed';
+          }
+        } catch { /* swallow per-event errors in eval */ }
+      });
+
+      call.on('error', (err: Error) => {
+        status = 'failed';
+        error = err.message;
+        finalize();
+      });
+
+      call.on('end', () => finalize());
+    });
   }
 
   private async handleRunEvent(executionId: string, event: Record<string, unknown>): Promise<void> {

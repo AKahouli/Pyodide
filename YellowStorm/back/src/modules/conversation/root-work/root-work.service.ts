@@ -1,7 +1,7 @@
 import { parseNativePendingInputs } from './native-pending-inputs';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { McpJwtService, AdkExecutionAuthority } from '@modules/connector/services/mcp-jwt.service';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 import { UnauthorizedException } from '../../exceptions';
 import { CONVERSATION_STORE, ConversationStore } from '../persistence/conversation-store';

@@ -4,6 +4,14 @@ import { toWire, expectNoMongoKeys } from '../wire-helpers';
 import { AgentConnectorRuntimeService } from '@modules/agent/services/agent-connector-runtime.service';
 import { CONNECTOR_ID, connectorRow, makeConnectorService } from '../connector/connector-fixtures';
 
+// The fixtures use fictional hostnames; the egress policy would try to resolve
+// them through the OS resolver. Its logic is covered by its own unit specs —
+// here it is stubbed so the wire-contract stays hermetic.
+jest.mock('@modules/connector/utils/mcp-destination-policy.util', () => ({
+  ...jest.requireActual('@modules/connector/utils/mcp-destination-policy.util'),
+  assertMcpDestinationAllowed: async () => [],
+}));
+
 /**
  * Snapshot-style gRPC contracts for the ConnectorBinding / ToolBinding payloads
  * the runtime receives, for three agent shapes. Built through the real
@@ -61,7 +69,7 @@ describe('gRPC connector / tool binding contracts', () => {
     expectNoMongoKeys(body);
   });
 
-  it('agent with an MCP server-config connector: config travels as JSON / object, static auth env', async () => {
+  it('agent with an MCP server-config (stdio) connector: stdio is denied at the runtime boundary, no bindings travel', async () => {
     const row = connectorRow({
       id: '64b000000000000000000a03',
       slug: 'local-mcp',
@@ -74,12 +82,8 @@ describe('gRPC connector / tool binding contracts', () => {
     });
     const body = await payloads([row], { headers: {}, env: { API_KEY: 'runtime-secret' } });
     expectContract('grpc/agent-mcp-server-config-connector', body);
-    const [conv] = body.conv_v2_connectors;
-    const [binding] = body.connector_bindings;
-    expect(JSON.parse(conv.mcp_server_config_json)).toEqual(row.mcpServerConfig);
-    expect(binding.mcp_server_config).toEqual(row.mcpServerConfig);
-    expect(conv.mcp_transport_type).toBe('stdio');
-    expect(conv.auth_env).toEqual({ API_KEY: 'runtime-secret' });
+    // SEC-01: stdio MCP transports never reach the runtime as bindings
+    expect(body).toEqual({ conv_v2_connectors: [], connector_bindings: [], tools: [] });
     expectNoMongoKeys(body);
   });
 });

@@ -11,8 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { ConversationV2OwnerGuard } from '@modules/conversation-v2/guards/conversation-v2-owner.guard';
-import { ConversationV2SessionService } from '@modules/conversation-v2/services/conversation-v2-session.service';
+import { AppBuilderOwnerGuard } from '@modules/app-builder/guards/app-builder-owner.guard';
+import { AppBuilderSessionService } from '@modules/app-builder/services/app-builder-session.service';
 import { AppDataCatalogService } from '../services/app-data-catalog.service';
 import { AppDataMigrationService } from '../services/app-data-migration.service';
 import { AppDataQueryService } from '../services/app-data-query.service';
@@ -26,8 +26,11 @@ import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-req
 import { assertAppDataEnabled, assertEndUserManagementEnabled } from '../utils/app-data-feature.util';
 
 @ApiTags('App Data Owner')
-@Controller('conversation-v2/sessions/:id/app-data')
-@UseGuards(ConversationV2OwnerGuard)
+// `/app-builder` is canonical; `/conversation-v2` is a deprecated alias kept so existing clients,
+// bookmarked URLs and integrations keep working. Remove once legacy traffic has stopped.
+@Controller(['app-builder/sessions/:id/app-data', 'conversation-v2/sessions/:id/app-data'])
+
+@UseGuards(AppBuilderOwnerGuard)
 export class AppDataOwnerController {
   constructor(
     private readonly config: ConfigService,
@@ -37,7 +40,7 @@ export class AppDataOwnerController {
     private readonly endUsers: AppDataEndUserService,
     private readonly grants: AppDataEndUserGrantsService,
     private readonly audit: AppDataAuditService,
-    private readonly sessions: ConversationV2SessionService,
+    private readonly sessions: AppBuilderSessionService,
   ) {}
 
   private assertEnabled(): void {

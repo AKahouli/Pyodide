@@ -15,6 +15,8 @@ import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-call
 import { ConnectorController } from './connector.controller';
 import { ConnectorInternalController } from './controllers/connector-internal.controller';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
+import { AdkRuntimeMcpRenewalGuard } from '../auth/guards/internal-service-principal.guard';
+import { AdkNativeActorGuard } from '../auth/guards/adk-native-actor.guard';
 import { ConnectorUserService } from './connector-user.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
@@ -75,6 +77,8 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     M365TransferAdapter,
     ConnectorUserService,
     InternalServiceGuard,
+    AdkRuntimeMcpRenewalGuard,
+    AdkNativeActorGuard,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,

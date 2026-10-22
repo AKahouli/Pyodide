@@ -12,7 +12,7 @@
       "email": true,
       "litellm": true,
       "conversationGrpc": false,
-      "conversationV2Grpc": true,
+      "appBuilderGrpc": true,
       "playbookMcp": true,
       "semanticModel": true
     }

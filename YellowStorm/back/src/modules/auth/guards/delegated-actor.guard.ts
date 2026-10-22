@@ -8,7 +8,7 @@ import { AuditLogService } from '@modules/authorization/services/audit-log.servi
 import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 
 type Headers = Record<string, string | string[] | undefined>;

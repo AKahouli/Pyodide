@@ -125,9 +125,9 @@ vi.mock('@/modules/conversation/store', () => ({
   useConversationsLoading: () => convoState.loading,
 }));
 
-vi.mock('@/modules/conversation-v2/store', () => ({
-  useConversationV2PointersStore: (selector: (state: typeof v2PointersState) => unknown) => selector(v2PointersState),
-  useConversationV2Store: (
+vi.mock('@/modules/app-builder-studio/store', () => ({
+  useAppBuilderStudioPointersStore: (selector: (state: typeof v2PointersState) => unknown) => selector(v2PointersState),
+  useAppBuilderStudioStore: (
     selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
   ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
 }));

@@ -179,7 +179,7 @@ export interface SetMaintenanceRequest {
 export type NavigationTargetKey =
   | 'platform' | 'newChat' | 'projects' | 'history' | 'workspace' | 'semanticModels'
   | 'playbook' | 'agents' | 'teams' | 'groups' | 'worky' | 'connectedApps'
-  | 'appMarketplace' | 'governance' | 'admin';
+  | 'appMarketplace' | 'governance' | 'evaluationLogicalSearch' | 'admin';
 
 export interface NavigationNode {
   id: string;
@@ -865,6 +865,19 @@ export interface AssignPlanRequest {
   planId: string;
 }
 
+export interface InviteUserRequest {
+  email: string;
+  /** Roles granted to the invitee at registration. */
+  roleIds?: string[];
+  /** Plan granted to the invitee at registration. */
+  planId?: string;
+}
+export interface InviteUserResponse {
+  message: string;
+  email: string;
+  expiresAt: string;
+}
+
 // Audit Log Types
 
 export type AuditLogStatus = 'success' | 'failure';
@@ -1029,7 +1042,7 @@ export interface AdminModelResponse {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
-  isConversationV2Default: boolean;
+  __WIRE__isConversationV2Default__: boolean;
   omitTemperature: boolean;
   conversationApi?: 'chat_completions' | 'responses';
   responsesHistoryMode?: 'application' | 'provider';

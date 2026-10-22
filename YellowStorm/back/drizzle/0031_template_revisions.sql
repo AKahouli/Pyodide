@@ -1,4 +1,4 @@
--- Conversation V2 template revisions: dedicated persistence for template
+-- App Builder template revisions: dedicated persistence for template
 -- manifests/revision metadata, modeled on the App Builder runtime's
 -- source_revisions shape. One row per publish event per template.
 SET LOCAL lock_timeout = '5s';

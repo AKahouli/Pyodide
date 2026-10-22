@@ -25,7 +25,7 @@ describe('SearchableCharsHint', () => {
     api.getAdminIndex.mockResolvedValue({ settings: { ...SEARCH_INDEX_DEFAULTS, maxPassagesPerField: 40 }, configured: {}, defaults: SEARCH_INDEX_DEFAULTS });
     render(<SearchableCharsHint reading={{}} />);
     const note = await screen.findByRole('note');
-    expect(note).toHaveTextContent('"chars":"34,150"');
+    expect(note).toHaveTextContent(`"chars":"${(34150).toLocaleString().replace(/\s+/g, ' ')}"`);
     expect(note).toHaveTextContent('"passages":40');
   });
 
@@ -33,7 +33,7 @@ describe('SearchableCharsHint', () => {
     const { rerender } = render(<SearchableCharsHint reading={{ maxAttachmentChars: 40000 }} />);
     await screen.findByRole('note');
     // The built-in 100,000 characters of the body also exceed the 17,150 found: the warning names the larger limit.
-    expect(screen.getByText(/searchableWarn/)).toHaveTextContent('"limit":"100,000"');
+    expect(screen.getByText(/searchableWarn/)).toHaveTextContent(`"limit":"${(100000).toLocaleString().replace(/\s+/g, ' ')}"`);
     rerender(<SearchableCharsHint reading={{ maxAttachmentChars: 10000, maxBodyChars: 10000 }} />);
     expect(screen.queryByText(/searchableWarn/)).not.toBeInTheDocument();
   });

@@ -24,6 +24,41 @@ remain available for retry, including assignment failures without re-uploading.
 Only queued transfers can be cancelled. Upload destinations are captured before
 asynchronous work, and pending assignments prevent premature queue dismissal.
 
+## Indexing visibility
+
+`WorkspaceIndexingSummary` shows the workspace totals (files, indexed, failed,
+processing) above the file list, counted over every file of the workspace
+independently of the active folder or search.
+
+`FileIndexingDetails` shows the indexing state of a single file row:
+`FileIndexingStatusLine` carries the localized status and the elapsed attempt
+time measured by the server, and `FileIndexingSteps` carries the step schedule
+reported by the indexing service (document download, PDF conversion, block
+embedding, …). The schedule expands under the file name, because the ordered
+list needs the full row width, and the step order and names come from the
+service rather than from the file type. A schedule is only shown while it still
+describes the current outcome; a stale schedule from an earlier run never
+contradicts the status. A failed file keeps its server reason visible, because
+the status alone does not say what went wrong, and the steps after a failed
+step stay pending.
+
+### Status colours
+
+`indexing-status-tone.ts` is the single source of truth for the status colours:
+orange while indexing runs (queued, processing, uploading), red on failure,
+green when done, and neutral for a file that was not indexed yet. The text
+tones pair a light-mode shade with a dark-mode variant so both canvases keep a
+readable contrast; `failed` uses the semantic `text-destructive` token.
+
+The palette is shared by every status rendering of the module so they cannot
+drift apart: the status line and the "État d'indexation" column
+(`WorkspaceIndexingStatus`), the step schedule (`FileIndexingProgress` — the
+workflow summary and each step), the status dot (`IndexingStatusDot`), the
+workspace totals (`WorkspaceIndexingSummary`), and the status filter of the
+file browser (`WorkspaceFileBrowser` — a colour dot and the matching option).
+The file's own outcome decides the colour: the schedule details never repaint
+a file whose current status differs from them.
+
 Deletion is permanent for files and confirmed before execution. Classifier folder
 deletion removes descendant folders but preserves their files at the workspace
 root. Trash, restore and undo are not supported by the current backend.

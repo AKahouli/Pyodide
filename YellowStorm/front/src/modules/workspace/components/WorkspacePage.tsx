@@ -18,7 +18,8 @@ import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
-import { WorkspaceIndexingStatus } from './WorkspaceIndexingStatus';
+import { FileIndexingStatusLine, FileIndexingSteps } from './FileIndexingDetails';
+import { WorkspaceIndexingSummary } from './WorkspaceIndexingSummary';
 import { WorkspaceFileBrowser, type FileRowSelection } from './WorkspaceFileBrowser';
 import { WorkspaceUploadActivity } from './WorkspaceUploadActivity';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -205,6 +206,7 @@ export function WorkspacePage() {
               {!canWrite && <span className='shrink-0 rounded bg-muted px-2 py-1 text-xs text-muted-foreground'>{t('explorer.readOnly')}</span>}
             </div>
             <p className='mt-1 text-xs text-muted-foreground'>{t('explorer.description')}</p>
+            {pageWorkspaceLoadedFor && <div className='mt-2'><WorkspaceIndexingSummary files={files} workspaceId={pageWorkspaceLoadedFor} /></div>}
           </div>
         </div>
         <div className='flex flex-wrap items-center gap-2'>
@@ -557,7 +559,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove, s
     <Icon className='h-4 w-4 shrink-0 text-muted-foreground' />
     <span className='min-w-0 flex-1'>
       <span className='block truncate text-sm' title={file.name}>{file.name}</span>
-      <span className='block sm:hidden'><WorkspaceIndexingStatus file={file} /></span>
+      <span className='block sm:hidden'><FileIndexingStatusLine file={file} /></span>
     </span>
     {totalArtifactCount > 0 && <span className='shrink-0 text-xs text-muted-foreground'>{t('artifacts.count', { count: totalArtifactCount })}</span>}
   </>;
@@ -571,8 +573,11 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove, s
             {artifacts.length > 0 && <button type='button' className='shrink-0 rounded p-1 hover:bg-accent' onClick={() => setExpanded(value => !value)} aria-expanded={expanded} aria-label={expanded ? t('artifacts.collapse') : t('artifacts.expand')}><ChevronRight className={cn('h-4 w-4', expanded && 'rotate-90')} /></button>}
             {viewable ? <button type='button' className='flex min-w-0 flex-1 items-center gap-2 py-1 text-start hover:underline' onClick={handleView}>{primaryContent}</button> : <div className='flex min-w-0 flex-1 items-center gap-2 py-1'>{primaryContent}</div>}
           </div>
+          {/* The step schedule needs the full row width, so it sits under the file
+              name instead of inside the narrow indexing-status column. */}
+          <FileIndexingSteps file={file} />
         </TableCell>
-        <TableCell className='hidden sm:table-cell'><WorkspaceIndexingStatus file={file} /></TableCell>
+        <TableCell className='hidden sm:table-cell'><FileIndexingStatusLine file={file} /></TableCell>
         <TableCell className='hidden text-end text-xs text-muted-foreground lg:table-cell'>{formatBytes(file.size)}</TableCell>
         <TableCell className='hidden text-end text-xs text-muted-foreground xl:table-cell'>{file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : '—'}</TableCell>
         <TableCell className='w-10'>

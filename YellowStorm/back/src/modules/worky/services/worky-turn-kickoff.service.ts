@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { LoggerService } from '../../logger';
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { requesterOpts } from '../worky-requester.util';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyPlanningService } from './worky-planning.service';

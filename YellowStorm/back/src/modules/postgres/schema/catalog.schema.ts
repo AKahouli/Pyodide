@@ -55,7 +55,7 @@ export const catalogAiModels = catalogSchema.table(
     types: text('types').array().notNull().default([]),
     isActive: boolean('is_active').notNull().default(true),
     isDefault: boolean('is_default').notNull().default(false),
-    isConversationV2Default: boolean('is_conversation_v2_default').notNull().default(false),
+    isAppBuilderDefault: boolean('is_conversation_v2_default').notNull().default(false),
     omitTemperature: boolean('omit_temperature').notNull().default(false),
     conversationApi: varchar('conversation_api', { length: 32 }).$type<'chat_completions' | 'responses'>().notNull().default('chat_completions'),
     responsesHistoryMode: varchar('responses_history_mode', { length: 16 }).$type<'application' | 'provider'>().notNull().default('application'),
@@ -83,7 +83,7 @@ export const catalogAiModels = catalogSchema.table(
     index('idx_ai_models_type_active').on(t.type, t.isActive),
     index('idx_ai_models_types').using('gin', t.types),
     uniqueIndex('uq_ai_models_single_default').on(t.isDefault).where(sql`${t.isDefault}`),
-    uniqueIndex('uq_ai_models_single_v2_default').on(t.isConversationV2Default).where(sql`${t.isConversationV2Default}`),
+    uniqueIndex('uq_ai_models_single_v2_default').on(t.isAppBuilderDefault).where(sql`${t.isAppBuilderDefault}`),
   ],
 );
 

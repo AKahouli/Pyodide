@@ -12,11 +12,11 @@ import {
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { AgentComposer } from '@/modules/conversation-v2/components/AgentComposer';
+import { AgentComposer } from '@/modules/app-builder-studio/components/AgentComposer';
 import {
-  startConversationV2AgentSession,
+  startAppBuilderStudioAgentSession,
   startTemplateSession,
-} from '@/modules/conversation-v2/startAgentSession';
+} from '@/modules/app-builder-studio/startAgentSession';
 import type { AppTemplate } from '../../types';
 import { TemplatePreviewFrame } from './TemplatePreviewFrame';
 
@@ -73,7 +73,7 @@ export function TemplateDetailDialog({
     if (!text || !template || busy) return;
     setIsSending(true);
     try {
-      await startConversationV2AgentSession({
+      await startAppBuilderStudioAgentSession({
         text,
         workspaceIds,
         modelId,

@@ -253,7 +253,7 @@ export class MessageController {
       ? {
           runtimeMode: conversation.runtimeMode,
           createdBy: conversation.createdBy.toString(),
-          memberIds: conversation.members.map((member) => member.userId.toString()),
+          memberIds: (conversation.members ?? []).map((member) => member.userId.toString()),
           governanceContext: conversation.governanceContext
             ? {
                 programId: conversation.governanceContext.programId.toString(),

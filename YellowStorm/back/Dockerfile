@@ -50,7 +50,7 @@ COPY scripts ./scripts
 COPY drizzle.config.ts ./drizzle.config.ts
 COPY drizzle ./drizzle
 COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation/proto
-COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversation-v2/proto
+COPY --from=build /app/src/modules/app-builder/proto ./dist/modules/app-builder/proto
 COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-flow/proto
 COPY --from=build /app/src/modules/agent/proto ./dist/modules/agent/proto
 COPY --from=build /app/src/modules/worky/proto ./dist/modules/worky/proto

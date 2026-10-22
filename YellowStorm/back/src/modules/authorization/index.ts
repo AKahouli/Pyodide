@@ -2,6 +2,7 @@ export * from './authorization.module';
 export * from './authorization.service';
 export * from './services/audit-log.service';
 export * from './guards/permissions.guard';
+export * from './guards/global-permissions.guard';
 export * from './decorators/require-permissions.decorator';
 export * from './constants/permissions';
 export * from './interfaces/role.interface';

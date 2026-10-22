@@ -1,8 +1,8 @@
-# Conversation V2 — Backend-Owned State Implementation Plan
+# App Builder — Backend-Owned State Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move Conversation V2 from a thin pointer over an AI-service-owned session to backend-owned state — persist every gRPC event to a new append-only Mongo collection, serve reads from Mongo (not gRPC), and add per-message feedback, multi-model tracking, and resume-after-disconnect.
+**Goal:** Move App Builder from a thin pointer over an AI-service-owned session to backend-owned state — persist every gRPC event to a new append-only Mongo collection, serve reads from Mongo (not gRPC), and add per-message feedback, multi-model tracking, and resume-after-disconnect.
 
 **Architecture:** Add a `conversation_v2_events` collection (append-only, monotonic per-session `sequence` cursor), extend the pointer with `eventSequence`/`eventCount`, write a new `ConversationV2EventStoreService`, fold event persistence into the existing stream controller, add `GET /events`, `PATCH /feedback`, `GET /stream/live` endpoints, change `GET /sessions/:id` and `GET /share/v2/:token` to read from Mongo, and update the frontend store/api/SSE hook to consume `sequence` and recover from gaps.
 

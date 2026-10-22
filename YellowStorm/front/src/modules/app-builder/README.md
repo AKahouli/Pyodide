@@ -2,7 +2,7 @@
 
 ## Overview
 
-The App Builder module is a frontend hub that lets users **browse, manage, share, and delete** their deployed apps, shared apps, and drafts. It also provides an inline **Agent entry point** to create new apps via conversational AI. The module does **not** contain app creation logic itself — it delegates that to the `conversation-v2` module, which the product surfaces as **App Builder Studio**.
+The App Builder module is a frontend hub that lets users **browse, manage, share, and delete** their deployed apps, shared apps, and drafts. It also provides an inline **Agent entry point** to create new apps via conversational AI. The module does **not** contain app creation logic itself — it delegates that to the `app-builder-studio` module, which the product surfaces as **App Builder Studio**.
 
 **Routes:**
 
@@ -10,7 +10,7 @@ The App Builder module is a frontend hub that lets users **browse, manage, share
 |---|---|
 | `/app-builder` | Hub (lazy-loaded via `React.lazy` in `Router.tsx`) |
 | `/app-market` | Alias / marketplace entry (see `Router.tsx`) |
-| `/studio` · `/studio/:sessionId` | App Builder Studio (conversation-v2 UI; user-facing name) |
+| `/studio` · `/studio/:sessionId` | App Builder Studio (the `app-builder-studio` module; user-facing name) |
 | `/conversation-v2/*` | Legacy redirects → `/studio/*` |
 
 Proposed commit split for the current Studio / Template Studio work: [`COMMITS.md`](COMMITS.md).
@@ -98,7 +98,7 @@ All defined in `types.ts`:
 | `AppEndUserSummary` | `{ id, email, displayName, status, grants, createdAt }` |
 | `TemplateCategory` | Admin/catalog category (`id`, `name`, `slug`, `icon`, `templateCount`, …) |
 | `AppTemplate` | Published (or admin) template card payload (`coverImage`, `revisionId`, `platformReport`, …) |
-| `TemplatePreviewFilesResponse` / `TemplatePreviewPresignResponse` | Preview hydrate DTOs for NodePod (used by conversation-v2 `RevisionHydrator`) |
+| `TemplatePreviewFilesResponse` / `TemplatePreviewPresignResponse` | Preview hydrate DTOs for NodePod (used by app-builder-studio `RevisionHydrator`) |
 
 Additional types exported from `hooks/useAppBuilderFilters.ts`:
 
@@ -141,16 +141,16 @@ Additional types exported from `hooks/useAppBuilderFilters.ts`:
 
 | Action | Description |
 |---|---|
-| `fetchApps()` | Calls `GET /conversation-v2/apps`, sets `deployed`, `shared`, `drafts`. Sets `loading`/`error` flags. |
-| `removeApp(sessionId)` | Calls `DELETE /conversation-v2/apps/:sessionId`. Removes from `deployed` and `shared` arrays locally. |
-| `removeDraft(sessionId)` | Calls `useConversationV2PointersStore.getState().remove(sessionId)` (soft-delete via conversation-v2). Removes from `drafts` locally. |
+| `fetchApps()` | Calls `GET /app-builder/apps`, sets `deployed`, `shared`, `drafts`. Sets `loading`/`error` flags. |
+| `removeApp(sessionId)` | Calls `DELETE /app-builder/apps/:sessionId`. Removes from `deployed` and `shared` arrays locally. |
+| `removeDraft(sessionId)` | Calls `useAppBuilderStudioPointersStore.getState().remove(sessionId)` (soft-delete via app-builder-studio). Removes from `drafts` locally. |
 | `fetchCategories()` | Loads template categories; selecting a category triggers `fetchTemplates`. |
 | `selectCategory(id \| null)` | Sets `selectedCategoryId` and loads templates for that category (or clears templates when `null`). |
 | `fetchTemplates(categoryId)` | Calls `templateCatalogApi.listTemplates(categoryId)` (published templates for the gallery). |
 
 **Key behavior:** After successful API call, items are removed from local state immediately (optimistic UI). On error, the action re-throws so the calling component can show a toast.
 
-**Cross-module dependency:** `removeDraft` accesses the `conversation-v2` store directly — it does NOT call `appBuilderApi`.
+**Cross-module dependency:** `removeDraft` accesses the `app-builder-studio` store directly — it does NOT call `appBuilderApi`.
 
 ---
 
@@ -162,27 +162,27 @@ All requests go through `apiClient` (axios-based, from `@/lib/api/client`).
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `listApps()` | `GET /conversation-v2/apps` | Returns the full catalog: `{ deployed, shared, drafts }` |
-| `removeApp(sessionId)` | `DELETE /conversation-v2/apps/:sessionId` | Removes an app from the App Builder catalog |
-| `listEndUsers(sessionId)` | `GET /conversation-v2/sessions/:sessionId/app-data/end-users` | Lists registered users of a deployed app |
-| `updateEndUserGrants(sessionId, userId, grants)` | `PUT /conversation-v2/sessions/:sessionId/app-data/end-users/:userId/grants` | Updates CRUD permissions for a specific user |
+| `listApps()` | `GET /app-builder/apps` | Returns the full catalog: `{ deployed, shared, drafts }` |
+| `removeApp(sessionId)` | `DELETE /app-builder/apps/:sessionId` | Removes an app from the App Builder catalog |
+| `listEndUsers(sessionId)` | `GET /app-builder/sessions/:sessionId/app-data/end-users` | Lists registered users of a deployed app |
+| `updateEndUserGrants(sessionId, userId, grants)` | `PUT /app-builder/sessions/:sessionId/app-data/end-users/:userId/grants` | Updates CRUD permissions for a specific user |
 
 ### `templateCatalogApi` (read-only gallery)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `listCategories()` | `GET /conversation-v2/template-catalog/categories` | Published category list |
-| `listTemplates(categoryId?)` | `GET /conversation-v2/template-catalog/templates` | Published templates (optional category filter) |
-| `getTemplate(id)` | `GET /conversation-v2/template-catalog/templates/:id` | Single published template |
-| `listTemplatePreviewFiles(id)` / `presignTemplatePreviewFiles(id, paths)` | preview files + Ceph presign | Used by conversation-v2 NodePod hydrate for `template_<id>` revisions |
+| `listCategories()` | `GET /app-builder/template-catalog/categories` | Published category list |
+| `listTemplates(categoryId?)` | `GET /app-builder/template-catalog/templates` | Published templates (optional category filter) |
+| `getTemplate(id)` | `GET /app-builder/template-catalog/templates/:id` | Single published template |
+| `listTemplatePreviewFiles(id)` / `presignTemplatePreviewFiles(id, paths)` | preview files + Ceph presign | Used by app-builder-studio NodePod hydrate for `template_<id>` revisions |
 
 ### `adminTemplateApi` (super-admin)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `listAllTemplates()` | `GET /admin/conversation-v2/templates` | **All** templates (draft + published) — not the same as catalog `listTemplates` |
-| Category CRUD | `/admin/conversation-v2/template-categories` | Create / patch / delete categories |
-| `createTemplate` / `updateTemplate` / `deleteTemplate` | `/admin/conversation-v2/templates` | ZIP + cover create; metadata update; delete |
+| `listAllTemplates()` | `GET /admin/app-builder/templates` | **All** templates (draft + published) — not the same as catalog `listTemplates` |
+| Category CRUD | `/admin/app-builder/template-categories` | Create / patch / delete categories |
+| `createTemplate` / `updateTemplate` / `deleteTemplate` | `/admin/app-builder/templates` | ZIP + cover create; metadata update; delete |
 | `replaceCover` / `replaceSource` | `…/cover`, `…/source` | Replace assets (ZIP uploads use a long HTTP timeout) |
 
 **Response wrapper:** All endpoints return `ApiResponse<T>` where the payload is in `data.data`.
@@ -235,10 +235,10 @@ A `SidebarMenuItem` that navigates to `/app-builder`. Rendered in the sidebar wh
 ### `AppBuilderCreateWithAgent`
 
 An inline section at the top of the page with:
-- A `AgentComposer` (reused from `conversation-v2`) for text input
+- A `AgentComposer` (reused from `app-builder-studio`) for text input
 - Suggestion chips ("A sales dashboard...", "A task tracker...", "A contact form...")
-- On submit, calls `startConversationV2AgentSession()` with `source: 'app-builder'`
-- On success, navigates to `/studio/:sessionId` (App Builder Studio; module code remains under `conversation-v2`)
+- On submit, calls `startAppBuilderStudioAgentSession()` with `source: 'app-builder'`
+- On success, navigates to `/studio/:sessionId` (App Builder Studio; module code remains under `app-builder-studio`)
 - Clears selected skills/connectors on mount
 
 ### `AppBuilderGrid`
@@ -356,7 +356,7 @@ Translation keys are accessed via `useModuleTranslation('app-builder')`. The `st
 
 | Module | Usage |
 |---|---|
-| `conversation-v2` | `AgentComposer` for create-with-agent; `startConversationV2AgentSession` / `startTemplateSession` (Clone App); pointers store for draft soft-delete; `ShareDeployDialog` |
+| `app-builder-studio` | `AgentComposer` for create-with-agent; `startAppBuilderStudioAgentSession` / `startTemplateSession` (Clone App); pointers store for draft soft-delete; `ShareDeployDialog` |
 | `localization` | `useModuleTranslation('app-builder')` throughout all components |
 | `admin` | `usePermissions` — super-admin (`*`) gates category/template admin UI |
 | `sidebar` | `AppBuilderButton` rendered in the sidebar; active state detection via `pathname.startsWith('/app-builder')` |
@@ -372,10 +372,10 @@ Translation keys are accessed via `useModuleTranslation('app-builder')`. The `st
 | Path | Component | Notes |
 |---|---|---|
 | `/app-builder` | `AppBuilderPage` (lazy) | Main hub page |
-| `/studio` · `/studio/:sessionId` | conversation-v2 pages | Product name: App Builder Studio |
+| `/studio` · `/studio/:sessionId` | app-builder-studio pages | Product name: App Builder Studio |
 | `/conversation-v2/*` | `Navigate` redirects | Bookmarks → `/studio/*` |
 
-The sidebar button (`AppBuilderButton`) navigates to `/app-builder`. History rows and draft cards deep-link into `/studio/:sessionId` (see `conversation-v2/studio-paths.ts` and sidebar `chatGroups.ts`).
+The sidebar button (`AppBuilderButton`) navigates to `/app-builder`. History rows and draft cards deep-link into `/studio/:sessionId` (see `app-builder-studio/studio-paths.ts` and sidebar `chatGroups.ts`).
 
 URL search params are used for filter state:
 - `?q=<search>` — search query
@@ -400,7 +400,7 @@ URL search params are used for filter state:
 
 5. **Agent creation flow:** The inline agent creates a new session with `source: 'app-builder'`. Studio shows a special banner when entered from App Builder. User-facing copy says **App Builder Studio**, not “conversation-v2”.
 
-6. **Clone App (templates):** `startTemplateSession` creates a real session seeded from `template_<id>`, then navigates to `/studio/{sessionId}?action=clone` **without** adding History and **without** putting the template id in the URL. First Send commits the draft (strip `?action=clone`, prepend History). See conversation-v2 README § Template Clone draft / `studio-paths.ts`.
+6. **Clone App (templates):** `startTemplateSession` creates a real session seeded from `template_<id>`, then navigates to `/studio/{sessionId}?action=clone` **without** adding History and **without** putting the template id in the URL. First Send commits the draft (strip `?action=clone`, prepend History). See app-builder-studio README § Template Clone draft / `studio-paths.ts`.
 
 7. **Template covers:** At most one cover image on create (`COVER_MAX_IMAGES = 1`). Template Studio screenshot becomes the cover when ZIP validation succeeds.
 
@@ -433,7 +433,7 @@ URL search params are used for filter state:
 | `@/lib/notifications` | `showSuccess` / `showError` helpers |
 | `@/lib/utils` | `cn()` classname merger |
 | `@/modules/localization` | i18n hook |
-| `@/modules/conversation-v2` | AgentComposer, startAgentSession, stores, ShareDeployDialog |
+| `@/modules/app-builder-studio` | AgentComposer, startAgentSession, stores, ShareDeployDialog |
 
 ---
 
@@ -488,7 +488,7 @@ Run tests with: `npm test` (Vitest)
 ## Troubleshooting
 
 ### Apps not loading (infinite spinner)
-- Check browser Network tab for `GET /conversation-v2/apps`
+- Check browser Network tab for `GET /app-builder/apps`
 - Verify the user is authenticated
 - Check the store's `error` state — if `true`, the API call failed
 - Check `loading` state — if stuck `true`, the await may have hung
@@ -499,9 +499,9 @@ Run tests with: `npm test` (Vitest)
 - Tab changes auto-adjust sort (draft → "updated", non-draft removes "updated")
 
 ### Draft deletion not working
-- `removeDraft` calls `useConversationV2PointersStore.getState().remove()` — not the `appBuilderApi`
-- If the conversation-v2 store's `remove` fails, the draft won't be deleted
-- Check that the conversation-v2 module is loaded and functional
+- `removeDraft` calls `useAppBuilderStudioPointersStore.getState().remove()` — not the `appBuilderApi`
+- If the app-builder-studio store's `remove` fails, the draft won't be deleted
+- Check that the app-builder-studio module is loaded and functional
 
 ### Share dialog not appearing for shared apps
 - The share button only appears when `canOpenConversation === true` on the shared app
@@ -509,7 +509,7 @@ Run tests with: `npm test` (Vitest)
 
 ### End-users dialog shows no users
 - Only works for **owned** deployed apps (the button is hidden for shared apps)
-- Check `GET /conversation-v2/sessions/:id/app-data/end-users`
+- Check `GET /app-builder/sessions/:id/app-data/end-users`
 - Users must have registered on the deployed app to appear
 
 ### Pagination resets unexpectedly
@@ -517,7 +517,7 @@ Run tests with: `npm test` (Vitest)
 - This is by design — if items change, page 1 is the safest default
 
 ### Tests failing
-- Store tests mock `./api` and `@/modules/conversation-v2/store`
+- Store tests mock `./api` and `@/modules/app-builder-studio/store`
 - Page tests mock `../api`, `@/lib/notifications`, and `react-router-dom`
 - Both use `vi.hoisted()` for mock declarations and `beforeEach` to reset store state
 
@@ -525,7 +525,7 @@ Run tests with: `npm test` (Vitest)
 
 ## Important Notes for AI/Developer
 
-- The module uses **no direct backend calls for draft operations** — drafts are managed through the `conversation-v2` pointers store.
+- The module uses **no direct backend calls for draft operations** — drafts are managed through the `app-builder-studio` pointers store.
 - The `DeployedApp` type is shared between owned and distinguished by the `source` field.
 - All UI text goes through i18n — never hardcode strings.
 - Cards use `React.memo` for performance.

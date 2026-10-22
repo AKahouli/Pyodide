@@ -4,7 +4,7 @@ import { Inject, Injectable, forwardRef, UnauthorizedException, ServiceUnavailab
 import { ConfigService } from '@nestjs/config';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentRead } from '@modules/workspace/document/document-read';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';

@@ -15,6 +15,7 @@ export type AuthIpRateLimitScope =
   | 'resendVerification'
   | 'forgotPassword'
   | 'resetPassword'
+  | 'inviteLookup'
   | 'oauthStart'
   | 'oauthCallback';
 
@@ -104,6 +105,7 @@ export default registerAs(
         resendVerification: rule('RESEND_VERIFICATION_IP', 3, 300),
         forgotPassword: rule('FORGOT_PASSWORD_IP', 5, 300),
         resetPassword: rule('RESET_PASSWORD_IP', 5, 60),
+        inviteLookup: rule('INVITE_LOOKUP_IP', 10, 60),
         oauthStart: rule('OAUTH_START_IP', 10, 60),
         oauthCallback: rule('OAUTH_CALLBACK_IP', 20, 60),
       },

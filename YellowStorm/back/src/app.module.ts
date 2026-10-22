@@ -14,7 +14,7 @@ import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
 import aiProxyConfig from './config/ai-proxy.config';
 import conversationConfig from './config/conversation.config';
-import conversationV2Config from './config/conversation-v2.config';
+import appBuilderConfig from './config/app-builder.config';
 import appRuntimeConfig from './config/app-runtime.config';
 import appDataConfig from './config/app-data.config';
 import playbookFlowConfig from './config/playbook-flow.config';
@@ -25,6 +25,7 @@ import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
 import semanticModelConfig from './config/semantic-model.config';
+import pyodideRuntimeConfig from './config/pyodide-runtime.config';
 import pyodideRuntimeConfig from './config/pyodide-runtime.config';
 
 // Global Modules
@@ -43,7 +44,7 @@ import { EmailModule } from './modules/email';
 import { HealthModule } from './modules/health';
 import { AuthModule, JwtAuthGuard } from './modules/auth';
 import { UserModule, AccountApprovalGuard } from './modules/user';
-import { AuthorizationModule } from './modules/authorization';
+import { AuthorizationModule, GlobalPermissionsGuard } from './modules/authorization';
 import { SystemModule } from './modules/system';
 import { UsageModule } from './modules/usage';
 import { NotificationsModule } from './modules/notifications';
@@ -51,10 +52,11 @@ import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
 import { BrowserSessionModule } from './modules/browser-session/browser-session.module';
 import { PyodideRuntimeModule } from './modules/pyodide-runtime/pyodide-runtime.module';
+import { PyodideRuntimeModule } from './modules/pyodide-runtime/pyodide-runtime.module';
 import { ModelsModule } from './modules/models';
 import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
-import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from './modules/app-builder/app-builder.module';
 import { AppRuntimeModule } from './modules/app-runtime/app-runtime.module';
 import { AppDataModule } from './modules/app-data/app-data.module';
 import { ToolModule } from './modules/tool';
@@ -65,6 +67,7 @@ import { UserGroupModule } from './modules/user-group';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
+import { EvaluationLogicalSearchModule } from './modules/evaluation-logical-search/evaluation-logical-search.module';
 import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
@@ -124,8 +127,9 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     IndexingModule,
     BrowserSessionModule,
     PyodideRuntimeModule,
+    PyodideRuntimeModule,
     ConversationModule,
-    ConversationV2Module,
+    AppBuilderModule,
     AppRuntimeModule,
     AppDataModule,
     ModelsModule,
@@ -146,6 +150,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     ClassifierModule,
     HealthModule,
     EvaluationModule,
+    EvaluationLogicalSearchModule,
     WidgetChatModule,
     WorkyModule,
     GuardrailsModule,
@@ -165,6 +170,10 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     {
       provide: APP_GUARD,
       useClass: AccountApprovalGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: GlobalPermissionsGuard,
     },
   ],
 })

@@ -16,8 +16,8 @@ vi.mock('../api', () => ({
   updateModel: vi.fn(),
   setDefaultModel: vi.fn(),
   clearDefaultModel: vi.fn(),
-  setConversationV2DefaultModel: vi.fn(),
-  clearConversationV2DefaultModel: vi.fn(),
+  setAppBuilderDefaultModel: vi.fn(),
+  clearAppBuilderDefaultModel: vi.fn(),
   syncModels: vi.fn(),
 }));
 
@@ -32,7 +32,7 @@ const model = {
   types: ['chat'],
   isActive: true,
   isDefault: false,
-  isConversationV2Default: false,
+  __WIRE__isConversationV2Default__: false,
   omitTemperature: false,
   inputModalities: ['text'] as Array<'text' | 'image'>,
   maxInputTokens: null,

@@ -17,7 +17,7 @@ export interface ModelRow {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
-  isConversationV2Default: boolean;
+  isAppBuilderDefault: boolean;
   omitTemperature: boolean;
   conversationApi: ConversationApi;
   responsesHistoryMode: ResponsesHistoryMode;
@@ -71,8 +71,8 @@ export interface ModelStore {
    * Clear the flag on its current holder and set it on `modelId` in one
    * transaction — required by uq_ai_models_single_default.
    */
-  setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isConversationV2Default'): Promise<ModelRow | null>;
+  setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isAppBuilderDefault'): Promise<ModelRow | null>;
   findDefault(): Promise<ModelRow | null>;
-  findConversationV2Default(): Promise<ModelRow | null>;
+  findAppBuilderDefault(): Promise<ModelRow | null>;
   findGuardrailsClassifier(): Promise<ModelRow | null>;
 }

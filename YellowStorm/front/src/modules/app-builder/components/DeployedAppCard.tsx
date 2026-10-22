@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { ShareDeployDialog } from '@/modules/conversation-v2/components/RightPanel/ShareDeployDialog';
+import { ShareDeployDialog } from '@/modules/app-builder-studio/components/RightPanel/ShareDeployDialog';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DeployedApp } from '../types';

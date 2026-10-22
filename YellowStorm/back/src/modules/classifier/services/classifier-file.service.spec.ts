@@ -56,6 +56,28 @@ function makeService(doc: WorkspaceDocumentRecord, assignments: ClassifierAssign
 }
 
 describe('ClassifierFileService.listFiles sourceRootUrl', () => {
+  it('returns persisted attempt timestamps for processing, success and failure, and null for missing times', async () => {
+    for (const indexingStatus of ['processing', 'ready', 'failed']) {
+      const doc = makeDoc();
+      doc.indexingStatus = indexingStatus;
+      doc.indexingAttemptStartedAt = new Date('2026-10-21T09:00:00.000Z');
+      doc.indexingAttemptCompletedAt = indexingStatus === 'processing' ? undefined : new Date('2026-10-21T09:01:23.000Z');
+      const files = await makeService(doc).service.listFiles('u1', WORKSPACE_ID, {} as never);
+      expect(files[0].indexingAttemptStartedAt).toBe('2026-10-21T09:00:00.000Z');
+      expect(files[0].indexingAttemptCompletedAt).toBe(indexingStatus === 'processing' ? null : '2026-10-21T09:01:23.000Z');
+    }
+    const files = await makeService(makeDoc()).service.listFiles('u1', WORKSPACE_ID, {} as never);
+    expect(files[0].indexingAttemptStartedAt).toBeNull();
+    expect(files[0].indexingAttemptCompletedAt).toBeNull();
+  });
+  it('rehydrates indexing progress from existing metadata on file listing', async () => {
+    const doc = makeDoc();
+    const progress = { currentStep: 0, totalSteps: 3, steps: [], processingStatus: 'PROCESSING' };
+    doc.metadata = { ...doc.metadata, indexingProgress: JSON.stringify(progress) };
+    const { service } = makeService(doc);
+    const files = await service.listFiles('u1', WORKSPACE_ID, {} as never);
+    expect(files[0].indexingProgress).toEqual(progress);
+  });
   it('surfaces sourceRootUrl and normalizedSourceRootUrl from metadata', async () => {
     const { service } = makeService(makeDoc());
     const res = await service.listFiles('u1', WORKSPACE_ID, {} as any);

@@ -19,7 +19,7 @@ import { ConversationArtifactService } from '../services/conversation-artifact.s
 import { ROOT_WORK_STORE } from './root-work.store';
 import { CONVERSATION_STORE } from '../persistence/conversation-store';
 import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { RootBackgroundJobStore } from '../persistence/postgres/root-background-job.store';
 import { ConversationModule } from '../conversation.module';
 

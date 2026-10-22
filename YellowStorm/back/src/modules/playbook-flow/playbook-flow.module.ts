@@ -309,7 +309,6 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
     PlaybookFlowEvaluationService,
     PlaybookFlowRepeatabilityService,
     PlaybookFlowObservabilityService,
-
   ],
 })
 export class PlaybookFlowModule {}

@@ -3,7 +3,7 @@
  *
  * App Runtime resolves every revision id it is handed (starter, template,
  * session), so these live here rather than in the module that happens to
- * produce them. Conversation V2 re-exports them for its own callers.
+ * produce them. App Builder re-exports them for its own callers.
  */
 
 /** Manifest folder shared by starter revisions and template revisions. */

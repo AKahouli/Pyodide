@@ -25,13 +25,14 @@ behavior and JWT authorization remain unchanged.
 
 ## Quick Start
 
+`GlobalPermissionsGuard` (a `PermissionsGuard` that additionally skips `@Public()` routes) is registered **globally** as an `APP_GUARD` (in `AppModule`, **after** `JwtAuthGuard`). You only need the `@RequirePermissions()` decorator — **`@UseGuards(PermissionsGuard)` is no longer required** on new controllers (adding it is harmless but redundant).
+
 ### Protect a single endpoint
 
 ```typescript
-import { RequirePermissions, PermissionsGuard } from '../authorization';
+import { RequirePermissions } from '../authorization';
 
 @Get('admin/users')
-@UseGuards(PermissionsGuard)
 @RequirePermissions('users.read')
 async getUsers() {
   // Only users with 'users.read' or 'users.*' or '*' can access
@@ -42,12 +43,13 @@ async getUsers() {
 
 ```typescript
 @Controller('admin/analytics')
-@UseGuards(PermissionsGuard)
 @RequirePermissions('analytics.read')
 export class AnalyticsController {
   // All routes require 'analytics.read' permission
 }
 ```
+
+> **`@Public()` routes are skipped by the global guard only.** The global `GlobalPermissionsGuard` returns `true` for public routes (they opt out of the JWT pipeline; their own guards own authorization — e.g. the internal-service surface runs an actor guard that populates `request.user` after the global guards). An **explicit local** `@UseGuards(PermissionsGuard)` still enforces on a `@Public()` controller (used by `semantic-model-assistant-internal`). Therefore: don't rely on `@RequirePermissions()` alone on a `@Public()` route — it needs a local guard.
 
 ### Check multiple permissions
 
@@ -68,20 +70,22 @@ export class AnalyticsController {
 │                         Request Flow                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  1. Request with JWT ──► JwtAuthGuard ──► JwtStrategy            │
+│  1. Request with JWT ──► JwtAuthGuard (global) ──► JwtStrategy   │
 │                                              │                   │
 │                              Attaches permissions from JWT       │
 │                              to request.user (no DB hit)         │
 │                                              │                   │
-│  2. ──────────────────────► PermissionsGuard                     │
+│  2. ──(global APP_GUARD)──────────────────► PermissionsGuard     │
 │                                              │                   │
 │                              Checks request.user.permissions     │
 │                              against @RequirePermissions         │
-│                              (no DB hit)                         │
+│                              (no DB hit); skips @Public() routes │
 │                                              │                   │
 │  3. ──────────────────────► Controller/Service                   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
+
+Both `JwtAuthGuard` and `PermissionsGuard` are global (`APP_GUARD`), in that order.
 
 Permission Update Flow:
 ┌─────────────────────────────────────────────────────────────────┐
@@ -99,6 +103,8 @@ Permission Update Flow:
 | Decision | Rationale |
 |----------|-----------|
 | Permissions in JWT | Zero DB hits per request for authorization |
+| **Global `GlobalPermissionsGuard`** | Enforced centrally on every route (after `JwtAuthGuard`); a missing per-controller `@UseGuards` can no longer leave `@RequirePermissions` inert (fixes pentest finding H1) |
+| `@Public()` skipped by the **global** guard only | Public routes opt out of the JWT pipeline; their own guards handle authorization. A local `@UseGuards(PermissionsGuard)` still enforces. |
 | Wildcard matching | `users.*` covers current and future `users.x` permissions |
 | Role caching (5 min TTL) | Reduces DB load when generating tokens |
 | Async audit logging | Never blocks main operations |
@@ -234,38 +240,38 @@ VALUES ('<24-hex-id>', 'content_manager', 'Manages workspaces and documents',
 
 ### Basic Usage
 
+Because `PermissionsGuard` is global, only the decorator is needed:
+
 ```typescript
-import { Controller, Get, UseGuards } from '@nestjs/common';
-import { RequirePermissions, PermissionsGuard, Permissions } from '../authorization';
+import { Controller, Get, Post } from '@nestjs/common';
+import { RequirePermissions, Permissions } from '../authorization';
 
 @Controller('admin')
 export class AdminController {
 
   // Single permission
   @Get('users')
-  @UseGuards(PermissionsGuard)
   @RequirePermissions(Permissions.USERS_READ)
   async getUsers() { }
 
   // Multiple permissions (ALL required)
   @Post('users/:id/plan')
-  @UseGuards(PermissionsGuard)
   @RequirePermissions(Permissions.USERS_READ, Permissions.USERS_ASSIGN_PLAN)
   async assignPlan() { }
 
   // Multiple permissions (ANY required)
   @Get('dashboard')
-  @UseGuards(PermissionsGuard)
   @RequirePermissions([Permissions.ANALYTICS_READ, Permissions.REPORTS_READ], 'any')
   async getDashboard() { }
 }
 ```
 
+> Adding `@UseGuards(PermissionsGuard)` explicitly still works (idempotent) but is redundant — useful only if the global registration is ever removed.
+
 ### Controller-Level Protection
 
 ```typescript
 @Controller('admin/analytics')
-@UseGuards(PermissionsGuard)
 @RequirePermissions(Permissions.ANALYTICS_READ)
 export class AnalyticsController {
   // All routes in this controller require 'analytics.read'
@@ -280,12 +286,14 @@ export class AnalyticsController {
 
 ### Combining with Other Guards
 
+The global `PermissionsGuard` runs alongside route/controller guards (it runs **before** `@UseGuards` guards). Use the local `@UseGuards` only for the extra guards:
+
 ```typescript
 @Get('workspace/:id/documents')
-@UseGuards(PermissionsGuard, WorkspaceOwnerGuard)
+@UseGuards(WorkspaceOwnerGuard)
 @RequirePermissions(Permissions.WORKSPACES_ADMIN_DELETE)
 async deleteWorkspaceDocuments() {
-  // Requires permission AND ownership
+  // Requires permission (global guard) AND ownership (local guard)
 }
 ```
 
@@ -529,10 +537,15 @@ WHERE name = 'admin' AND NOT ('new.permission' = ANY (permissions));
 3. Check role is active: `is_active = true`
 4. Have user log out and back in (refreshes JWT)
 
-**Permission check always fails:**
-1. Verify `@UseGuards(PermissionsGuard)` is present
-2. Check permission string matches exactly (case-sensitive)
-3. Ensure user is authenticated (JwtAuthGuard runs first)
+**Permission check always fails (403 despite the expected role):**
+1. The global `GlobalPermissionsGuard` **skips `@Public()`** — make sure the route is not marked `@Public()` (or add an explicit local `@UseGuards(PermissionsGuard)`)
+2. Check the permission string matches exactly (case-sensitive)
+3. Ensure the user is authenticated (`JwtAuthGuard` runs first) and the assigned role actually grants the permission
+4. Have the user log out / back in (permissions are carried in the access token)
+
+**`@RequirePermissions` seems to do nothing (route reachable without the permission):**
+1. A route marked `@Public()` opts out — remove `@Public()` or move the authorization to a guard that runs on the public surface
+2. Confirm `GlobalPermissionsGuard` is still registered as an `APP_GUARD` in `AppModule` (regression guard)
 
 **Audit logs not appearing:**
 1. Check the Postgres connection

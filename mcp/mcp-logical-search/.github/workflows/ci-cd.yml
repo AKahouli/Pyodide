@@ -1,0 +1,228 @@
+name: CI/CD MCP Logical Search
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Choose environment to deploy'
+        options:
+          - poc
+        required: true
+
+env:
+  IMAGE_NAME: yscrmetachatbot001.azurecr.io/mcp-logical-search-poc
+  ENV_NAME: ${{ github.event.inputs.environment || 'poc' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg2://test:test@localhost:5432/test
+      DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/test
+      MCP_HOST: 127.0.0.1
+      MCP_API_KEY: test-api-key
+      DB_TLS_MODE: disable
+    services:
+      postgres:
+        image: paradedb/paradedb:0.18.9-pg17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Audit dependency requirements
+        run: |
+          python -m venv "$RUNNER_TEMP/pip-audit"
+          "$RUNNER_TEMP/pip-audit/bin/python" -m pip install --quiet pip-audit==2.10.1
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" --requirement requirements.txt --strict
+
+      - name: Run tests
+        run: python -m unittest discover -s tests
+
+  build:
+    if: (github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch')
+    runs-on: ["self-hosted", "Linux", "X64", "host142", "yellowstorm", "rec"]
+    needs: test
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
+      image_digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="1.5.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Version is $VERSION"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: yscrmetachatbot001.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:${VERSION} .
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@3f46e6c23709f2b35c9c5182affe8ef3d6e32b71
+        with:
+          image: '${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}'
+          format: cyclonedx-json
+          output-file: image-sbom.cdx.json
+          upload-release-assets: false
+
+      - name: Report all image vulnerabilities
+        uses: anchore/scan-action@0c5f23c1b1e02c3dc65effcc04e3732d6c9b46fc
+        with:
+          sbom: image-sbom.cdx.json
+          fail-build: false
+          only-fixed: false
+          output-format: json
+          output-file: image-vulnerabilities.json
+
+      - name: Retain full image security report
+        if: ${{ always() && hashFiles('image-vulnerabilities.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: image-security-${{ steps.version.outputs.tag }}
+          path: |
+            image-sbom.cdx.json
+            image-vulnerabilities.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Scan image and dependencies before publishing
+        uses: anchore/scan-action@0c5f23c1b1e02c3dc65effcc04e3732d6c9b46fc
+        with:
+          sbom: image-sbom.cdx.json
+          severity-cutoff: high
+          fail-build: true
+          # Unpatched findings remain in the full report above.
+          only-fixed: true
+          output-format: table
+
+      - name: Push verified Docker image
+        id: push
+        run: |
+          set -Eeuo pipefail
+          docker push "$IMAGE_NAME:${{ steps.version.outputs.tag }}"
+          IMAGE_REFERENCE=$(docker image inspect "$IMAGE_NAME:${{ steps.version.outputs.tag }}" --format '{{index .RepoDigests 0}}')
+          case "$IMAGE_REFERENCE" in
+            "$IMAGE_NAME"@sha256:*) ;;
+            *) echo "Unexpected published image reference" >&2; exit 1 ;;
+          esac
+          echo "digest=${IMAGE_REFERENCE##*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Sign image SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: image-sbom.cdx.json
+          push-to-registry: true
+
+  deploy:
+    runs-on: ["self-hosted", "Linux", "X64", "host142", "yellowstorm", "rec"]
+    needs: build
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to ACR for verification and pull
+        uses: azure/docker-login@v1
+        with:
+          login-server: yscrmetachatbot001.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Verify signed image before deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          command -v gh >/dev/null || { echo "GitHub CLI is required to verify image provenance" >&2; exit 1; }
+          gh attestation verify "oci://$IMAGE_NAME@${{ needs.build.outputs.image_digest }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci-cd.yml"
+
+      - name: Pull verified Docker image by digest
+        run: |
+          docker pull "$IMAGE_NAME@${{ needs.build.outputs.image_digest }}"
+
+      - name: Update Compose and deploy
+        run: |
+          set -Eeuo pipefail
+          COMPOSE_DIR="$HOME/yellowstorm/poc/mcp-logical-search"
+          COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
+          ROLLBACK_FILE="$COMPOSE_DIR/docker-compose.yml.rollback"
+          cp "$COMPOSE_FILE" "$ROLLBACK_FILE"
+
+          rollback() {
+            trap - ERR
+            echo "Deployment failed; restoring the previous Compose definition"
+            cp "$ROLLBACK_FILE" "$COMPOSE_FILE"
+            docker compose -f "$COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 90
+          }
+          trap rollback ERR
+
+          cp docker-compose.yml "$COMPOSE_FILE"
+          IMAGE_DIGEST='${{ needs.build.outputs.image_digest }}'
+          sed -i "s|^[[:space:]]*image:.*|    image: \"$IMAGE_NAME@$IMAGE_DIGEST\"|" "$COMPOSE_FILE"
+          docker compose -f "$COMPOSE_FILE" up -d --remove-orphans --no-deps --wait --wait-timeout 90 mcp-server
+
+          trap - ERR
+          rm -f "$ROLLBACK_FILE"

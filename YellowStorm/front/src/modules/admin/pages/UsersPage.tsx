@@ -4,7 +4,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Users, Loader2, AlertCircle, RefreshCw, Search, UserX, UserCheck, Shield, CreditCard, ChevronLeft, ChevronRight, MoreHorizontal, Mail, MailCheck, CheckCircle2, XCircle, X, Plus } from 'lucide-react';
+import { Users, Loader2, AlertCircle, RefreshCw, Search, UserX, UserCheck, Shield, CreditCard, ChevronLeft, ChevronRight, MoreHorizontal, Mail, MailCheck, CheckCircle2, XCircle, X, Plus, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,12 +18,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { getAdminUsers, getAdminUserById, suspendUser, activateUser, approveRegistration, rejectRegistration, assignPlanToUser, getAllPlans, getActiveRoles, assignRoleToUser, unassignRoleFromUser } from '../api';
+import { getAdminUsers, getAdminUserById, suspendUser, activateUser, approveRegistration, rejectRegistration, assignPlanToUser, getAllPlans, getActiveRoles, assignRoleToUser, unassignRoleFromUser, inviteUser } from '../api';
 import type { AdminUserResponse, AdminUserListParams, UserStatus, PlanResponse, RoleResponse } from '../types';
 import { usePermissions } from '../hooks/usePermissions';
 import { getUserAccountMenuActions, isSuperAdmin, parseRegistrationReviewSearch, stripRegistrationReviewParams, type UserAccountMenuActions } from './user-registration-review';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
+import type { ApiError } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-codes';
 
 type AdminTranslate = (key: ModuleTranslationKey<'admin'>, params?: TranslationParams) => string;
 
@@ -162,7 +164,14 @@ export function UsersPage() {
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [showPlanDialog, setShowPlanDialog] = useState(false);
   const [showRolesDialog, setShowRolesDialog] = useState(false);
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Invite state
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRoleId, setInviteRoleId] = useState('');
+  const [invitePlanId, setInvitePlanId] = useState('');
+  const [inviting, setInviting] = useState(false);
 
   // Plan assignment state
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
@@ -447,6 +456,44 @@ export function UsersPage() {
 
   const hasActiveFilters = search || statusFilter !== 'all' || emailVerifiedFilter !== 'all';
 
+  const openInviteDialog = () => {
+    setInviteEmail('');
+    setInviteRoleId('');
+    // Pre-select the default plan; the Super Admin can change it.
+    setInvitePlanId(plans.find((plan) => plan.isDefault)?.id ?? '');
+    setShowInviteDialog(true);
+  };
+
+  const inviteEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim());
+
+  const handleInvite = async () => {
+    const email = inviteEmail.trim();
+    if (!inviteEmailValid) return;
+    setInviting(true);
+
+    try {
+      await inviteUser({
+        email,
+        roleIds: inviteRoleId ? [inviteRoleId] : [],
+        planId: invitePlanId || undefined,
+      });
+      toast.success(t('users.toasts.invite.title'), {
+        description: t('users.toasts.invite.description', { email }),
+      });
+      setShowInviteDialog(false);
+      setInviteEmail('');
+      setInviteRoleId('');
+      setInvitePlanId('');
+    } catch (err) {
+      const apiError = err as ApiError;
+      toast.error(t('users.toasts.invite.error'), {
+        description: apiError.code ? getErrorMessage(apiError.code) : err instanceof Error ? err.message : t('users.errors.unknown'),
+      });
+    } finally {
+      setInviting(false);
+    }
+  };
+
   if (error && !loading) {
     return (
       <div className='flex flex-col items-center justify-center h-96 gap-4'>
@@ -468,9 +515,17 @@ export function UsersPage() {
           <h1 className='text-2xl font-bold tracking-tight'>{t('users.title')}</h1>
           <p className='text-muted-foreground'>{t('users.description')}</p>
         </div>
-        <Button onClick={fetchUsers} variant='outline' size='icon' aria-label={t('users.actions.refresh')}>
-          <RefreshCw className='h-4 w-4' />
-        </Button>
+        <div className='flex items-center gap-2'>
+          {superAdmin && (
+            <Button onClick={openInviteDialog}>
+              <UserPlus className='mr-2 h-4 w-4' />
+              {t('users.actions.invite')}
+            </Button>
+          )}
+          <Button onClick={fetchUsers} variant='outline' size='icon' aria-label={t('users.actions.refresh')}>
+            <RefreshCw className='h-4 w-4' />
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -848,6 +903,89 @@ export function UsersPage() {
           </div>
           <DialogFooter>
             <Button onClick={() => setShowRolesDialog(false)}>{t('users.roles.done')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invite User Dialog */}
+      <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('users.modals.invite.title')}</DialogTitle>
+            <DialogDescription>{t('users.modals.invite.description')}</DialogDescription>
+          </DialogHeader>
+          <div className='space-y-4 py-4'>
+            <div>
+              <Label htmlFor='invite-email'>{t('users.modals.invite.email.label')}</Label>
+              <Input
+                id='invite-email'
+                type='email'
+                autoComplete='email'
+                className='mt-2'
+                placeholder={t('users.modals.invite.email.placeholder')}
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleInvite();
+                }}
+                disabled={inviting}
+              />
+            </div>
+            <div>
+              <Label htmlFor='invite-plan'>{t('users.modals.invite.plan.label')}</Label>
+              <Select value={invitePlanId} onValueChange={setInvitePlanId} disabled={inviting}>
+                <SelectTrigger id='invite-plan' className='mt-2'>
+                  <SelectValue placeholder={t('users.modals.invite.plan.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {plans.map((plan) => (
+                    <SelectItem key={plan.id} value={plan.id}>
+                      <div className='flex items-center gap-2'>
+                        <span>{plan.name}</span>
+                        {plan.isDefault && (
+                          <Badge variant='secondary' className='text-xs'>
+                            {t('users.modals.invite.plan.defaultBadge')}
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor='invite-role'>{t('users.modals.invite.roles.label')}</Label>
+              <Select
+                value={inviteRoleId}
+                onValueChange={setInviteRoleId}
+                disabled={inviting || roles.length === 0}>
+                <SelectTrigger id='invite-role' className='mt-2'>
+                  <SelectValue placeholder={t('users.modals.invite.roles.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {role.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setShowInviteDialog(false)} disabled={inviting}>
+              {tCommon('actionCancel')}
+            </Button>
+            <Button onClick={handleInvite} disabled={inviting || !inviteEmailValid}>
+              {inviting ? (
+                <>
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  {t('users.modals.invite.loading')}
+                </>
+              ) : (
+                t('users.modals.invite.action')
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

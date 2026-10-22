@@ -19,6 +19,7 @@ from mail_enumeration import (
     normalize_datetime,
     normalize_message,
 )
+from graph_helpers import logger
 
 NEXT = "https://graph.microsoft.com/v1.0/me/messages?$skip=2"
 FIRST_PAGE = "https://graph.microsoft.com/v1.0/me/messages"
@@ -609,5 +610,5 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             passed += 1
-            print(f"  ok  {name}")
-    print(f"\n{passed} passed")
+            logger.info(f"  ok  {name}")
+    logger.info(f"\n{passed} passed")

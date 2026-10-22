@@ -1,0 +1,24 @@
+{
+  "grpc_target": "localhost:50051",
+  "grpc_secure": false,
+  "grpc_root_certificate_path": null,
+  "grpc_api_key_env": "u9W/1v9X45bItHATAnhkXqMnz42/UaCSveysELeXF4U=",
+  "request_template_path": "evaluation/request_template.json",
+  "benchmark_zip_path": "C:\\Users\\Yellowsys\\Downloads\\deep_search_benchmark_v2.zip",
+  "benchmark_queries_member": "deep_search_benchmark_v2/benchmark_queries.json",
+  "output_directory": "evaluation/outputs",
+  "answer_node_id": null,
+  "query_ids": [],
+  "timeout_seconds": 600,
+  "query_path": [
+    "input_context",
+    "query"
+  ],
+  "additional_query_paths": [
+    ["snapshot", "nodes", "0", "metadata", "description"]
+  ],
+  "session_id_paths": [],
+  "judge_model": "deepseek-v4-pro",
+  "judge_base_url": null,
+  "judge_api_key_env": "LITELLM_API_SECRET_KEY"
+}

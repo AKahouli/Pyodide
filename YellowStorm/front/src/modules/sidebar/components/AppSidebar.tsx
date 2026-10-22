@@ -21,15 +21,16 @@ import {
   useConversationsLoading,
   useHistoryConversations,
 } from '@/modules/conversation/store';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
-import { DEFAULT_FEATURE_VISIBILITY } from '@/modules/admin/constants';
-import { getFeatureVisibility } from '@/modules/admin/api';
-import { useNavigationSettings } from '@/modules/admin/hooks';
+import { useAppBuilderStudioPointersStore } from '@/modules/app-builder-studio/store';
 import {
+  DEFAULT_FEATURE_VISIBILITY,
+  ensureEvaluationTarget,
+  getFeatureVisibility,
   NAVIGATION_TARGETS,
   navigationLabel,
+  useNavigationSettings,
   visibleNavigationItems,
-} from '@/modules/admin/navigation';
+} from '@/modules/admin';
 import type { FeatureVisibility } from '@/modules/admin';
 import { useAdminAccess } from '@/modules/admin/hooks/useAdminAccess';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
@@ -48,7 +49,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const { t, language } = useModuleTranslation('sidebar');
   const { hasAnyPermission, canUseFeature, canSeeMenu } = usePermissions();
   const { hasAdminAccess } = useAdminAccess();
-  const navigation = useNavigationSettings();
+  const rawNavigation = useNavigationSettings();
+  const navigation = useMemo(() => ensureEvaluationTarget(rawNavigation), [rawNavigation]);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
   const { user } = useAuth();
   const pendingApproval = isPendingAdminApproval(user);
@@ -70,10 +72,10 @@ export const AppSidebar = memo(function AppSidebar() {
   const conversationsLoading = useConversationsLoading();
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const conversationsHasMore = useConversationStore((s) => s.conversationsHasMore);
-  const v2Pointers = useConversationV2PointersStore((s) => s.items);
-  const fetchV2Pointers = useConversationV2PointersStore((s) => s.fetch);
-  const v2Loading = useConversationV2PointersStore((s) => s.loading);
-  const v2NextCursor = useConversationV2PointersStore((s) => s.nextCursor);
+  const v2Pointers = useAppBuilderStudioPointersStore((s) => s.items);
+  const fetchV2Pointers = useAppBuilderStudioPointersStore((s) => s.fetch);
+  const v2Loading = useAppBuilderStudioPointersStore((s) => s.loading);
+  const v2NextCursor = useAppBuilderStudioPointersStore((s) => s.nextCursor);
   const loadingNextPage = useRef(false);
 
   useEffect(() => {

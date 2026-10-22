@@ -1,8 +1,23 @@
 import path from 'path';
+import fs from 'fs';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import nodepod from '@scelar/nodepod/vite';
 import { defineConfig, loadEnv } from 'vite';
+
+/**
+ * `@openuidev/react-ui` imports `lucide-react/dynamicIconImports.mjs`, a path
+ * lucide-react no longer ships (it now exposes `dist/esm/dynamicIconImports.js`).
+ * Resolve the specifier to the real ESM file so Rollup/Vitest can bundle it.
+ */
+function resolveDynamicIconImports(): string {
+  const candidates = [
+    path.resolve(__dirname, 'node_modules/@openuidev/react-ui/node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dynamicIconImports.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1];
+}
 
 function getManualChunk(id: string): string | undefined {
   if (!id.includes('node_modules')) {
@@ -83,7 +98,7 @@ export default defineConfig(({ mode }) => {
     // Allows local HTTP API images in dev/preview; nginx serves production
     // with its own CSP. API/socket origins remain runtime configuration.
     'Content-Security-Policy':
-      "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' http: https: wss:; media-src 'self' blob: data: https:; frame-src 'self' blob: data: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' http: https: wss:; media-src 'self' blob: data: https:; frame-src 'self' blob: data: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   };
 
   // Dev/preview port configurable through `.env` via `VITE_PORT` (default 5173).
@@ -114,15 +129,21 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        'lucide-react/dynamicIconImports.mjs': resolveDynamicIconImports(),
       },
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
       include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet'],
+      // Pyodide loads its own assets from VITE_PYODIDE_INDEX_URL at runtime.
+      exclude: ['pyodide'],
       dedupe: ['react', 'react-dom'],
       esbuildOptions: {
         target: 'es2022',
       },
+    },
+    worker: {
+      format: 'es',
     },
     esbuild: {
       target: 'es2022',

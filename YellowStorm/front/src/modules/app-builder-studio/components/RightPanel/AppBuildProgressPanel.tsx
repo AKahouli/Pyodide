@@ -1,0 +1,122 @@
+import { Loader2Icon, AlertCircleIcon, CheckCircle2Icon, CheckIcon } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import type { AppBuildProgress } from '../../types';
+import { useAppBuilderStudioTranslation } from '../../translation';
+import {
+  APP_BUILD_PHASE_ORDER,
+  buildPhaseTranslationKey,
+  isFailedBuildPhase,
+  isReadyBuildPhase,
+  phaseIndex,
+} from '../../utils/app-build-phase';
+
+interface AppBuildProgressPanelProps {
+  progress: AppBuildProgress;
+  title?: string;
+}
+
+export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanelProps) {
+  const { t } = useAppBuilderStudioTranslation();
+  const currentIdx = phaseIndex(progress.phase);
+  const failed = isFailedBuildPhase(progress.phase);
+  const ready = isReadyBuildPhase(progress.phase);
+  const phaseKey = buildPhaseTranslationKey(progress.phase);
+  const translatedPhase = t(phaseKey);
+  const phaseLabel = translatedPhase === phaseKey ? progress.message : translatedPhase;
+
+  return (
+    <div className='flex h-full min-h-0 flex-col overflow-hidden bg-muted/10'>
+      <div className='flex h-10 shrink-0 items-center gap-2 border-b bg-card/60 px-3'>
+        <Badge
+          variant='secondary'
+          className={cn(
+            'gap-1 border-0 text-[10px] font-normal',
+            failed && 'bg-destructive/10 text-destructive',
+            ready && 'bg-primary/10 text-primary',
+            !failed && !ready && 'bg-secondary text-secondary-foreground',
+          )}
+        >
+          {!failed && !ready && <Loader2Icon className='size-3 animate-spin' />}
+          {failed && <AlertCircleIcon className='size-3' />}
+          {ready && <CheckCircle2Icon className='size-3' />}
+          {phaseLabel}
+        </Badge>
+        {title && (
+          <span className='truncate text-xs text-muted-foreground'>{title}</span>
+        )}
+      </div>
+
+      <div className='flex flex-1 flex-col items-center justify-center gap-6 overflow-auto bg-gradient-to-b from-muted/30 to-background px-6 py-8'>
+        <div className='relative'>
+          {!failed && !ready && (
+            <div className='absolute inset-0 animate-ping rounded-full bg-primary/15' />
+          )}
+          <div
+            className={cn(
+              'relative flex size-14 items-center justify-center rounded-2xl border shadow-sm',
+              failed
+                ? 'border-destructive/20 bg-destructive/10'
+                : ready
+                  ? 'border-primary/20 bg-primary/10'
+                  : 'border-border/60 bg-card',
+            )}
+          >
+            {failed ? (
+              <AlertCircleIcon className='size-5 text-destructive' />
+            ) : ready ? (
+              <CheckCircle2Icon className='size-5 text-primary' />
+            ) : (
+              <Loader2Icon className='size-5 animate-spin text-primary' />
+            )}
+          </div>
+        </div>
+
+        <div className='max-w-sm space-y-2 text-center'>
+          <p className='text-sm font-semibold tracking-tight'>{title || t('nodepod.previewTitle')}</p>
+          <p className='text-xs leading-relaxed text-muted-foreground'>{phaseLabel}</p>
+        </div>
+
+        <ol className='w-full max-w-md space-y-2'>
+          {APP_BUILD_PHASE_ORDER.filter((p) => p !== 'failed').map((phase) => {
+            const idx = phaseIndex(phase);
+            const done = idx < currentIdx || (ready && phase !== 'ready');
+            const active = phase === progress.phase;
+            const labelKey = buildPhaseTranslationKey(phase);
+            const translated = t(labelKey);
+            // Never surface a raw phase identifier to the user; a missing
+            // translation degrades to the generic status rather than
+            // "fetching app code" leaking through as a backend enum value.
+            const label = translated === labelKey ? t('nodepod.statusLoading') : translated;
+            return (
+              <li
+                key={phase}
+                className={cn(
+                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors',
+                  active && 'bg-primary/10 text-foreground font-medium',
+                  done && !active && 'text-muted-foreground',
+                  !done && !active && 'text-muted-foreground/60',
+                )}
+              >
+                <span
+                  className={cn(
+                    'inline-flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px]',
+                    done && 'border-primary/30 bg-primary/10 text-primary',
+                    active && !done && 'border-primary/40 bg-primary/10',
+                  )}
+                >
+                  {done ? (
+                    <CheckIcon className='size-2.5' aria-hidden />
+                  ) : active ? (
+                    <Loader2Icon className='size-2.5 animate-spin motion-reduce:animate-none' aria-hidden />
+                  ) : null}
+                </span>
+                <span className='truncate'>{label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </div>
+  );
+}

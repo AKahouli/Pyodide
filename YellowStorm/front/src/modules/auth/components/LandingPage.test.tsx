@@ -9,6 +9,7 @@ import { LandingPage } from './LandingPage';
 const useAuthMock = vi.hoisted(() => vi.fn());
 const localizationState = vi.hoisted(() => ({ ready: true }));
 const getAuthProvidersMock = vi.hoisted(() => vi.fn());
+const getInviteDetailsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: useAuthMock }));
 vi.mock('@/modules/localization', () => ({
@@ -27,6 +28,7 @@ vi.mock('@/components/AppBrandLogo', () => ({
 vi.mock('../modals/AuthModals', () => ({ AuthModals: () => <div data-testid='auth-modals' /> }));
 vi.mock('../api', () => ({
   getAuthProviders: getAuthProvidersMock,
+  getInviteDetails: getInviteDetailsMock,
 }));
 vi.mock('@/lib/api/config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api/config')>();
@@ -65,9 +67,10 @@ describe('LandingPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localizationState.ready = true;
-    useAuthModalStore.setState({ activeModal: null, registerSuccess: false, registeredEmail: '' });
+    useAuthModalStore.setState({ activeModal: null, registerSuccess: false, registeredEmail: '', inviteToken: null, inviteEmail: null });
     useAuthMock.mockReturnValue(makeAuthState({ registrationEnabled: true }));
     getAuthProvidersMock.mockResolvedValue([oauthProvider, classicProvider]);
+    getInviteDetailsMock.mockReset();
   });
 
   it('renders null while translations are not ready', () => {
@@ -143,5 +146,38 @@ describe('LandingPage', () => {
       expect(screen.getByText('landing.noProviders')).toBeInTheDocument();
       expect(screen.getByText('landing.noProvidersHint')).toBeInTheDocument();
     }, { timeout: 5000 });
+  });
+
+  it('resolves an invite link and opens the register modal with the invited email', async () => {
+    getInviteDetailsMock.mockResolvedValue({ email: 'invited@example.com', expiresAt: '2030-01-01T00:00:00.000Z' });
+
+    render(
+      <MemoryRouter initialEntries={['/?invite=tok-abc']}>
+        <LandingPage />
+      </MemoryRouter>,
+    );
+
+    await vi.waitFor(() => {
+      expect(useAuthModalStore.getState().activeModal).toBe('register');
+    });
+    expect(getInviteDetailsMock).toHaveBeenCalledWith('tok-abc');
+    expect(useAuthModalStore.getState().inviteToken).toBe('tok-abc');
+    expect(useAuthModalStore.getState().inviteEmail).toBe('invited@example.com');
+  });
+
+  it('reports a refused invite without opening the register modal', async () => {
+    getInviteDetailsMock.mockRejectedValue({ code: 'ERR_1133' });
+
+    render(
+      <MemoryRouter initialEntries={['/?invite=expired']}>
+        <LandingPage />
+      </MemoryRouter>,
+    );
+
+    await vi.waitFor(() => {
+      expect(getInviteDetailsMock).toHaveBeenCalledWith('expired');
+    });
+    expect(useAuthModalStore.getState().activeModal).not.toBe('register');
+    expect(useAuthModalStore.getState().inviteToken).toBeNull();
   });
 });

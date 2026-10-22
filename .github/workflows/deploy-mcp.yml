@@ -1,4 +1,4 @@
-name: CI/CD MCP images
+name: CI/CD MCP (playbook agent semantic pyodide)
 
 on:
   pull_request:
@@ -47,6 +47,15 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       # requirements.txt references the wheel as file:./.generated/observability/*.whl;
       # without this step the image build fails at pip install and the container
       # would crash on `import yellowmind_observability`.
@@ -55,22 +64,48 @@ jobs:
 
       - name: Build and push Docker images
         run: |
-          # --network=host: the runner's bridge network has no outbound access
-          # (apt-get inside build containers times out), while the host does.
-          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
-            IMAGE="${ACR_LOGIN_SERVER}/yellowstorm-${mcp}-poc"
-            docker build --network=host -t "${IMAGE}:${VERSION}" "mcp/${mcp}"
-            docker push "${IMAGE}:${VERSION}"
+          docker buildx create --name yellowstorm-mcp-builder --use 2>/dev/null || docker buildx use yellowstorm-mcp-builder
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model mcp-pyodide; do
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            docker buildx build \
+              --network=host \
+              --cache-from=type=registry,ref=${IMAGE}:buildcache \
+              --cache-to=type=registry,ref=${IMAGE}:buildcache,mode=max \
+              --tag "${IMAGE}:${VERSION}" \
+              --push \
+              "mcp/${mcp}"
           done
 
-  # Deploy wiring: no MCP compose/service path is defined in this repo yet.
-  # Mirror deploy-adk.yml's "Update Compose and deploy" job here once the target
-  # compose file is known. Provision independently (never alias to a generic key):
+  # Deploy secret provisioning (per purpose, never aliased to a generic key):
   # mcp-agent: AGENT_MCP_BACKEND_SERVICE_TOKEN; mcp-playbook:
   # PLAYBOOK_MCP_BACKEND_SERVICE_TOKEN; mcp-semantic-model:
   # SEMANTIC_MODEL_MCP_SERVICE_TOKEN. Bind the same purpose-specific value to its
   # backend principal verifier. Do not mount INTERNAL_SERVICE_SECRET or the
   # legacy YELLOWSTORM_INTERNAL_SERVICE_TOKEN in these containers. MCP ingress
   # credentials/public verification keys remain separately provisioned according
-  # to the configured ingress profile. Effective env/secret mounts are an
-  # external deployment gate until the actual compose/service path is known.
+  # to the configured ingress profile.
+  deploy:
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    needs: build
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Pull latest Docker images and deploy
+        run: |
+          export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model mcp-pyodide; do
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            COMPOSE_FILE=~/yellowstorm/${ENV_NAME}/${mcp}/docker-compose.yaml
+            
+            # Pull the image explicitly
+            docker pull "${IMAGE}:${IMAGE_TAG}"
+            
+            # Update the image tag in docker-compose.yaml
+            sed -i "s|image: ${IMAGE}:.*$|image: ${IMAGE}:${IMAGE_TAG}|" $COMPOSE_FILE
+            
+            # Restart the service
+            docker compose -f $COMPOSE_FILE down
+            docker compose -f $COMPOSE_FILE up -d
+          done

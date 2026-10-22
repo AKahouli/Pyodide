@@ -7,6 +7,8 @@ declare global {
     __APP_CONFIG__?: {
       API_URL?: string;
       SOCKET_BASE_URL?: string;
+      /** Runtime kill switch for generative UI ("true"/"false"); see openui/render-mode.ts. */
+      OPENUI_RENDER_ENABLED?: string | boolean;
       [key: string]: unknown;
     };
   }
@@ -127,6 +129,7 @@ export const API_ENDPOINTS = {
     sessions: '/auth/sessions',
     forgotPassword: '/auth/forgot-password',
     resetPassword: '/auth/reset-password',
+    invite: '/auth/invite',
     oauthProviders: '/auth/providers',
     oauthExchange: '/auth/providers/exchange',
   },
@@ -410,6 +413,7 @@ export const API_ENDPOINTS = {
   },
   adminUsers: {
     base: '/admin/users',
+    invite: '/admin/users/invite',
     byId: (id: string) => `/admin/users/${id}`,
     suspend: (id: string) => `/admin/users/${id}/suspend`,
     activate: (id: string) => `/admin/users/${id}/activate`,
@@ -761,8 +765,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/models/${id}`,
     setDefault: (id: string) => `/admin/models/${id}/set-default`,
     clearDefault: (id: string) => `/admin/models/${id}/clear-default`,
-    setConversationV2Default: (id: string) => `/admin/models/${id}/set-conversation-v2-default`,
-    clearConversationV2Default: (id: string) => `/admin/models/${id}/clear-conversation-v2-default`,
+    setAppBuilderDefault: (id: string) => `/admin/models/${id}/set-app-builder-default`,
+    clearAppBuilderDefault: (id: string) => `/admin/models/${id}/clear-app-builder-default`,
     sync: '/admin/models/sync',
     default: '/admin/models/default',
   },
@@ -801,6 +805,9 @@ export const API_ENDPOINTS = {
     scenarios: '/evaluation/scenarios',
     scenariosByAgent: (agentId: string) => `/evaluation/scenarios/agent/${agentId}`,
     scenarioById: (id: string) => `/evaluation/scenarios/${id}`,
+  },
+  logicalSearchEvaluation: {
+    base: '/evaluation/logical-search',
   },
   playbookFlows: {
     list: '/playbooks',

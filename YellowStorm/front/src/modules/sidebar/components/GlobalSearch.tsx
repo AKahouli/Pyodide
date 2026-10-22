@@ -13,7 +13,7 @@ import {
 import { SidebarMenuButton } from '@/components/ui/sidebar';
 import { useModuleTranslation } from '@/modules/localization';
 import { useHistoryConversations } from '@/modules/conversation/store';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { useAppBuilderStudioPointersStore } from '@/modules/app-builder-studio/store';
 // Leaf imports: the project barrel pulls in ProjectPage's heavy graph, which
 // cycles back into this module during evaluation.
 import { useProjects } from '@/modules/project/store';
@@ -39,7 +39,7 @@ export function GlobalSearch({
   const navigate = useNavigate();
   const { t } = useModuleTranslation('sidebar');
   const conversations = useHistoryConversations();
-  const pointers = useConversationV2PointersStore((s) => s.items);
+  const pointers = useAppBuilderStudioPointersStore((s) => s.items);
   const projects = useProjects();
 
   useEffect(() => {

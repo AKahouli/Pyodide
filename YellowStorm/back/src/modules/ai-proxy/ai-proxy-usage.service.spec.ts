@@ -2,7 +2,7 @@ import { UsageService } from '../usage';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { AiProxyUsageService } from './ai-proxy-usage.service';
-import type { ConversationV2SessionStore } from '../conversation-v2/persistence/conversation-v2-session.store';
+import type { AppBuilderSessionStore } from '../app-builder/persistence/app-builder-session.store';
 
 describe('AiProxyUsageService', () => {
   const usageService = {
@@ -90,7 +90,7 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+    const sessions: jest.Mocked<Pick<AppBuilderSessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
       findByAiSessionId: jest.fn().mockResolvedValue({
         id: 'session-42',
         title: 'Draft',
@@ -159,7 +159,7 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+    const sessions: jest.Mocked<Pick<AppBuilderSessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
       findByAiSessionId: jest.fn().mockResolvedValue({
         id: 'session-99',
         title: 'Remote App',

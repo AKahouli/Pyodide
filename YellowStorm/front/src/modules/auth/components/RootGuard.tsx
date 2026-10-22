@@ -18,7 +18,7 @@ import { LandingPage } from './LandingPage';
 import { PendingApprovalPage } from './PendingApprovalPage';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
-import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
+import { useAppBuilderStudioStreamConnection } from '@/modules/app-builder-studio/useStream';
 import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY } from '@/modules/admin/constants';
 import { getFeatureVisibility } from '@/modules/admin/api';
@@ -82,7 +82,7 @@ export function RootGuard() {
   // navigation. v2 uses its own per-user pipe (one connection for all
   // conversation-v2 sessions) so multiple conversations can stream at once.
   useConversationStream();
-  useConversationV2StreamConnection(/^\/(?:studio|conversation-v2)(?:\/|$)/.test(location.pathname));
+  useAppBuilderStudioStreamConnection(/^\/(?:studio|app-builder|conversation-v2)(?:\/|$)/.test(location.pathname));
   // Playbook execution events drive live canvas step statuses during runs.
   usePlaybookStreamGlobal(isAuthenticated);
 

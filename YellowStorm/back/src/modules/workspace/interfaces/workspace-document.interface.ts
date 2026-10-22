@@ -53,6 +53,8 @@ export interface DocumentResponse {
   indexingError?: string;
   indexingTaskName?: string;
   indexingTaskId?: string;
+  indexingAttemptStartedAt?: string | null;
+  indexingAttemptCompletedAt?: string | null;
   lastIndexedAt?: string;
   detected_language?: string;
   chunk_size?: number;

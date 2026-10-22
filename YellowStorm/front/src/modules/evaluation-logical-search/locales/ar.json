@@ -1,0 +1,147 @@
+{
+  "button": {
+    "label": "تقييم البحث المنطقي"
+  },
+  "page": {
+    "title": "تقييم البحث المنطقي",
+    "subtitle": "استورد مجموعة معايير، وشغّلها على وكيل، ثم راجع النتائج."
+  },
+  "common": {
+    "loading": "جارٍ التحميل…"
+  },
+  "upload": {
+    "title": "استيراد مجموعة معايير",
+    "dropzone": "اسحب ملف Excel/CSV وأفلته هنا، أو تصفح",
+    "accept": "الصيغ المقبولة: .xlsx، .csv",
+    "uploading": "جارٍ الرفع…",
+    "success": "تم تحليل مجموعة البيانات بنجاح",
+    "error": "فشل الرفع"
+  },
+  "preview": {
+    "title": "معاينة مجموعة البيانات",
+    "questions": "تم استخراج {{count}} سؤالًا",
+    "skipped": "تم تخطي {{count}} صفًا",
+    "sheet": "الورقة: {{name}}",
+    "queryId": "المعرّف",
+    "question": "السؤال",
+    "answer": "الإجابة",
+    "files": "الملفات المطلوبة"
+  },
+  "select": {
+    "agent": "اختر وكيلًا",
+    "agentPlaceholder": "اختر وكيلًا…",
+    "playbook": "اختر كتاب لعب",
+    "playbookPlaceholder": "اختر كتاب لعب…",
+    "workspace": "اختر مساحة عمل",
+    "workspacePlaceholder": "اختر مساحة عمل…",
+    "execution": "اختر تنفيذًا",
+    "executionPlaceholder": "اختر تنفيذًا…",
+    "search": "بحث…",
+    "noResults": "لا نتائج"
+  },
+  "actions": {
+    "prepare": "تجهيز التقييم",
+    "preparing": "جارٍ التجهيز…",
+    "prepareTarget": "التقييم المستهدف: {{name}}",
+    "run": "تشغيل التقييم",
+    "running": "جارٍ التشغيل…",
+    "resume": "استئناف",
+    "stop": "إيقاف",
+    "stopping": "جارٍ الإيقاف…",
+    "export": "تصدير النتائج",
+    "delete": "حذف",
+    "deleting": "جارٍ الحذف…",
+    "done": "جاهز للتقييم",
+    "newEval": "تقييم جديد"
+  },
+  "status": {
+    "dataset_ready": "مجموعة البيانات جاهزة",
+    "prepared": "مجهَّز",
+    "running": "قيد التشغيل",
+    "completed": "مكتمل",
+    "failed": "فاشل"
+  },
+  "history": {
+    "title": "التقييمات السابقة",
+    "empty": "لا تقييمات بعد",
+    "createdAt": "تاريخ الإنشاء",
+    "queries": "{{count}} استعلام",
+    "questionsRatio": "{{done}}/{{total}} استعلام",
+    "questionsEvaluated": "{{done}}/{{total}} استعلام تم تقييمه",
+    "view": "عرض",
+    "paginationLabel": "تنقل سجل التقييمات",
+    "confirmDelete": "حذف التقييم \"{{name}}\" ونتائجه؟ لا يمكن التراجع عن هذا."
+  },
+  "adhoc": {
+    "title": "تهيئة مباشرة",
+    "benchmark": "المعيار (مجموعة البيانات)",
+    "benchmarkPlaceholder": "اختر معيارًا موجودًا…",
+    "benchmarkHelp": "أعد استخدام مجموعة بيانات رُفعت سابقًا. يؤدي الإطلاق إلى إنشاء تقييم جديد منها.",
+    "agent": "الوكيل المستهدف",
+    "agentPlaceholder": "اختر الوكيل المستهدف…",
+    "workspace": "مساحة العمل",
+    "workspacePlaceholder": "اختر مساحة عمل…",
+    "evaluatorAgent": "وكيل التقييم (حكم LLM)",
+    "evaluatorAgentPlaceholder": "اختر وكيل التقييم…",
+    "launch": "إطلاق التقييم",
+    "launching": "جارٍ الإطلاق…",
+    "target": "التقييم المستهدف: {{name}}",
+    "stage": {
+      "preparing": "جارٍ تجهيز مدخلات المقيّم…",
+      "running": "جارٍ تشغيل الاستعلامات…"
+    }
+  },
+  "targeted": {
+    "title": "الأسئلة المستهدفة",
+    "help": "اتركه فارغًا لتشغيل كل الأسئلة. حدد سؤالًا أو أكثر لتشغيلها فقط؛ تحتوي النتائج والتصدير على الأسئلة المحددة فقط.",
+    "all": "كل الأسئلة"
+  },
+  "results": {
+    "title": "النتائج · {{name}}",
+    "close": "إغلاق",
+    "loading": "جارٍ تحميل النتائج…",
+    "empty": "لا نتائج بعد. شغّل التقييم أولًا.",
+    "error": "تعذر تحميل النتائج",
+    "kpi": {
+      "correctness": "الصحة",
+      "semantic": "التشابه الدلالي",
+      "factRecall": "استرجاع الحقائق",
+      "fileRecall": "استرجاع الملفات",
+      "retrievalSuccess": "نجاح الاسترجاع",
+      "completed": "مكتمل"
+    },
+    "table": {
+      "id": "المعرّف",
+      "question": "السؤال",
+      "status": "الحالة",
+      "score": "درجة الحكم",
+      "fileRecall": "استرجاع الملفات",
+      "duration": "المدة",
+      "tokens": "الرموز"
+    },
+    "detail": {
+      "expectedAnswer": "الإجابة المتوقعة",
+      "generatedAnswer": "الإجابة المولّدة",
+      "expectedFiles": "الملفات المتوقعة",
+      "retrievedFiles": "الملفات المسترجعة",
+      "judgeReasoning": "تفكير الحكم",
+      "error": "خطأ"
+    },
+    "citations": {
+      "page": "صفحة {{page}}",
+      "openError": "تعذر فتح المستند المصدر."
+    },
+    "narrative": {
+      "title": "التحليل",
+      "help": "كتبه وكيل مفسّر اعتمادًا على المقاييس المحسوبة أعلاه.",
+      "agent": "وكيل التفسير",
+      "agentPlaceholder": "اختر وكيل تفسير…",
+      "generate": "توليد التحليل",
+      "regenerate": "إعادة توليد التحليل",
+      "generating": "جارٍ التوليد…",
+      "loading": "جارٍ تحميل التحليل…",
+      "empty": "لا تحليل بعد. ولّده للحصول على ملخص مكتوب.",
+      "unavailable": "يتوفر التحليل بعد اكتمال التقييم."
+    }
+  }
+}

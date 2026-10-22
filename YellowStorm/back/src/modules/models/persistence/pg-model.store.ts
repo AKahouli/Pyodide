@@ -28,7 +28,7 @@ function toRow(r: Row): ModelRow {
     types: r.types ?? [],
     isActive: r.isActive,
     isDefault: r.isDefault,
-    isConversationV2Default: r.isConversationV2Default,
+    isAppBuilderDefault: r.isAppBuilderDefault,
     omitTemperature: r.omitTemperature,
     conversationApi: r.conversationApi,
     responsesHistoryMode: r.responsesHistoryMode,
@@ -141,7 +141,7 @@ export class PgModelStore implements ModelStore {
       .where(and(scope, eq(schema.catalogAiModels.type, 'guardrails_classifier')));
   }
 
-  async setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isConversationV2Default'): Promise<ModelRow | null> {
+  async setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isAppBuilderDefault'): Promise<ModelRow | null> {
     return withTransaction(this.db, async (tx) => {
       await tx
         .update(schema.catalogAiModels)
@@ -165,11 +165,11 @@ export class PgModelStore implements ModelStore {
     return row ? toRow(row) : null;
   }
 
-  async findConversationV2Default(): Promise<ModelRow | null> {
+  async findAppBuilderDefault(): Promise<ModelRow | null> {
     const [row] = await this.q
       .select()
       .from(schema.catalogAiModels)
-      .where(and(eq(schema.catalogAiModels.isConversationV2Default, true), eq(schema.catalogAiModels.isActive, true), this.chatCondition()))
+      .where(and(eq(schema.catalogAiModels.isAppBuilderDefault, true), eq(schema.catalogAiModels.isActive, true), this.chatCondition()))
       .limit(1);
     return row ? toRow(row) : null;
   }

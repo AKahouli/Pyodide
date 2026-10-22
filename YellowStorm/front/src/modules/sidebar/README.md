@@ -9,11 +9,11 @@ The sidebar module renders the application left navigation, conversation history
 - `useAutoCollapse` collapses the sidebar when the viewport shrinks **or** when the
   user is on Studio routes (`/studio`, `/studio/:sessionId`) — same treatment as
   classic `/conversation`.
-- App Builder Studio history rows deep-link to `/studio/:sessionId` (not
-  `/conversation-v2/…`). Helpers live in `chatGroups.ts`; delete-current navigates
+- App Builder Studio history rows deep-link to `/studio/:sessionId` (not the
+  legacy `/conversation-v2/…`). Helpers live in `chatGroups.ts`; delete-current navigates
   home to `/studio` (`RecentChats.tsx`).
 
-Related: [`../conversation-v2/studio-paths.ts`](../conversation-v2/studio-paths.ts),
+Related: [`../app-builder-studio/studio-paths.ts`](../app-builder-studio/studio-paths.ts),
 [`../app-builder/COMMITS.md`](../app-builder/COMMITS.md).
 
 ## Directory Structure

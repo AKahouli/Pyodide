@@ -9,7 +9,7 @@ jest.setTimeout(20_000);
 import { HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { ConversationV2AppShareService } from '@modules/conversation-v2/services/conversation-v2-app-share.service';
+import { AppBuilderAppShareService } from '@modules/app-builder/services/app-builder-app-share.service';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { AppDataErrorCode, AppDataException } from '../constants/app-data.errors';
 import { AppDataAuditService } from './app-data-audit.service';
@@ -73,7 +73,7 @@ describe('AppDataEndUserAuthService invites', () => {
         { provide: AppDataEndUserService, useValue: endUsers },
         { provide: AppDataEndUserGrantsService, useValue: grants },
         { provide: AppDataAuditService, useValue: audit },
-        { provide: ConversationV2AppShareService, useValue: appShares },
+        { provide: AppBuilderAppShareService, useValue: appShares },
       ],
     }).compile();
 

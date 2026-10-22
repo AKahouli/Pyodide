@@ -21,7 +21,7 @@
         "outDir": "dist"
       },
       {
-        "include": "modules/conversation-v2/templates/assets/**/*",
+        "include": "modules/app-builder/templates/assets/**/*",
         "outDir": "dist"
       },
       "**/*.html",
@@ -32,7 +32,7 @@
         "outDir": "dist"
       }
     ],
-    "watchAssets": true,
+    "watchAssets": false,
     "plugins": [
       {
         "name": "@nestjs/swagger",

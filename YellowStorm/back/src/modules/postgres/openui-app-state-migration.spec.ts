@@ -8,10 +8,13 @@ describe('OpenUI state migration registration', () => {
       entries: { idx: number; when: number; tag: string }[];
     };
     const entries = journal.entries;
-    const added = entries[entries.length - 1];
-    expect(added.tag).toBe('0052_openui_app_states');
-    expect(added.idx).toBe(entries.length - 1);
-    expect(added.when).toBeGreaterThan(Math.max(...entries.slice(0, -1).map(entry => entry.when)));
+    // After the security-branch merge, later migrations (conversation SSE events)
+    // follow this one; locate it by tag instead of assuming it is last.
+    const addedIndex = entries.findIndex(entry => entry.tag === '0052_openui_app_states');
+    expect(addedIndex).toBeGreaterThan(-1);
+    const added = entries[addedIndex];
+    expect(added.idx).toBe(addedIndex);
+    expect(added.when).toBeGreaterThan(Math.max(...entries.slice(0, addedIndex).map(entry => entry.when)));
     expect(entries.filter(entry => entry.tag === added.tag)).toHaveLength(1);
     const migration = fs.readFileSync(path.join(dir, `${added.tag}.sql`), 'utf8');
     expect(migration).toContain("SET LOCAL lock_timeout = '5s';");

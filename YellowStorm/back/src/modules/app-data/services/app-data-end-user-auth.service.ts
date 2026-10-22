@@ -13,7 +13,7 @@ import {
   type AppDataAppRow,
   type AppDataEndUserRow,
 } from '@modules/postgres/schema/app-data.schema';
-import { ConversationV2AppShareService } from '@modules/conversation-v2/services/conversation-v2-app-share.service';
+import { AppBuilderAppShareService } from '@modules/app-builder/services/app-builder-app-share.service';
 import {
   AppDataErrorCode,
   AppDataException,
@@ -48,8 +48,8 @@ export class AppDataEndUserAuthService {
     private readonly endUsers: AppDataEndUserService,
     private readonly grants: AppDataEndUserGrantsService,
     private readonly audit: AppDataAuditService,
-    @Inject(forwardRef(() => ConversationV2AppShareService))
-    private readonly appShares: ConversationV2AppShareService,
+    @Inject(forwardRef(() => AppBuilderAppShareService))
+    private readonly appShares: AppBuilderAppShareService,
   ) {}
 
   isEndUserAuthGloballyEnabled(): boolean {

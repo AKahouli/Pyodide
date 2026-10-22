@@ -3,22 +3,22 @@
  * Required step after email verification for new users
  */
 
-import * as React from 'react';
-import { useNavigate, NavLink } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Building, FileCheck, Loader2, LogOut, User } from 'lucide-react';
+import * as React from 'react';
+import { useForm } from 'react-hook-form';
+import { NavLink, useNavigate } from 'react-router-dom';
 import * as z from 'zod';
-import { Loader2, User, Building, FileCheck, LogOut } from 'lucide-react';
 
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
-import { AppBrandLogo } from '@/components/AppBrandLogo';
-import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { appConfig } from '@/config/app';
+import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
 import { AuthScrollShell } from './AuthScrollShell';
@@ -160,7 +160,7 @@ export function ProfileCompletionPage() {
                     name='firstName'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className='text-neutral-200'>{t('profileCompletion.firstName.label')}</FormLabel>
+                        <FormLabel className='text-neutral-200'>{t('profileCompletion.firstName.label')} <span className='text-red-400'>*</span></FormLabel>
                         <FormControl>
                           <Input placeholder={t('profileCompletion.firstName.placeholder')} disabled={isSubmitting} className='bg-neutral-800 border-neutral-700 text-white placeholder:text-neutral-500' {...field} />
                         </FormControl>
@@ -174,7 +174,7 @@ export function ProfileCompletionPage() {
                     name='lastName'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className='text-neutral-200'>{t('profileCompletion.lastName.label')}</FormLabel>
+                        <FormLabel className='text-neutral-200'>{t('profileCompletion.lastName.label')} <span className='text-red-400'>*</span></FormLabel>
                         <FormControl>
                           <Input placeholder={t('profileCompletion.lastName.placeholder')} disabled={isSubmitting} className='bg-neutral-800 border-neutral-700 text-white placeholder:text-neutral-500' {...field} />
                         </FormControl>
@@ -192,7 +192,7 @@ export function ProfileCompletionPage() {
                       <FormLabel className='text-neutral-200'>
                         <div className='flex items-center gap-2'>
                           <Building className='h-4 w-4' />
-                          {t('profileCompletion.company.label')}
+                          {t('profileCompletion.company.label')} <span className='text-red-400'>*</span>
                         </div>
                       </FormLabel>
                       <FormControl>

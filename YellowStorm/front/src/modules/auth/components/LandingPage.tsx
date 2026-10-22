@@ -2,25 +2,31 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { appConfig } from '@/config/app';
 import { AuthModals } from './modals/AuthModals';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useSearchParams } from 'react-router-dom';
 import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
 import { AuthScrollShell } from './AuthScrollShell';
 import { useAuthModalStore } from '../store';
-import { getAuthProviders } from '../api';
+import { getAuthProviders, getInviteDetails } from '../api';
 import { ProviderIcon } from './ProviderIcon';
 import { API_CONFIG, isApiConfigured } from '@/lib/api/config';
+import { getErrorMessage } from '@/lib/error-codes';
 import { AlertTriangle, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import type { ApiError } from '@/lib/api';
 import type { AuthProviderPublic } from '../types';
 
 export function LandingPage() {
   const { registrationEnabled } = useAuth();
   const { t, ready } = useModuleTranslation('auth');
   const setActiveModal = useAuthModalStore((state) => state.setActiveModal);
+  const setInvite = useAuthModalStore((state) => state.setInvite);
   const [providers, setProviders] = React.useState<AuthProviderPublic[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const inviteHandled = React.useRef(false);
 
   React.useEffect(() => {
     if (!isApiConfigured()) {
@@ -38,6 +44,33 @@ export function LandingPage() {
       })
       .finally(() => setLoadingProviders(false));
   }, []);
+
+  // An invitation link (`/#/?invite=<token>`) resolves server-side, then opens
+  // the register modal with the invited address pre-filled and locked. The token
+  // is stripped from the URL immediately so it is not kept in history/referrers.
+  React.useEffect(() => {
+    const token = searchParams.get('invite');
+    if (!token || inviteHandled.current) return;
+    inviteHandled.current = true;
+
+    const cleaned = new URLSearchParams(searchParams);
+    cleaned.delete('invite');
+    setSearchParams(cleaned, { replace: true });
+
+    getInviteDetails(token)
+      .then((details) => {
+        setInvite(token, details.email);
+        setActiveModal('register');
+      })
+      .catch((error: unknown) => {
+        const apiError = error as ApiError;
+        // Surface the explicit backend code (invalid / expired / used) through
+        // the shared error-code i18n layer instead of the raw server message.
+        toast.error(t('landing.invite.errorTitle'), {
+          description: getErrorMessage(apiError?.code),
+        });
+      });
+  }, [searchParams, setSearchParams, setInvite, setActiveModal, t]);
 
   const oauthProviders = providers.filter((p) => p.type === 'oauth');
   const classicProvider = providers.find((p) => p.type === 'classic');

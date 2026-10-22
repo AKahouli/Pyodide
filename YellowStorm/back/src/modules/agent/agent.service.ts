@@ -84,6 +84,21 @@ export function semanticModelChatActionKeys(connector: RuntimeConnectorDefinitio
 }
 
 /**
+ * Whether an agent update actually requests a root-policy change: an explicit policy payload or a non-empty
+ * allowlist. The agent form sends empty `delegateAgentIds`/`delegateTeamIds` arrays on every save, so treating
+ * "field present" as intent rejected every non-root agent with ERR_1006.
+ */
+export function updateRequestsRootPolicy(dto: {
+  rootExecutionPolicy?: unknown;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
+}): boolean {
+  return dto.rootExecutionPolicy !== undefined
+    || (dto.delegateAgentIds?.length ?? 0) > 0
+    || (dto.delegateTeamIds?.length ?? 0) > 0;
+}
+
+/**
  * The semantic connector's results name records the answer can cite: its actions left without a citation mode get
  * record_evidence, so the runtime numbers the records each result lists (citationSources) and the chat can open them.
  */
@@ -372,7 +387,7 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.agentType !== undefined || dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+    if (dto.agentType !== undefined || updateRequestsRootPolicy(dto)) {
       await this.validateRootPolicyUpdate(agent, patch, agentTypeSlug ?? agent.agentTypeSlug);
     }
     const updated = await this.agentRepository.updateById(agentId, patch);
@@ -552,7 +567,7 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.agentType !== undefined || dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+    if (dto.agentType !== undefined || updateRequestsRootPolicy(dto)) {
       await this.validateRootPolicyUpdate(agent, patch, agentTypeSlug ?? agent.agentTypeSlug);
     }
     const updated = await this.agentRepository.updateById(agentId, patch);
@@ -1100,6 +1115,10 @@ export class AgentService {
       iteration?: number;
     },
     compaction?: IGrpcCompaction,
+    options?: {
+      semanticSchemaName?: string;
+      webConnectorAccessEnabled?: boolean;
+    },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -1164,6 +1183,10 @@ export class AgentService {
       ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean)),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    if (options?.webConnectorAccessEnabled === false && allConnectorIds.length > 0) {
+      const blockedConnectorIds = await this.connectorService.findIdsByCategoryName(allConnectorIds, WEB_SEARCH_CATEGORY_NAME);
+      for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
+    }
     const agentsWithConnectorSkills = streamAgents.map((agent) => ({
       ...agent,
       connectorSkillIds: this.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
@@ -1207,6 +1230,7 @@ export class AgentService {
           if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers) || {}),
+            'X-YellowStorm-User-Id': userId,
             'X-YellowStorm-Agent-Id': agent.id,
             'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
             'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
@@ -1294,6 +1318,11 @@ export class AgentService {
                 classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
               }),
               guardrails_classifier_model: guardrailsClassifierModelId,
+              ...(options?.semanticSchemaName ? {
+                semantic_model_schema_name: options.semanticSchemaName,
+                semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
+                semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
+              } : {}),
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),

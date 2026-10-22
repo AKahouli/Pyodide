@@ -23,7 +23,7 @@ vi.mock('../hooks/useWorkspaceStoreTranslator', () => ({
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => navigateMock };
+  return { ...actual, useNavigate: () => navigateMock, useLocation: () => ({ pathname: '/workspace' }) };
 });
 
 vi.mock('../store', () => ({

@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_SOCKET_BASE_URL?: string;
   readonly VITE_PORT?: string;
+  readonly VITE_PYODIDE_RUNTIME_ENABLED?: string;
+  readonly VITE_PYODIDE_INDEX_URL?: string;
 }
 
 interface ImportMeta {
@@ -19,6 +21,8 @@ interface Window {
   __APP_CONFIG__?: {
     API_URL?: string;
     SOCKET_BASE_URL?: string;
+    /** Runtime kill switch for generative UI ("true"/"false"); see openui/render-mode.ts. */
+    OPENUI_RENDER_ENABLED?: string | boolean;
     [key: string]: unknown;
   };
 }

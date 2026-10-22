@@ -43,6 +43,11 @@ export interface CreateUserData {
   profile?: IUserProfile;
   microsoftAccountId?: string;
   emailVerified?: boolean;
+  /** Pre-approved invited users are created active/approved instead of pending. */
+  status?: UserStatus;
+  registrationApproval?: RegistrationApproval;
+  /** Roles granted to the user at creation (invited-user grants). */
+  roleIds?: string[];
 }
 
 export interface UpdateUserData {
@@ -80,4 +85,24 @@ export interface UserResponse {
   registrationApproval?: RegistrationApproval;
   permissions?: string[];
   roleNames?: string[];
+}
+
+/** Minimal identity used by callers that only need id + email. */
+export interface UserSummary {
+  id: string;
+  email: string;
+}
+
+/** Directory/search hit: id + email + optional name. */
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface SearchUsersParams {
+  query: string;
+  excludeUserId?: string;
+  limit?: number;
 }

@@ -13,7 +13,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import {
   getOrCreateHost,
   type BrowserRuntimeHost,
-} from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
+} from '@/modules/app-builder-studio/runtime/BrowserRuntimeHost';
 import { runValidationPipeline } from './validation/pipeline';
 import {
   createZipPreviewValidationStep,

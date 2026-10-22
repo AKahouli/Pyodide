@@ -1,4 +1,4 @@
--- Conversation V2 template catalog: admin-managed categories + React/Vite templates.
+-- App Builder template catalog: admin-managed categories + React/Vite templates.
 -- Templates are published to Ceph (content-addressed blobs + a _system manifest)
 -- and resolved by RuntimeRevisionService through revision_id `template_<id>`.
 SET LOCAL lock_timeout = '5s';

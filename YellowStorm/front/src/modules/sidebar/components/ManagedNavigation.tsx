@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Bot, Boxes, ChevronRight, History, Layers, LayoutGrid, MessageSquarePlus, Network, Plug, ShieldCheck, Sparkles, Users, Workflow,
+  Bot, Boxes, ChevronRight, ClipboardCheck, History, Layers, LayoutGrid, MessageSquarePlus, Network, Plug, ShieldCheck, Sparkles, Users, Workflow,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -32,6 +32,7 @@ export const NAVIGATION_TARGET_ICONS: Record<NavigationTargetKey, React.ElementT
   connectedApps: Plug,
   appMarketplace: Boxes,
   governance: ShieldCheck,
+  evaluationLogicalSearch: ClipboardCheck,
   admin: ShieldCheck,
 };
 
@@ -90,6 +91,7 @@ export function navigationTargetAllowed(target: NavigationTargetKey, props: Pick
   if (feature && (!props.featureVisibility[feature] || !props.canUseFeature(feature))) return false;
   if (target === 'semanticModels' && !props.hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*'])) return false;
   if (target === 'governance' && !props.hasAnyPermission(['governance.read', 'governance.*', '*'])) return false;
+  if (target === 'evaluationLogicalSearch' && !props.hasAnyPermission(['governance.read', 'governance.*', '*'])) return false;
   if (target === 'admin' && !props.hasAdminAccess) return false;
   return true;
 }

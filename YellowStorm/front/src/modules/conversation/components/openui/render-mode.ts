@@ -3,8 +3,20 @@ import type { CitationData, MessageContentPart } from '@/components/ai-elements/
 
 export type AnswerRenderMode = 'markdown' | 'openui';
 
-/** Build-time kill switch; the OpenUI chunk is never requested while it is off. */
+/**
+ * Global kill switch for generative UI. Off keeps every answer in markdown and
+ * means the OpenUI chunk is never requested.
+ *
+ * Precedence mirrors the app's other runtime config (`lib/api/config.ts`):
+ * 1. `window.__APP_CONFIG__.OPENUI_RENDER_ENABLED` from `/config.js` (container env
+ *    `OPENUI_RENDER_ENABLED`, written by env.sh) — toggles without rebuilding the image;
+ * 2. build-time `import.meta.env.VITE_OPENUI_RENDER_ENABLED` (`.env` or Docker `--build-arg`);
+ * 3. off.
+ */
 export function isOpenUiRenderEnabled(): boolean {
+  const runtime = typeof window !== 'undefined' ? window.__APP_CONFIG__?.OPENUI_RENDER_ENABLED : undefined;
+  if (runtime === true || runtime === 'true') return true;
+  if (runtime === false || runtime === 'false') return false;
   return import.meta.env.VITE_OPENUI_RENDER_ENABLED === 'true';
 }
 

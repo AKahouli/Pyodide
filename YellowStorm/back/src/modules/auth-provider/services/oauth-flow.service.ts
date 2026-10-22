@@ -4,9 +4,9 @@ import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
 import { ProviderLinkService } from './provider-link.service';
-import { AuthService } from '@modules/auth/auth.service';
+import { SessionService } from '@modules/auth/services/session.service';
 import { getAuthCookiePath, getOAuthCallbackPath } from '@modules/auth/auth-cookie-path';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';
@@ -58,7 +58,7 @@ export class OAuthFlowService {
     private readonly providerLinkTokenStore: PgProviderLinkTokenStore,
     private readonly authProviderService: AuthProviderService,
     private readonly providerLinkService: ProviderLinkService,
-    private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
     private readonly userService: UserService,
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
@@ -229,7 +229,7 @@ export class OAuthFlowService {
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
-    const tokens = await this.authService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
+    const tokens = await this.sessionService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     await this.userService.updateLastLogin(user._id);
 

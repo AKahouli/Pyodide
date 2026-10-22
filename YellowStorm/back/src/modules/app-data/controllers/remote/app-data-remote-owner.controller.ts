@@ -16,8 +16,8 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { ConversationV2OwnerGuard } from '@modules/conversation-v2/guards/conversation-v2-owner.guard';
-import { ConversationV2SessionService } from '@modules/conversation-v2/services/conversation-v2-session.service';
+import { AppBuilderOwnerGuard } from '@modules/app-builder/guards/app-builder-owner.guard';
+import { AppBuilderSessionService } from '@modules/app-builder/services/app-builder-session.service';
 import { AppDataClientService } from '../../services/app-data-client.service';
 import { AppDataDeploymentService } from '../../services/app-data-deployment.service';
 import { AppDataEndUserGrantsService } from '../../services/app-data-end-user-grants.service';
@@ -32,13 +32,16 @@ import { assertAppDataEnabled, assertEndUserManagementEnabled } from '../../util
  * then delegates every query to the app-data microservice internal API.
  */
 @ApiTags('App Data Owner')
-@Controller('conversation-v2/sessions/:id/app-data')
-@UseGuards(ConversationV2OwnerGuard)
+// `/app-builder` is canonical; `/conversation-v2` is a deprecated alias kept so existing clients,
+// bookmarked URLs and integrations keep working. Remove once legacy traffic has stopped.
+@Controller(['app-builder/sessions/:id/app-data', 'conversation-v2/sessions/:id/app-data'])
+
+@UseGuards(AppBuilderOwnerGuard)
 export class AppDataRemoteOwnerController {
   constructor(
     private readonly config: ConfigService,
     private readonly client: AppDataClientService,
-    private readonly sessions: ConversationV2SessionService,
+    private readonly sessions: AppBuilderSessionService,
     @Inject(AppDataDeploymentService)
     private readonly deployment: AppDataDeploymentService,
   ) {}
@@ -123,11 +126,11 @@ export class AppDataRemoteOwnerController {
     if (!this.config.get<boolean>('appData.enabled', false)) {
       throw new ServiceUnavailableException('App Data is disabled');
     }
-    // ConversationV2OwnerGuard resolved the session and set this. `actorUserId`
+    // AppBuilderOwnerGuard resolved the session and set this. `actorUserId`
     // is the requesting owner or shared recipient; `ownerId` is the session owner
     // who must own the provisioned app row regardless of who asked first.
-    const resolved = (req as Request & { conversationV2Session?: unknown })
-      .conversationV2Session as
+    const resolved = (req as Request & { appBuilderSession?: unknown })
+      .appBuilderSession as
       | { ownerId?: string; actorUserId?: string }
       | undefined;
     if (!resolved?.ownerId || !resolved?.actorUserId) {

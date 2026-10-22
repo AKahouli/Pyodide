@@ -5,15 +5,15 @@ import { toast } from 'sonner';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { AgentComposer } from '@/modules/conversation-v2/components/AgentComposer';
-import { startConversationV2AgentSession } from '@/modules/conversation-v2/startAgentSession';
-import { useConversationV2Store } from '@/modules/conversation-v2/store';
+import { AgentComposer } from '@/modules/app-builder-studio/components/AgentComposer';
+import { startAppBuilderStudioAgentSession } from '@/modules/app-builder-studio/startAgentSession';
+import { useAppBuilderStudioStore } from '@/modules/app-builder-studio/store';
 
 const SUGGESTION_KEYS = ['dashboard', 'tasks', 'form'] as const;
 
 /**
  * Compact Agent entry point on App Builder. Reuses conversation-v2 AgentComposer
- * + startConversationV2AgentSession so NodePod / SSE / RightPanel stay on the
+ * + startAppBuilderStudioAgentSession so NodePod / SSE / RightPanel stay on the
  * session page after navigate.
  */
 export function AppBuilderCreateWithAgent() {
@@ -24,8 +24,8 @@ export function AppBuilderCreateWithAgent() {
   const [prefillNonce, setPrefillNonce] = useState(0);
 
   useEffect(() => {
-    useConversationV2Store.getState().setSelectedSkillIds([]);
-    useConversationV2Store.getState().setSelectedConnectorIds([]);
+    useAppBuilderStudioStore.getState().setSelectedSkillIds([]);
+    useAppBuilderStudioStore.getState().setSelectedConnectorIds([]);
   }, []);
 
   const handleSubmit = async (
@@ -37,7 +37,7 @@ export function AppBuilderCreateWithAgent() {
     if (!text || isSending) return;
     setIsSending(true);
     try {
-      await startConversationV2AgentSession({
+      await startAppBuilderStudioAgentSession({
         text,
         workspaceIds,
         modelId,

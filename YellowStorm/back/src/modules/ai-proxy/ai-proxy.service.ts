@@ -162,7 +162,7 @@ export class AiProxyService {
   /**
    * Resolve a chat model for App Builder clients.
    * `findByIdOrLitellmModel` covers both catalog ids and the LiteLLM identifier
-   * used by the Conversation V2 studio composer.
+   * used by the App Builder studio composer.
    */
   private async resolveActiveChatModel(requested: string): Promise<ModelResponse> {
     const alias = await this.modelsService.findByIdOrLitellmModel(requested);

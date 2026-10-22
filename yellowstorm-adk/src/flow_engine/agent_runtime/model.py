@@ -12,7 +12,10 @@ from src.flow_engine.observability.usage_extractor import extract_usage
 from src.guardrails.models import GuardrailContext
 from src.guardrails.runtime import GuardrailRuntime
 from src.guardrails.config import resolve_effective_guardrails
-from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
+from src.smart_rag.infrastructure.model_parameters import (
+    normalize_temperature_for_model,
+    register_model_input_modalities,
+)
 
 
 def _message_payload(message: BaseMessage) -> dict[str, Any]:
@@ -64,13 +67,18 @@ def _requires_text_only(exc: Exception) -> bool:
 
 
 def _ordered_tool_results(messages: list[BaseMessage]) -> list[BaseMessage]:
-    last_ai = max((index for index, message in enumerate(messages) if isinstance(message, AIMessage)), default=-1)
-    if last_ai < 0:
-        return messages
-    tail = messages[last_ai + 1:]
-    if not any(isinstance(message, ToolMessage) for message in tail):
-        return messages
-    return [*messages[:last_ai + 1], *[message for message in tail if isinstance(message, ToolMessage)], *[message for message in tail if not isinstance(message, ToolMessage)]]
+    assistant_indices = [index for index, message in enumerate(messages) if isinstance(message, AIMessage)]
+    ordered = list(messages)
+    # Image messages added by tools must follow all replies in every historical round.
+    for start, end in zip(assistant_indices, assistant_indices[1:] + [len(messages)]):
+        if not messages[start].tool_calls:
+            continue
+        tail = messages[start + 1:end]
+        ordered[start + 1:end] = [
+            *[message for message in tail if isinstance(message, ToolMessage)],
+            *[message for message in tail if not isinstance(message, ToolMessage)],
+        ]
+    return ordered
 
 
 def _completed_tool_round(messages: list[BaseMessage]) -> bool:
@@ -98,12 +106,30 @@ def _limit_images(messages: list[dict[str, Any]], limit: int = 50) -> list[dict[
     return result
 
 
+def _tool_parameters_schema(tool: Any) -> dict[str, Any]:
+    metadata = getattr(tool, "metadata", None)
+    if isinstance(metadata, dict):
+        parameters = metadata.get("parameters_schema")
+        if isinstance(parameters, dict) and parameters:
+            return parameters
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        return args_schema.model_json_schema()
+    return {"type": "object", "properties": {}}
+
+
 def build_model_node(tools: list[Any]):
     guardrails = GuardrailRuntime()
-    definitions = [{"type": "function", "function": {"name": tool.name, "description": getattr(tool, "description", "") or "", "parameters": tool.args_schema.model_json_schema() if getattr(tool, "args_schema", None) is not None else {"type": "object", "properties": {}}}} for tool in tools]
+    definitions = [{"type": "function", "function": {"name": tool.name, "description": getattr(tool, "description", "") or "", "parameters": _tool_parameters_schema(tool)}} for tool in tools]
 
     async def model_node(state: StepAgentState, runtime: Runtime[StepRuntimeContext]) -> dict[str, Any]:
         context = runtime.context
+        # Mirror smart_rag: register the model's admin-configured input modalities
+        # for this request context. Without it, normalize_messages_for_model (applied
+        # by the LiteLLM patch) defaults to text-only and silently strips image
+        # blocks that tool results attached, so vision models never see them.
+        agent_config = context.agent_config if isinstance(context.agent_config, dict) else {}
+        register_model_input_modalities(context.model_id, agent_config.get("input_modalities"))
         messages = list(state.get("messages") or [])
         next_iteration = int(state.get("tool_iterations") or 0) + (1 if _completed_tool_round(messages) else 0)
         if next_iteration >= context.max_tool_iterations:
@@ -129,7 +155,7 @@ def build_model_node(tools: list[Any]):
             if reviewed.blocked:
                 return {"messages": [AIMessage(content=reviewed.text)], "guardrail_blocked": True, "guardrail_reason": reviewed.reason, "tool_iterations": next_iteration}
             if reviewed.sanitized and messages:
-                messages[-1] = HumanMessage(content=reviewed.text)
+                messages[-1] = messages[-1].model_copy(update={"content": reviewed.text})
 
         messages = _ordered_tool_results(messages)
         request_messages = _limit_images([_message_payload(message) for message in messages])
@@ -142,21 +168,30 @@ def build_model_node(tools: list[Any]):
             "temperature": normalize_temperature_for_model(context.model_id, 0 if tools else 0.7),
             "max_tokens": 32000,
         }
+        reasoning_effort = context.agent_config.get("reasoning_effort") if isinstance(context.agent_config, dict) else None
+        if isinstance(reasoning_effort, str) and reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
         if definitions:
             kwargs.update({"tools": definitions, "tool_choice": "auto", "parallel_tool_calls": False})
         output_guard_enabled = resolve_effective_guardrails(context.agent_config).prompt_injection.output_enabled
         if not tools and not output_guard_enabled:
-            response = await litellm.acompletion(**kwargs, stream=True)
+            response = await litellm.acompletion(
+                **kwargs, stream=True, stream_options={"include_usage": True}
+            )
             content = ""
+            usage = None
             async for chunk in response:
                 token = str(getattr(chunk.choices[0].delta, "content", "") or "")
                 if token:
                     content += token
                     if context.on_progress is not None:
                         context.on_progress(token)
+                chunk_usage = extract_usage(chunk, context.model_id)
+                if chunk_usage is not None:
+                    usage = chunk_usage
             calls: list[dict[str, Any]] = []
             if context.trace_collector is not None:
-                context.trace_collector.record_usage(extract_usage(response, context.model_id))
+                context.trace_collector.record_usage(usage)
                 context.trace_collector.record_prompt_output(content)
                 notify_trace(context)
             return {"messages": [AIMessage(content=content)], "tool_iterations": next_iteration}

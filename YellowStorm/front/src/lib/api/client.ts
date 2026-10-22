@@ -11,7 +11,7 @@ import axios, {
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from './config';
 import { notificationsService } from '@/modules/notifications';
 import { conversationStreamService } from '@/modules/conversation/stream';
-import { conversationV2StreamService } from '@/modules/conversation-v2/conversationV2Stream';
+import { appBuilderStudioStreamService } from '@/modules/app-builder-studio/appBuilderStudioStream';
 import {
   AuthTransientError,
   bumpAuthGeneration,
@@ -320,7 +320,7 @@ export async function refreshAccessToken(usedToken = currentStoredToken()): Prom
     isRefreshing = false;
     notificationsService.reconnectWithNewToken();
     conversationStreamService.reconnectWithNewToken();
-    conversationV2StreamService.reconnectWithNewToken();
+    appBuilderStudioStreamService.reconnectWithNewToken();
     onRefreshed(accessToken);
     notifyAuthRecovered();
     return accessToken;
@@ -555,7 +555,7 @@ const unsubscribeAuthBroadcast = subscribeAuthBroadcast((type, refresh) => {
     latestTokenUpdateAt = refresh.completedAt;
     notificationsService.reconnectWithNewToken();
     conversationStreamService.reconnectWithNewToken();
-    conversationV2StreamService.reconnectWithNewToken();
+    appBuilderStudioStreamService.reconnectWithNewToken();
   } else {
     safeRedirectToLogin();
   }

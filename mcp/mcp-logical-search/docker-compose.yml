@@ -1,0 +1,34 @@
+services:
+  # Keep a single replica until MCP session and streaming behavior has been
+  # verified behind a session-aware load balancer.
+  mcp-server:
+    image: "${IMAGE_NAME:-mcp-logical-search}:${IMAGE_TAG:-latest}"
+    build: .
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:${MCP_PORT:-8045}:8045"
+    env_file:
+      - .env
+    environment:
+      REQUEST_LOG_DIR: /app/logs
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; r=urllib.request.Request('http://127.0.0.1:8045/health/ready', headers={'Authorization': 'Bearer '+os.environ['MCP_API_KEY']}); urllib.request.urlopen(r, timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    stop_grace_period: 60s
+    restart: unless-stopped

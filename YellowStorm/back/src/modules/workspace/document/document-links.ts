@@ -1,7 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { newObjectId } from '@common/postgres';
-import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { IndexingService } from '../../indexing/indexing.service';
@@ -296,10 +295,7 @@ export class WorkspaceDocumentLinks {
         },
       );
       if (failed) {
-        await this.indexingService.sendIndexingStatusNotification({
-          ...JSON.parse(JSON.stringify(failed)),
-          id: failed.id,
-        } as WorkspaceDocumentRecord).catch(() => undefined);
+        await this.indexingService.sendIndexingStatusNotification(failed).catch(() => undefined);
       }
       this.logger.error('Link conversion failed', { documentId, workspaceId, error: message });
     }

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import { startTemplateSession } from '@/modules/conversation-v2/startAgentSession';
+import { startTemplateSession } from '@/modules/app-builder-studio/startAgentSession';
 import { useAppBuilderStore } from '../../store';
 import type { AppTemplate } from '../../types';
 import { TemplateGrid } from './TemplateGrid';

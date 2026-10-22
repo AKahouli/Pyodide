@@ -18,6 +18,7 @@ from collections import deque
 from typing import Any, Callable, Coroutine
 
 from langgraph.config import get_stream_writer
+from langgraph.errors import GraphBubbleUp, GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from structlog import get_logger
 
@@ -464,7 +465,11 @@ def _register_iterator_subgraph(
                     "flow_id": state.get("flow_id", ""),
                     "inputs": {**state.get("inputs", {}), "_item": item, "_index": index},
                     "task_outputs": {},
-                    "iterations": {},
+                    "iterations": {
+                        child_id: index
+                        for child_id in children
+                        if node_lookup.get(child_id, {}).get("kind") == "human_approval"
+                    },
                     "router_decisions": {},
                     "errors": [],
                     "pending_approval": None,
@@ -516,6 +521,21 @@ def _register_iterator_subgraph(
                             "iteration": iteration,
                             "payload": _child_event_payload(child_result, index),
                         })
+                except GraphInterrupt as exc:
+                    interrupts = exc.args[0] if exc.args else ()
+                    for interrupt in interrupts:
+                        pending = getattr(interrupt, "value", None)
+                        if not isinstance(pending, dict) or "prompt" not in pending:
+                            continue
+                        writer({
+                            "type": "ApprovalRequested",
+                            "node_id": str(pending.get("node_id") or ""),
+                            "iteration": int(pending.get("iteration", index)),
+                            "payload": pending,
+                        })
+                    raise
+                except GraphBubbleUp:
+                    raise
                 except Exception as exc:
                     logger.error("[iterator] Child subgraph failed", iterator_id=_it_id, index=index, error=str(exc))
                     for child_id in children:

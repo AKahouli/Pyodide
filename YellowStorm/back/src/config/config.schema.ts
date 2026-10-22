@@ -310,7 +310,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
   CONVERSATION_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
 
-  // Conversation V2 (Manus)
+  // App Builder (Manus)
   CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
   CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
@@ -322,7 +322,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS: Joi.number().min(1000).default(900000),
   CONVERSATION_V2_LIVE_TAIL_POLL_MS: Joi.number().min(100).default(1000),
 
-  // Conversation V2 gRPC channel security (separate AI service → own cert + key).
+  // App Builder gRPC channel security (separate AI service → own cert + key).
   CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
   CONVERSATION_V2_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
   CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
@@ -443,6 +443,15 @@ export const configValidationSchema = Joi.object({
   // Scoped internal service principal for the semantic MCP server (WP07.2):
   // semantic assistant + MCP token renewal only; distinct from the legacy
   // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).
+  // Browser Pyodide MCP relay (mcp-pyodide). Connectors pointing at this URL receive the acting user's identity.
+  PYODIDE_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8027/mcp'),
+  // Browser Pyodide runtime relay. Disabled outside development until qualified.
+  PYODIDE_RUNTIME_ENABLED: Joi.boolean().default(false),
+  PYODIDE_RUNTIME_EXECUTION_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(90000),
+  PYODIDE_RUNTIME_HEARTBEAT_TIMEOUT_MS: Joi.number().min(5000).max(300000).default(30000),
+  PYODIDE_RUNTIME_MAX_QUEUE: Joi.number().min(1).max(10).default(3),
+  PYODIDE_RUNTIME_MAX_INPUT_FILE_BYTES: Joi.number().min(1024).max(32 * 1024 * 1024).default(2 * 1024 * 1024),
+  PYODIDE_RUNTIME_MAX_OUTPUT_FILE_BYTES: Joi.number().min(1024).max(32 * 1024 * 1024).default(512 * 1024),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),

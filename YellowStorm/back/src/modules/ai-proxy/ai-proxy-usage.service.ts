@@ -6,7 +6,7 @@ import { UsageService, UsageType } from '../usage';
 import { AppBuilderAiUsageService } from '../app-builder-ai/services/app-builder-ai-usage.service';
 import { AppDataCatalogService } from '../app-data/services/app-data-catalog.service';
 import { AppDataClientService } from '../app-data/services/app-data-client.service';
-import { PgConversationV2SessionStore } from '../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
+import { PgAppBuilderSessionStore } from '../app-builder/persistence/postgres/pg-app-builder-session.store';
 import { AI_PROXY_CHAT_ENDPOINT } from './constants/ai-proxy.constants';
 import {
   AiProxyModelPricing,
@@ -44,7 +44,7 @@ export class AiProxyUsageService {
     private readonly logger: LoggerService,
     @Optional() private readonly appBuilderAiUsage?: AppBuilderAiUsageService,
     @Optional()
-        private readonly sessions?: PgConversationV2SessionStore,
+        private readonly sessions?: PgAppBuilderSessionStore,
     @Optional() private readonly appDataCatalog?: AppDataCatalogService,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}

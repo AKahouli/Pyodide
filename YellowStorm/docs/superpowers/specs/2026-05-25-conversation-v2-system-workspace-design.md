@@ -1,4 +1,4 @@
-# Conversation V2 — Per-Session System Workspace
+# App Builder — Per-Session System Workspace
 
 **Date:** 2026-05-25
 **Branch context:** `feature/conversation_artifacts`

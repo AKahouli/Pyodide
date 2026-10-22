@@ -16,6 +16,23 @@ Global email module supporting **SMTP** (Nodemailer) and **Outlook/Office 365** 
 - **Health Monitoring**: Connection verification for health checks (both providers)
 - **Structured Logging**: Detailed logging with email masking for privacy
 
+## Email Templates
+
+Transactional emails are standalone HTML documents in `templates/`, registered in `email-template.constants.ts` and rendered by `EmailTemplateRenderer.render(template, variables)`. Each template is a complete document; the calling service supplies plain data for `{{variable}}` placeholders, and the renderer substitutes them, derives a plain-text alternative, inline-attaches the header logo, and caches the file.
+
+| `EmailTemplate` | File | Subject |
+|-----------------|------|---------|
+| `PASSWORD_RESET` | `password-reset.html` | `Reset your password - {{appName}}` |
+| `VERIFY_EMAIL` | `verify-email.html` | `Verify your email address - {{appName}}` |
+| `NEW_LOGIN_ALERT` | `new-login-alert.html` | `🔔 New login to your {{appName}} account` |
+| `LINK_OAUTH_ACCOUNT` | `link-oauth-account.html` | `Link your {{providerKey}} account - {{appName}}` |
+| `REGISTRATION_PENDING_ADMIN` | `registration-pending-admin.html` | `New registration request - {{appName}}` |
+| `REGISTRATION_APPROVED` | `registration-approved.html` | `Your account has been approved - {{appName}}` |
+| `APP_SHARE_INVITE` | `app-share-invite.html` | `{{appTitle}} — create your account` |
+| `USER_INVITE` | `user-invite.html` | `You are invited to join {{appName}}` |
+
+`USER_INVITE` is the super-admin user-invitation email (single-use 24h link) sent by the user module's `UserInvitationService`; see [User Invitations](../user/README.md#user-invitations).
+
 ## Configuration
 
 ### Provider Selection

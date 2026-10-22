@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { makeAuthState } from '../test-utils';
 import { RootGuard } from './RootGuard';
-import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
+import { useAppBuilderStudioStreamConnection } from '@/modules/app-builder-studio/useStream';
 
 const useAuthMock = vi.hoisted(() => vi.fn());
 const fetchModelsMock = vi.hoisted(() => vi.fn());
@@ -17,8 +17,8 @@ vi.mock('@/modules/models', () => ({
 vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
   useConversationStream: vi.fn(),
 }));
-vi.mock('@/modules/conversation-v2/useStream', () => ({
-  useConversationV2StreamConnection: vi.fn(),
+vi.mock('@/modules/app-builder-studio/useStream', () => ({
+  useAppBuilderStudioStreamConnection: vi.fn(),
 }));
 vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
   usePlaybookStreamGlobal: vi.fn(),
@@ -58,7 +58,7 @@ describe('RootGuard', () => {
   ])('requests the v2 pipe only for its own route: %s', (path, enabled) => {
     useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
     renderWithRouter(<RootGuard />, [path]);
-    expect(useConversationV2StreamConnection).toHaveBeenCalledWith(enabled);
+    expect(useAppBuilderStudioStreamConnection).toHaveBeenCalledWith(enabled);
   });
 
   it('renders landing page for guests', () => {

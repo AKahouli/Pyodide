@@ -40,6 +40,22 @@ export function normalizeMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
   };
 }
 
+/**
+ * Stored-row counterpart of {@link normalizeMcpSecurityPolicy}: rows written by
+ * older builds can hold legacy policy shapes, and a read path (connector
+ * listing, runtime resolution) must not 400 the whole request over one stale
+ * row. Unreadable stored policies fail closed to the strict default (configured
+ * profile, no grants) so the connector stays inert until an administrator
+ * repairs it; explicit admin input keeps using the throwing validator.
+ */
+export function storedMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
+  try {
+    return normalizeMcpSecurityPolicy(value ?? undefined);
+  } catch {
+    return { ...DEFAULT_MCP_SECURITY_POLICY, requiredPermissions: [] };
+  }
+}
+
 function invalid(): never {
   throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid MCP security policy');
 }

@@ -10,7 +10,7 @@ import {
   useConversationsLoading,
   useHistoryConversations,
 } from '@/modules/conversation/store';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { useAppBuilderStudioPointersStore } from '@/modules/app-builder-studio/store';
 import { RecentChats } from './RecentChats';
 import { buildHistoryRows } from './chatGroups';
 
@@ -24,8 +24,8 @@ export function AllChatsPage() {
   const loading = useConversationsLoading();
   const hasMore = useConversationsHasMore();
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
-  const v2Pointers = useConversationV2PointersStore((s) => s.items);
-  const fetchV2Pointers = useConversationV2PointersStore((s) => s.fetch);
+  const v2Pointers = useAppBuilderStudioPointersStore((s) => s.items);
+  const fetchV2Pointers = useAppBuilderStudioPointersStore((s) => s.fetch);
 
   useEffect(() => {
     fetchConversations({ reset: true, limit: ALL_CHATS_LIMIT });

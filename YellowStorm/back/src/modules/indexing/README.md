@@ -178,9 +178,14 @@ Webhook endpoint for 3rd party indexing API to report status updates.
 **Request Body:**
 ```json
 {
-  "documentId": "document-id",
-  "status": "ready" | "failed",
-  "error": "Error message (optional, for failed status)"
+  "task_id": "workflow-123",
+  "metadata": { "document_id": "document-id" },
+  "current_step": 1,
+  "total_steps": 1,
+  "steps": [{ "step_number": 1, "task_name": "Document download", "task_key": "download", "task_id": "step-123" }],
+  "step_status": "PROCESSING",
+  "processing_status": "PROCESSING",
+  "message": "Downloading document."
 }
 ```
 
@@ -193,10 +198,37 @@ Webhook endpoint for 3rd party indexing API to report status updates.
 ```
 
 **Behavior:**
-- Updates document's `indexingStatus` to `ready` or `failed`
+- Uses workflow `processing_status` (`PROCESSING`, `FINISH`, `FAIL`); legacy
+  `status` and `metadata.external_id` callbacks remain supported.
+- A finished step does not finish the workflow. Even N/N can be processing or failed.
+- Persists the supplied schedule/count/current step/message as a JSON string in
+  existing document `metadata.indexingProgress`. API-response identifiers and progress
+  use atomic metadata merges, preserving concurrent updates and source metadata.
+- Resets progress when an indexing attempt starts. The workspace classifier file
+  projection returns parsed `indexingProgress`; owner SSE notifications carry the
+  same object, or explicit `null` when progress is reset/unavailable.
+- Validates supplied progress before writes. Provider schedules use ordered
+  `{step_number,task_name,task_key,task_id}` entries; these normalize to UI
+  `{number,name,key,task_id}` entries (also accepted for compatibility). Optional
+  provider fields can be `null`, including `step_status` on initial/final updates.
+  No schedule or count is inferred from file type.
 - Sets `lastIndexedAt` timestamp on success
 - Sets `indexingError` message on failure
 - Sends real-time notification to document owner via SSE
+- File listing, document responses and owner SSE expose existing persisted
+  `indexingAttemptStartedAt` / `indexingAttemptCompletedAt` as ISO timestamps or
+  explicit `null`. These measure the current attempt from actual processing start
+  through success/failure, excluding queued time. Retry clears the old completion;
+  repeated terminal callbacks retain the first completion timestamp. Missing
+  historical timestamps are not inferred.
+- Repeated status/step notifications include `data.silent: true`, so progress
+  updates the file row without another popup. The first start/failure/success
+  transition keeps the popup; duplicate terminal callbacks are silent too.
+- Failures can originate from provider callbacks, failure to submit to the
+  provider, or the backend one-hour timeout (and URL conversion for link files).
+  Submission/timeout notifications carry the newly persisted failed snapshot,
+  including `indexingError`, rather than the previous processing state. A timeout
+  means no timely completion was recorded, not proof that the provider task failed.
 
 ## Error Codes
 

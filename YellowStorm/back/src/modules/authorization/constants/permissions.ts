@@ -194,6 +194,7 @@ export const Permissions = {
   MENU_APP_MARKETPLACE: 'menu.app_marketplace',
   MENU_GOVERN: 'menu.govern',
   MENU_GOVERNANCE: 'menu.governance',
+  MENU_EVALUATION_LOGICAL_SEARCH: 'menu.evaluation_logical_search',
   MENU_ADMIN: 'menu.admin',
 
   // Super Admin
@@ -397,6 +398,7 @@ const ALL_PERMISSIONS = new Set<string>([
   'menu.app_marketplace',
   'menu.govern',
   'menu.governance',
+  'menu.evaluation_logical_search',
   'menu.admin',
 
   // Super Admin

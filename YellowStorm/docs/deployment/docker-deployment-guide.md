@@ -82,6 +82,8 @@ baked into the image; the **must-set** ones are marked ✅.
 | `BROWSER_SESSION_VIEWPORT_W` / `_H` | `1280` / `720` | Remote viewport (must match the frontend constants — leave default). |
 | ✅ `URL_TO_PDF_API_URL` | `http://localhost:5000` | The url-to-pdf service, used when **indexing** collected links. Point it at your deployed service. |
 | `URL_TO_PDF_API_KEY` | *(empty)* | Auth for that service, if it requires one. |
+| `PYODIDE_RUNTIME_ENABLED` | `false` | Enables the browser **Pyodide** Python runtime relay behind the `execute_python` connector. Set `true` to use it; otherwise the relay answers `PYODIDE_RUNTIME_OFFLINE` ("relay is disabled") and agents fall back to the Manus Sandbox. |
+| `PYODIDE_MCP_SERVER_URL` | *(empty)* | URL of the `mcp-pyodide` server, **exactly equal** to the connector's MCP URL (e.g. `http://mcp-pyodide:8027/mcp`). Required for identity injection: without a match the MCP answers *"The connector did not provide a trusted acting user."* Inside containers a `localhost` URL will not reach the MCP — use the shared service name. |
 | — plus your usual app env | — | Mongo URI, JWT secret/issuer/audience, etc. (unchanged by this feature). |
 
 Chromium runs headless with `--no-sandbox --disable-dev-shm-usage` (already in the engine),
@@ -97,8 +99,17 @@ Set `VITE_API_URL` (and optionally `VITE_SOCKET_BASE_URL`) at **build time** and
 |---|---|---|---|
 | ✅ `VITE_API_URL` | `docker build --build-arg VITE_API_URL=...` and/or container env | `https://api.example.com/api/v1` | **Public** REST base URL. Inlined at build; `env.sh` also writes it to `/config.js` at start (runtime wins). |
 | `VITE_SOCKET_BASE_URL` | same | `https://api.example.com` | Optional socket origin override. Defaults to the API URL's origin. |
+| `VITE_PYODIDE_RUNTIME_ENABLED` | `docker build --build-arg ...` (**inlined at build**) | `true` | Mounts the browser Pyodide bridge. **Build-time only** — a container env var at start is ignored. Leave unset (or `false`) to disable. |
+| `VITE_PYODIDE_INDEX_URL` | same | `https://cdn.jsdelivr.net/pyodide/v314.0.7/full/` | Optional Pyodide asset base; defaults to the built-in CDN URL. |
 
 If unset in production, the app has no API base URL and auth/API calls fail until you set `VITE_API_URL` and restart the container.
+
+> **Enabling the browser Pyodide runtime needs three switches aligned.** (1) Backend
+> `PYODIDE_RUNTIME_ENABLED=true`; (2) the connector's MCP URL must equal `PYODIDE_MCP_SERVER_URL`
+> so the acting user's identity is injected; (3) the frontend image must be built with
+> `--build-arg VITE_PYODIDE_RUNTIME_ENABLED=true`. Pyodide executes in the user's browser, so a
+> connected YellowMind tab must stay open — otherwise executions return `PYODIDE_RUNTIME_OFFLINE`.
+> `mcp-pyodide` is built and deployed by `.github/workflows/deploy-mcp.yml`.
 
 **Critical:** this must be the URL the *browser* can reach (public DNS/ingress), **not** an
 internal Docker service name like `http://backend:3000`. The browser — not the frontend
@@ -277,3 +288,4 @@ Verify each layer — in order — so you know exactly where a failure is:
 - [ ] `/socket.io/` block sets `proxy_http_version 1.1`, `Upgrade`/`Connection` headers, and a long read timeout.
 - [ ] `url-to-pdf` deployed and `URL_TO_PDF_API_URL` set (for indexing).
 - [ ] DevTools shows `101 Switching Protocols` on `/socket.io/` and a page renders.
+- [ ] (Optional) Browser Pyodide enabled: backend `PYODIDE_RUNTIME_ENABLED=true` + `PYODIDE_MCP_SERVER_URL`, frontend built with `--build-arg VITE_PYODIDE_RUNTIME_ENABLED=true`.

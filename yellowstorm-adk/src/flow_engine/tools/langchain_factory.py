@@ -8,12 +8,12 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Type, Union, Annotated
 
 from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args as _last_mcp_actual_args
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, BeforeValidator, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
@@ -312,6 +312,7 @@ def _collect_connector_response_components(
     response: Any,
     tool_name: str = "",
     trusted_citations: bool = False,
+    log_payload: bool = True,
 ) -> Any:
     if not isinstance(response, dict):
         return response
@@ -337,8 +338,8 @@ def _collect_connector_response_components(
             if signature in collector._connector_source_links_seen:
                 logger.info(
                     "playbook_connector_source_reused title=%s url=%s",
-                    title,
-                    url,
+                    title if log_payload else "[suppressed]",
+                    url if log_payload else "[suppressed]",
                 )
                 continue
             collector._connector_source_links_seen.add(signature)
@@ -348,7 +349,7 @@ def _collect_connector_response_components(
             logger.info(
                 "playbook_connector_sources_component_emitted count=%s sources=%s",
                 len(new_sources),
-                _log_payload(new_sources),
+                _log_payload(new_sources) if log_payload else "[suppressed]",
             )
 
     citation_sources = normalized_response.get("citation_sources")
@@ -474,7 +475,7 @@ def _collect_connector_response_components(
         logger.warning(
             "PLAYBOOK_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s citation_sources=%s",
             assigned_references,
-            _log_payload(normalized_citation_sources),
+            _log_payload(normalized_citation_sources) if log_payload else "[suppressed]",
         )
 
     return normalized_response
@@ -764,23 +765,101 @@ def create_langchain_tools(
 # ---------------------------------------------------------------------------
 
 
+def _json_schema_python_types(schema: Dict[str, Any]) -> List[Any]:
+    """Resolve the Python type(s) declared by a JSON schema property.
+
+    MCP servers built with Pydantic expose optional parameters as ``anyOf``
+    unions without a top-level ``type`` (for example ``string | null``). Ignoring
+    those branches produced an untyped ``Any`` field, so the tool schema sent to
+    the model declared no type at all and the model called the tool with empty
+    arguments. Keep every non-null branch so a parameter that accepts a string
+    or a list of strings is not narrowed to a single type.
+    """
+    names: List[str] = []
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list):
+            names.extend(
+                str(branch.get("type"))
+                for branch in branches
+                if isinstance(branch, dict)
+                and branch.get("type") not in (None, "null")
+            )
+            if names:
+                break
+    if not names:
+        declared = schema.get("type")
+        if isinstance(declared, str):
+            names = [declared]
+        elif isinstance(declared, list):
+            names = [item for item in declared if item != "null"]
+    if not names:
+        # Match the ADK/UI converter, which treats a missing type as a string
+        # rather than emitting an untyped parameter.
+        return [str]
+
+    mapping = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+        "array": List[Any],
+        "object": Dict[str, Any],
+    }
+    resolved: List[Any] = []
+    for name in names:
+        python_type = mapping.get(name, str)
+        if python_type not in resolved:
+            resolved.append(python_type)
+    return resolved
+
+
 def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
-    schema_type = schema.get("type")
-    if isinstance(schema_type, list):
-        schema_type = next((item for item in schema_type if item != "null"), "string")
-    if schema_type == "string":
-        return str
-    if schema_type == "integer":
-        return int
-    if schema_type == "number":
-        return float
-    if schema_type == "boolean":
-        return bool
-    if schema_type == "array":
-        return List[Any]
-    if schema_type == "object":
-        return Dict[str, Any]
-    return Any
+    types = _json_schema_python_types(schema)
+    if len(types) == 1:
+        return types[0]
+    return Union[tuple(types)]
+
+
+def _schema_declares_array(schema: Dict[str, Any]) -> bool:
+    """True when the property is (or can be) a JSON array."""
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list) and any(
+            isinstance(branch, dict) and branch.get("type") == "array"
+            for branch in branches
+        ):
+            return True
+    declared = schema.get("type")
+    if declared == "array":
+        return True
+    return isinstance(declared, list) and "array" in declared
+
+
+def _coerce_json_string_array(value: Any) -> Any:
+    """Decode an array that a model serialized as a JSON string.
+
+    GLM 5.2 sends connector array arguments (for example
+    ``locate_answer_citations.citations``) as an escaped JSON string, which then
+    fails Pydantic validation with "Input should be a valid list". Decode it
+    before validation so the connector receives a real list.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    for _ in range(2):
+        if not text.startswith("["):
+            return value
+        try:
+            decoded = json.loads(text)
+        except (ValueError, TypeError):
+            return value
+        if isinstance(decoded, list):
+            return decoded
+        if not isinstance(decoded, str):
+            return value
+        text = decoded.strip()
+    return value
 
 
 def _sanitize_mcp_params_for_send(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -832,6 +911,8 @@ def _build_args_schema_for_connector_tool(
     for prop_name, prop_schema in properties.items():
         prop_schema = prop_schema if isinstance(prop_schema, dict) else {}
         py_type = _json_schema_type_to_python(prop_schema)
+        if _schema_declares_array(prop_schema):
+            py_type = Annotated[py_type, BeforeValidator(_coerce_json_string_array)]
         description = prop_schema.get("description") or ""
         if prop_name in required:
             field_defs[prop_name] = (py_type, Field(..., description=description))
@@ -843,6 +924,25 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _connector_parameters_schema(
+    tool_name: str,
+    description: str,
+    parameter_schema: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the connector parameters schema with the ADK/UI converter.
+
+    The chat UI serializes connector tool parameters through
+    ``connector_tools._build_function_schema``. The evaluation runner must send
+    the exact same schema to the model, otherwise a model like GLM 5.2 sees a
+    different (or untyped) parameter set and can emit calls without arguments.
+    """
+    from src.smart_rag.tools.utilities.connector_tools import _build_function_schema
+
+    return _build_function_schema(tool_name, description, parameter_schema)[
+        "function"
+    ]["parameters"]
 
 
 _WORKSPACE_PARAMETER_NAMES = {
@@ -1414,6 +1514,7 @@ def _create_connector_mcp_tools(
 
     tools: List[StructuredTool] = []
     sandbox_call_budget = SandboxCallBudget(max_sandbox_calls_per_step)
+    log_payload = not execution_id.startswith("eval-")
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1475,7 +1576,7 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             connector_name=connector_name,
             transport_type=transport_type,
-            server_url=server_url[:80] if server_url else "(empty)",
+            server_url=(server_url[:80] if server_url else "(empty)") if log_payload else "[suppressed]",
             action_count=len(actions),
         )
 
@@ -1508,6 +1609,12 @@ def _create_connector_mcp_tools(
                 tool_name,
                 action_parameter_schema,
             )
+            # Reuse the ADK/UI converter so the schema sent to the model is the
+            # same on both runtimes. Pydantic's ``model_json_schema()`` would
+            # otherwise rewrap optional fields as ``anyOf`` with titles/defaults.
+            parameters_schema = _connector_parameters_schema(
+                tool_name, action_description, action_parameter_schema
+            )
 
             def _make_mcp_tool(
                 cid: str = connector_id,
@@ -1517,6 +1624,7 @@ def _create_connector_mcp_tools(
                 ad: str = action_description,
                 safety: str = action_safety,
                 arg_schema: Any = args_schema,
+                params_schema: Dict[str, Any] = parameters_schema,
                 tt: str = transport_type,
                 su: str = server_url,
                 sc: Dict[str, Any] = server_config,
@@ -1584,6 +1692,13 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers["x-conversation-id"] = eid or sid
                             if eid:
                                 effective_auth_headers["x-execution-id"] = eid
+                            if eid.startswith("eval-") and _wi:
+                                effective_auth_headers = {key: value for key, value in effective_auth_headers.items()
+                                                          if key.lower() not in {"workspace_id", "workspace-id", "workspace_name"}}
+                                effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                if accepts_workspace:
+                                    merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                merged_params.pop("workspace_name", None)
                         if tt == "streamable_http":
                             # Filenames are model-visible context, not runtime scope.
                             # Let each MCP action's schema, instructions, and docstring
@@ -1626,7 +1741,7 @@ def _create_connector_mcp_tools(
                                 action_params,
                                 auth_headers=effective_auth_headers,
                                 auth_env=ae,
-                                log_payload=action != "send_file_to_user",
+                                log_payload=log_payload and action != "send_file_to_user",
                             )
 
                         if guard is not None and ak != "sandbox_create":
@@ -1692,7 +1807,7 @@ def _create_connector_mcp_tools(
                                     "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s",
                                     cid,
                                     ak,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     artifact_kind,
                                 )
                                 collector.add_component("artifact", {
@@ -1706,7 +1821,7 @@ def _create_connector_mcp_tools(
                                 logger.info(
                                     "mcp_file_artifact_emitted connector_id=%s filename=%s total_components=%d",
                                     cid,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     len(collector.components),
                                 )
                                 response = {
@@ -1722,6 +1837,7 @@ def _create_connector_mcp_tools(
                                 response,
                                 tool_name=ak,
                                 trusted_citations=result_kind in {"web_search", "web_fetch"},
+                                log_payload=log_payload,
                             )
                         return response
                     except SandboxMountValidationError as e:
@@ -1731,7 +1847,7 @@ def _create_connector_mcp_tools(
                         )
                         return f"Error: {e}"
                     except Exception as e:
-                        logger.error("MCP tool execution failed", tool=tn, error=str(e))
+                        logger.error("MCP tool execution failed", tool=tn, error=str(e) if log_payload else type(e).__name__)
                         return f"Connector action '{ak}' failed: {str(e)}"
 
                 _execute_mcp.__name__ = tn
@@ -1750,8 +1866,10 @@ def _create_connector_mcp_tools(
                         "source": "connector",
                         "connector_id": cid,
                         "connector_name": cn,
+                        "connector_slug": connector_slug_value,
                         "action_key": ak,
                         "safety": safety,
+                        "parameters_schema": params_schema,
                     },
                 )
 
@@ -1763,7 +1881,7 @@ def _create_connector_mcp_tools(
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
             workspace_ids=workspace_ids,
-            file_names=file_names,
+            file_names=file_names if log_payload else "[suppressed]",
         )
 
     return tools

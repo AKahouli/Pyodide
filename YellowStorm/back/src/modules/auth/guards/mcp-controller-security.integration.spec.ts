@@ -31,7 +31,7 @@ import { DelegatedActorGuard } from './delegated-actor.guard';
 
 // Workspace operations are outside these callback domains. Avoid bootstrapping
 // the full application via WorkspaceShareService's user/auth barrel imports.
-jest.mock('@modules/workspace/workspace-share.service', () => ({ WorkspaceShareService: class WorkspaceShareService {} }));
+jest.mock('@modules/workspace/workspace-share.service', () => ({ WorkspaceShareService: class WorkspaceShareService { } }));
 
 interface HttpProbe {
   set(name: string, value: string | string[]): HttpProbe;
@@ -146,14 +146,22 @@ describe('MCP controller security boundary over HTTP', () => {
       providers: [DelegatedActorGuard, McpJwtService,
         { provide: ConfigService, useValue: { get: (key: string, fallback?: unknown) => (key === 'pyodideRuntime.enabled' ? true : values[key as string] ?? fallback) } },
         { provide: UserService, useValue: { findById: jest.fn(async () => ({ id: userId, status: accountStatus, email: 'ws01@example.test' })) } },
-        { provide: AuthorizationService, useValue: {
-          getUserRoles: jest.fn(async () => [{ id: 'role' }]), getUserPermissions: jest.fn(async () => permissions),
-        } },
-        { provide: PgConnectorStore, useValue: { findById: jest.fn(async (id: string) => [...targets, ...platformTargets, { audience: 'mcp-pyodide' }].some(target => target.audience === id) ? {
-          id, isActive: active, mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
-          mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user',
-            allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
-        } : null) } },
+        {
+          provide: AuthorizationService, useValue: {
+            getUserRoles: jest.fn(async () => [{ id: 'role' }]), getUserPermissions: jest.fn(async () => permissions),
+          }
+        },
+        {
+          provide: PgConnectorStore, useValue: {
+            findById: jest.fn(async (id: string) => [...targets, ...platformTargets, { audience: 'mcp-pyodide' }].some(target => target.audience === id) ? {
+              id, isActive: active, mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
+              mcpSecurityPolicy: {
+                version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user',
+                allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions
+              },
+            } : null)
+          }
+        },
         { provide: AuditLogService, useValue: audit },
         { provide: AgentService, useValue: agent }, { provide: AgentTypeService, useValue: {} }, { provide: ModelsService, useValue: {} },
         { provide: TeamService, useValue: team },
@@ -178,27 +186,35 @@ describe('MCP controller security boundary over HTTP', () => {
   it.each(targets)('accepts the current signed actor on $principal and serializes its result', async target => {
     // Preflight real policy evaluation so a bad fixture cannot masquerade as
     // successful negative boundary coverage.
-    await app.get(McpJwtService).assertConnectorAccess({ id: target.audience, isActive: active,
+    await app.get(McpJwtService).assertConnectorAccess({
+      id: target.audience, isActive: active,
       mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
-      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: target.audience,
-        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
+      mcpSecurityPolicy: {
+        version: 1, profile: 'internal_jwt', audience: target.audience,
+        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions
+      },
     } as never, userId);
     const response = await request(app.getHttpServer()).get(target.path).set(headers(target)).expect(200);
     expect(Array.isArray(response.body)).toBe(true);
-    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId,
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      actorId: userId,
       metadata: expect.objectContaining({ servicePrincipal: target.principal, connectorId: target.audience }),
     }));
   });
   it.each(platformTargets)('accepts the shared platform audience on $path during migration', async target => {
-    await app.get(McpJwtService).assertConnectorAccess({ id: target.audience, isActive: active,
+    await app.get(McpJwtService).assertConnectorAccess({
+      id: target.audience, isActive: active,
       mcpTransportType: 'streamable_http', mcpServerUrl: 'https://8.8.8.8/mcp', securityRevision: revision,
-      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: target.audience,
-        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions },
+      mcpSecurityPolicy: {
+        version: 1, profile: 'internal_jwt', audience: target.audience,
+        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions
+      },
     } as never, userId);
     const response = await request(app.getHttpServer()).get(target.path)
       .set(headers(target, assertion(target.audience))).expect(200);
     expect(Array.isArray(response.body)).toBe(true);
-    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ actorId: userId,
+    expect(audit.logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      actorId: userId,
       metadata: expect.objectContaining({ servicePrincipal: 'mcp-platform', connectorId: target.audience }),
     }));
   });
@@ -282,9 +298,11 @@ describe('MCP controller security boundary over HTTP', () => {
     expectNoDomainWork();
   });
   it('rejects an expired assertion', async () => {
-    const token = sign({ sub: userId, connectorId: 'mcp-agent', securityRevision: 1, jti: randomUUID(),
-      iat: Math.floor(Date.now() / 1000) - 400 }, privateKey,
-    { algorithm: 'RS256', issuer: 'ws01-test', audience: 'mcp-agent', expiresIn: 300 });
+    const token = sign({
+      sub: userId, connectorId: 'mcp-agent', securityRevision: 1, jti: randomUUID(),
+      iat: Math.floor(Date.now() / 1000) - 400
+    }, privateKey,
+      { algorithm: 'RS256', issuer: 'ws01-test', audience: 'mcp-agent', expiresIn: 300 });
     await request(app.getHttpServer()).get(targets[0].path).set(headers(targets[0], token)).expect(401);
     expectNoDomainWork();
   });
@@ -341,11 +359,13 @@ describe('MCP controller security boundary over HTTP', () => {
     expectNoDomainWork();
   });
   it.each(['X-YellowStorm-Service-Principal', 'X-YellowStorm-Service-Token', 'X-YellowStorm-Mcp-Assertion', 'X-YellowStorm-User-Id', 'X-Correlation-Id'])
-  ('rejects raw duplicate %s headers through the HTTP parser', async name => {
-    const valid = { ...headers(), 'X-YellowStorm-User-Id': userId,
-      'X-YellowStorm-Service-Principal': 'untrusted', 'X-YellowStorm-Service-Token': 'unused' };
-    const value = valid[name as keyof typeof valid];
-    await request(app.getHttpServer()).get(targets[0].path).set(valid).set(name, [value, value]).expect(401);
-    expectNoDomainWork();
-  });
+    ('rejects raw duplicate %s headers through the HTTP parser', async name => {
+      const valid = {
+        ...headers(), 'X-YellowStorm-User-Id': userId,
+        'X-YellowStorm-Service-Principal': 'untrusted', 'X-YellowStorm-Service-Token': 'unused'
+      };
+      const value = valid[name as keyof typeof valid];
+      await request(app.getHttpServer()).get(targets[0].path).set(valid).set(name, [value, value]).expect(401);
+      expectNoDomainWork();
+    });
 });

@@ -62,10 +62,14 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          # --network=host: the runner's bridge network has no outbound access
-          # (apt-get inside build containers times out), while the host does.
-          docker build --network=host -t $IMAGE_NAME:${VERSION} yellowstorm-adk
-          docker push $IMAGE_NAME:${VERSION}
+          docker buildx create --name yellowstorm-builder --use 2>/dev/null || docker buildx use yellowstorm-builder
+          docker buildx build \
+            --network=host \
+            --cache-from=type=registry,ref=$IMAGE_NAME:buildcache \
+            --cache-to=type=registry,ref=$IMAGE_NAME:buildcache,mode=max \
+            --tag $IMAGE_NAME:${VERSION} \
+            --push \
+            yellowstorm-adk
 
   deploy:
     runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]

@@ -13,6 +13,7 @@ from graph_helpers import (
     INLINE_ATTACHMENT_LIMIT,
     UPLOAD_ATTACHMENT_LIMIT,
     build_message_attachments,
+    logger,
     parse_attachments,
     run_storage_key,
     split_bytes_by_message_budget,
@@ -202,5 +203,5 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             passed += 1
-            print(f"  ok  {name}")
-    print(f"\n{passed} passed")
+            logger.info(f"  ok  {name}")
+    logger.info(f"\n{passed} passed")

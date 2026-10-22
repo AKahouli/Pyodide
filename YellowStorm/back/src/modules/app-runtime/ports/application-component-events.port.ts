@@ -1,5 +1,5 @@
 /**
- * Ports for the Conversation V2 `application_component` event.
+ * Ports for the App Builder `application_component` event.
  *
  * App Runtime both publishes the event (after a finalize OpenCode did not
  * relay) and replays it (to rebuild finalized revisions). The wire payload is

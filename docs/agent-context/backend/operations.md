@@ -24,6 +24,59 @@ Presigned direct browser upload via `DocumentService` (`src/modules/document/`):
 
 Postgres-backed features (currently `memory-cards`) use `pg`; do not mix Mongo and Postgres in a feature unless ownership, migrations, and backup semantics are documented.
 
+## Workspace indexing progress
+
+The existing indexing webhook persists provider progress in workspace document
+metadata and publishes it through owner notification SSE. File listing exposes
+the same progress after reload. Workflow status controls success/failure; step
+completion or reaching the final number alone never implies success. Schedules
+and totals come from the provider, including conversion/deep-research/Mistral
+variations. No new table, service, module or runtime is introduced.
+
+Owners: `src/modules/indexing/indexing-webhook.controller.ts`,
+`indexing.service.ts`, `interfaces/indexing.interface.ts`, workspace
+`pg-workspace-document-write.adapter.ts`, and classifier `classifier-file.service.ts`.
+The [indexing README](../../../YellowStorm/back/src/modules/indexing/README.md)
+describes the payload and compatibility. Focused webhook tests cover initial zero,
+intermediate completion, final failure, workflow success and malformed progress;
+classifier tests cover reload projection. The PG adapter integration test covers
+concurrent metadata merges and requires a dedicated `POSTGRES_TEST_DB`.
+
+Provider callbacks currently have no ordering cursor; delivery ordering across
+attempts is not guaranteed by this change. Provider `WebhookStep` fields are
+`step_number/task_name/task_key/task_id`; the receiver normalizes them to the UI
+shape and accepts nullable optional fields from Pydantic `model_dump()`. A
+provider-shaped regression failed before this correction and passes afterward.
+Verified against the sibling vectorstore `src/schema/workers/base.py` and
+`src/helpers/index_notification_webhook.py` on 2026-10-21. Two live documents were
+confirmed `COMPLETED` by the provider while local status remained `processing`
+with empty progress. After rebuilding/restarting the local backend, the real
+provider-shaped probe passed validation and reached document lookup (404 for a
+deliberately nonexistent ID, previously 400). The two successful attempts were
+rechecked and recovered through authenticated legacy terminal callbacks, producing
+local `ready` states. Missing historical steps were not reconstructed. Full fresh
+provider-to-browser progress qualification remains separate from these checks.
+
+Repeated progress notifications carry `data.silent: true`; the notification
+provider suppresses only their popup, preserving live subscribers/history. First
+start/failure/success transitions remain visible. Local submission errors and the
+one-hour stale-indexing timeout can mark a file failed without a provider failure
+callback. Both paths must notify using the patched failed document; reusing the
+old processing snapshot caused incorrect SSE status and missing failure popups.
+Focused regressions cover both paths and silent progress versus terminal events.
+Workspace rows show the stored failure reason even when detailed steps are absent.
+Timeout is a local missing-completion result, not provider-confirmed failure.
+
+Elapsed time uses the existing persisted indexing-attempt start/completion
+timestamps. Classifier file listing, workspace document serialization and owner
+SSE expose them as ISO strings or explicit null for reset/missing data. The
+workspace timer advances only during processing and freezes at the server's
+success/failure time; it survives reload and excludes time spent pending. A retry
+uses its own start and clears the previous end. Duplicate terminal callbacks
+preserve the first completion time. No historical duration is fabricated when
+timestamps are unavailable. Backend projection/SSE and duplicate-terminal tests
+cover the contract; frontend timer, cache and notification tests cover display.
+
 ## 19. Health Checks
 
 | Route | Purpose |

@@ -2,9 +2,12 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import pyodideRuntimeConfig from '@config/pyodide-runtime.config';
 import { AuthModule } from '@modules/auth/auth.module';
+<<<<<<< HEAD
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { ConnectorModule } from '@modules/connector/connector.module';
 import { UserModule } from '@modules/user/user.module';
+=======
+>>>>>>> origin/main
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { PyodideFileResolver } from './pyodide-file.resolver';
 import { PyodideRuntimeInternalController } from './pyodide-runtime-internal.controller';
@@ -13,7 +16,11 @@ import { PyodideRuntimeGateway } from './pyodide-runtime.gateway';
 import { PyodideRuntimeRegistry } from './pyodide-runtime.registry';
 
 @Module({
+<<<<<<< HEAD
   imports: [ConfigModule.forFeature(pyodideRuntimeConfig), AuthModule, AuthorizationModule, ConnectorModule, UserModule, WorkspaceModule],
+=======
+  imports: [ConfigModule.forFeature(pyodideRuntimeConfig), AuthModule, WorkspaceModule],
+>>>>>>> origin/main
   controllers: [PyodideRuntimeInternalController],
   providers: [
     PyodideRuntimeRegistry,

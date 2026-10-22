@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useModuleTranslation } from '@/modules/localization';
 import { useConversationStore } from '@/modules/conversation/store';
-import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
+import { useAppBuilderStudioPointersStore, useAppBuilderStudioStore } from '@/modules/app-builder-studio/store';
 // Leaf imports: avoid the project barrel (ProjectPage graph cycles back here).
 import { useProjectStore } from '@/modules/project/store';
 import { CreateProjectDialog } from '@/modules/project/components/CreateProjectDialog';
@@ -55,13 +55,13 @@ export const RecentChats = memo(function RecentChats({
   // Shallow-stable id arrays: the stores replace the cache Map on every background
   // stream chunk, so subscribing by Map reference would re-render the whole list at token rate.
   const v1BackgroundStreamingIds = useConversationStore(useShallow((s) => Array.from(s.streamingStateCache.keys())));
-  const v2BackgroundStreamingIds = useConversationV2Store(
+  const v2BackgroundStreamingIds = useAppBuilderStudioStore(
     useShallow((s) => Array.from(s.streamingStateCache).filter(([, slice]) => slice.streaming).map(([id]) => id)),
   );
-  const renameV2 = useConversationV2PointersStore((s) => s.rename);
-  const removeV2 = useConversationV2PointersStore((s) => s.remove);
-  const currentV2SessionId = useConversationV2Store((s) => s.sessionId);
-  const v2Streaming = useConversationV2Store((s) => s.streaming);
+  const renameV2 = useAppBuilderStudioPointersStore((s) => s.rename);
+  const removeV2 = useAppBuilderStudioPointersStore((s) => s.remove);
+  const currentV2SessionId = useAppBuilderStudioStore((s) => s.sessionId);
+  const v2Streaming = useAppBuilderStudioStore((s) => s.streaming);
 
   const createProject = useProjectStore((s) => s.createProject);
 

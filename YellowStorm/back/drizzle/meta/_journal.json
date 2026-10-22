@@ -189,6 +189,7 @@
       "version": "7",
       "when": 1790019745486,
       "tag": "0025_cross_schema_fks",
+      "breakpoints": true,
       "statements": []
     },
     {
@@ -384,56 +385,126 @@
       "idx": 54,
       "version": "7",
       "when": 1792340001000,
-      "tag": "0046_concurrent_root_turns",
+      "tag": "0012_third_silver_sable",
       "breakpoints": true
     },
     {
       "idx": 55,
+      "version": "7",
+      "when": 1792340001001,
+      "tag": "0013_wonderful_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792340001002,
+      "tag": "0014_evaluation_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792340001003,
+      "tag": "0015_lonely_rage",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792340001004,
+      "tag": "0029_evaluation_result_token_split",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792340001005,
+      "tag": "0030_evaluation_run_narrative",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792340001006,
+      "tag": "0043_evaluation_result_payload",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792340001007,
+      "tag": "0044_evaluation_run_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1792340001008,
+      "tag": "0045_yellowmind_graph_walks",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1792340001009,
+      "tag": "0046_concurrent_root_turns",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
       "version": "7",
       "when": 1792380000000,
       "tag": "0048_agent_gen_ui",
       "breakpoints": true
     },
     {
-      "idx": 56,
+      "idx": 65,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0049_user_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1792410000000,
+      "tag": "0050_user_invitation_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
       "version": "7",
       "when": 1792420000000,
       "tag": "0049_connector_mcp_security",
       "breakpoints": true
     },
     {
-      "idx": 57,
+      "idx": 68,
       "version": "7",
       "when": 1792454400000,
       "tag": "0050_model_conversation_api",
       "breakpoints": true
     },
     {
-      "idx": 58,
+      "idx": 69,
       "version": "7",
       "when": 1792454400001,
       "tag": "0051_model_responses_history_controls",
       "breakpoints": true
     },
     {
-      "idx": 59,
+      "idx": 70,
       "version": "7",
       "when": 1792454400002,
       "tag": "0052_openui_app_states",
       "breakpoints": true
     },
     {
-      "idx": 60,
+      "idx": 71,
       "version": "7",
       "when": 1792454400003,
       "tag": "0053_conversation_sse_events",
-      "breakpoints": true
-    },
-    {
-      "idx": 61,
-      "version": "7",
-      "when": 1792454400004,
-      "tag": "0045_yellowmind_graph_walks",
       "breakpoints": true
     }
   ]

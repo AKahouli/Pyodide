@@ -10,24 +10,27 @@ import * as z from 'zod';
 import { Loader2, AlertCircle, CheckCircle2, Mail } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormSuccessMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '../../useAuth';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ApiError } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-codes';
 import { useAuthModalStore } from '../../store';
+import { createPasswordSchema, isPasswordValid, type AuthPasswordTranslate } from '../../utils/password-policy';
 
-const createRegisterSchema = (passwordMismatchMessage: string) =>
+const createRegisterSchema = (t: AuthPasswordTranslate) =>
   z
     .object({
       email: z.string().email(),
-      password: z.string().min(8).regex(/[A-Z]/).regex(/[a-z]/).regex(/\d/),
+      password: createPasswordSchema(t),
       confirmPassword: z.string(),
     })
     .refine((data) => data.password === data.confirmPassword, {
-      message: passwordMismatchMessage,
+      message: t('register.error.passwordMismatch'),
       path: ['confirmPassword'],
     });
 
@@ -42,25 +45,50 @@ type RegisterModalProps = Readonly<{
 export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, onSwitchToLogin }: RegisterModalProps) {
   const { register } = useAuth();
   const { t } = useModuleTranslation('auth');
-  const registerSchema = React.useMemo(() => createRegisterSchema(t('register.error.passwordMismatch')), [t]);
+  const registerSchema = React.useMemo(() => createRegisterSchema(t), [t]);
   const registerSuccess = useAuthModalStore((state) => state.registerSuccess);
   const setRegisterSuccess = useAuthModalStore((state) => state.setRegisterSuccess);
   const registeredEmail = useAuthModalStore((state) => state.registeredEmail);
   const setRegisteredEmail = useAuthModalStore((state) => state.setRegisteredEmail);
+  const inviteToken = useAuthModalStore((state) => state.inviteToken);
+  const inviteEmail = useAuthModalStore((state) => state.inviteEmail);
+  const setInvite = useAuthModalStore((state) => state.setInvite);
   const [error, setError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  // Invited registrations lock the address to the one the invitation was sent
+  // to; the backend re-validates the token/email binding regardless.
+  const invited = Boolean(inviteToken && inviteEmail);
 
   const form = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { email: '', password: '', confirmPassword: '' },
   });
 
+  // Live values driving the positive feedback under the password fields.
+  const passwordValue = form.watch('password');
+  const confirmPasswordValue = form.watch('confirmPassword');
+  const passwordIsValid = isPasswordValid(passwordValue);
+  const passwordsMatch = passwordIsValid && confirmPasswordValue.length > 0 && confirmPasswordValue === passwordValue;
+
+  React.useEffect(() => {
+    if (inviteEmail) {
+      form.setValue('email', inviteEmail, { shouldValidate: true });
+    }
+  }, [inviteEmail, form]);
+
   const onSubmit = async (data: RegisterFormValues) => {
     setError(null);
     setRegisterSuccess(false);
     setIsSubmitting(true);
     try {
-      await register({ email: data.email, password: data.password });
+      await register({
+        email: data.email,
+        password: data.password,
+        ...(inviteToken ? { inviteToken } : {}),
+      });
+      // The invitation is single-use and now consumed; drop the locked address.
+      setInvite(null, null);
       setRegisteredEmail(data.email);
       setRegisterSuccess(true);
       form.reset();
@@ -70,6 +98,9 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
 
       if (apiError.details && apiError.details.length > 0) {
         setError(apiError.details.map((d) => d.message).join('. '));
+      } else if (apiError.code) {
+        // Invitation errors (invalid/expired/mismatch) carry explicit codes.
+        setError(getErrorMessage(apiError.code));
       } else if (apiError.message) {
         setError(apiError.message);
       } else {
@@ -86,9 +117,10 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
       form.reset();
       setError(null);
       setRegisterSuccess(false);
+      setInvite(null, null);
       onSwitchToLogin();
     },
-    [form, onSwitchToLogin],
+    [form, onSwitchToLogin, setInvite, setRegisterSuccess],
   );
 
   const handleClose = useCallback(
@@ -97,11 +129,12 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
         // Reset state when closing
         setError(null);
         setRegisterSuccess(false);
+        setInvite(null, null);
         form.reset();
       }
       onOpenChange(isOpen);
     },
-    [form, onOpenChange],
+    [form, onOpenChange, setInvite, setRegisterSuccess],
   );
 
   return (
@@ -148,6 +181,13 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-4'>
+                {invited && (
+                  <Alert className='border-primary/30 bg-primary/5'>
+                    <Mail className='h-4 w-4' />
+                    <AlertDescription>{t('register.invite.banner', { email: inviteEmail ?? '' })}</AlertDescription>
+                  </Alert>
+                )}
+
                 {error && (
                   <Alert variant='destructive'>
                     <AlertCircle className='h-4 w-4' />
@@ -162,8 +202,11 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
                     <FormItem>
                       <FormLabel>{t('register.email.label')}</FormLabel>
                       <FormControl>
-                        <Input type='email' placeholder={t('register.email.placeholder')} autoComplete='email' disabled={isSubmitting} {...field} />
+                        <Input type='email' placeholder={t('register.email.placeholder')} autoComplete='email' disabled={isSubmitting || invited} {...field} />
                       </FormControl>
+                      {invited && (
+                        <p className='text-xs text-muted-foreground'>{t('register.invite.emailLocked')}</p>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
@@ -176,9 +219,24 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
                     <FormItem>
                       <FormLabel>{t('register.password.label')}</FormLabel>
                       <FormControl>
-                        <Input type='password' placeholder={t('register.password.placeholder')} autoComplete='new-password' disabled={isSubmitting} {...field} />
+                        <PasswordInput
+                          placeholder={t('register.password.placeholder')}
+                          autoComplete='new-password'
+                          disabled={isSubmitting}
+                          {...field}
+                          onChange={(event) => {
+                            field.onChange(event);
+                            // Surface the specific unmet condition while typing.
+                            void form.trigger('password');
+                            // Keep an already-filled confirmation in sync with the new password.
+                            if (form.getValues('confirmPassword')) {
+                              void form.trigger('confirmPassword');
+                            }
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
+                      <FormSuccessMessage>{passwordIsValid ? t('register.password.valid') : null}</FormSuccessMessage>
                     </FormItem>
                   )}
                 />
@@ -190,9 +248,20 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
                     <FormItem>
                       <FormLabel>{t('register.confirmPassword.label')}</FormLabel>
                       <FormControl>
-                        <Input type='password' placeholder={t('register.confirmPassword.placeholder')} autoComplete='new-password' disabled={isSubmitting} {...field} />
+                        <PasswordInput
+                          placeholder={t('register.confirmPassword.placeholder')}
+                          autoComplete='new-password'
+                          disabled={isSubmitting}
+                          {...field}
+                          onChange={(event) => {
+                            field.onChange(event);
+                            // Report the mismatch as soon as the user types a differing value.
+                            void form.trigger('confirmPassword');
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
+                      <FormSuccessMessage>{passwordsMatch ? t('register.confirmPassword.match') : null}</FormSuccessMessage>
                     </FormItem>
                   )}
                 />

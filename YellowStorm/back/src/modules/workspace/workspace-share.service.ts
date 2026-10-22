@@ -572,17 +572,17 @@ export class WorkspaceShareService {
   ): WorkspaceShareResponse {
     const userInfo = userOverride
       ? {
-          id: userOverride._id.toString(),
-          email: userOverride.email,
-          firstName: userOverride.profile?.firstName,
-          lastName: userOverride.profile?.lastName,
-        }
+        id: userOverride._id.toString(),
+        email: userOverride.email,
+        firstName: userOverride.profile?.firstName,
+        lastName: userOverride.profile?.lastName,
+      }
       : {
-          id: resolvedUser?.id ?? share.sharedWithUserId,
-          email: resolvedUser?.email ?? '',
-          firstName: resolvedUser?.firstName || undefined,
-          lastName: resolvedUser?.lastName || undefined,
-        };
+        id: resolvedUser?.id ?? share.sharedWithUserId,
+        email: resolvedUser?.email ?? '',
+        firstName: resolvedUser?.firstName || undefined,
+        lastName: resolvedUser?.lastName || undefined,
+      };
 
     return {
       id: share.id,

@@ -13,7 +13,7 @@ import { randomBytes } from 'crypto';
 import { PlaybookShareService } from './playbook-share.service';
 import { McpJwtService, AdkExecutionAuthority } from '@modules/connector/services/mcp-jwt.service';
 import { ExecutionLeaseRepository } from '../persistence/execution-lease.repository';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
