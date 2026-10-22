@@ -3,41 +3,40 @@ description: Focused review for high-risk changes, explicit review requests, or 
 mode: subagent
 model: openai/gpt-6.1-sol
 reasoningEffort: medium
-temperature: 0
+request:
+  body:
+    temperature: 0
 steps: 22
-permission:
-  "*": deny
-  sdlc_health: allow
-  sdlc_checkpoint: allow
-  sdlc_resume: allow
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.env.example": allow
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: deny
-  bash:
-    "*": deny
-    "git status*": allow
-    "graphify query*": allow
-    "graphify path*": allow
-    "graphify explain*": allow
-    "graphify affected*": allow
-    "graphify god-nodes*": allow
-    "graphify hook status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-  task: deny
-  "context7_*": allow
-  skill:
-    "*": deny
-    graphify-navigation: allow
-    context7-mcp: allow
+permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: sdlc_health, resource: "*", effect: allow }
+  - { action: sdlc_checkpoint, resource: "*", effect: allow }
+  - { action: sdlc_resume, resource: "*", effect: allow }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: deny }
+  - { action: read, resource: "*.env.*", effect: deny }
+  - { action: read, resource: "*.env.example", effect: allow }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: list, resource: "*", effect: allow }
+  - { action: lsp, resource: "*", effect: allow }
+  - { action: edit, resource: "*", effect: deny }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "git status*", effect: allow }
+  - { action: shell, resource: "graphify query*", effect: allow }
+  - { action: shell, resource: "graphify path*", effect: allow }
+  - { action: shell, resource: "graphify explain*", effect: allow }
+  - { action: shell, resource: "graphify affected*", effect: allow }
+  - { action: shell, resource: "graphify god-nodes*", effect: allow }
+  - { action: shell, resource: "graphify hook status*", effect: allow }
+  - { action: shell, resource: "git diff*", effect: allow }
+  - { action: shell, resource: "git log*", effect: allow }
+  - { action: shell, resource: "git show*", effect: allow }
+  - { action: subagent, resource: "*", effect: deny }
+  - { action: context7_*, resource: "*", effect: allow }
+  - { action: skill, resource: "*", effect: deny }
+  - { action: skill, resource: graphify-navigation, effect: allow }
+  - { action: skill, resource: context7-mcp, effect: allow }
 ---
 
 You review changes and return a verdict. You never modify code or repository state.

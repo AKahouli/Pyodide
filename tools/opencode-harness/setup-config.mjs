@@ -17,11 +17,15 @@ function read(filename) {
   return { text, value };
 }
 // Defaults precede existing permission patterns under native last-match semantics.
-function merge(defaults, existing) {
+function merge(defaults, existing, key = '') {
+  if (Array.isArray(defaults) && Array.isArray(existing)) {
+    if (key !== 'permissions') return existing;
+    return [...defaults.filter(rule => !existing.some(item => JSON.stringify(item) === JSON.stringify(rule))), ...existing];
+  }
   if (!object(defaults) || !object(existing)) return existing;
   const result = Object.create(null);
   for (const key of Object.keys(defaults)) if (!Object.hasOwn(existing, key)) result[key] = defaults[key];
-  for (const key of Object.keys(existing)) result[key] = Object.hasOwn(defaults, key) ? merge(defaults[key], existing[key]) : existing[key];
+  for (const key of Object.keys(existing)) result[key] = Object.hasOwn(defaults, key) ? merge(defaults[key], existing[key], key) : existing[key];
   return result;
 }
 function write(filename, text, original, value) {
@@ -47,7 +51,20 @@ try {
     if (fs.existsSync(json) && fs.existsSync(jsonc)) throw Error('Both opencode.json and opencode.jsonc exist; reconcile them before setup.');
     const filename = fs.existsSync(jsonc) ? jsonc : json;
     const { text, value } = read(filename);
-    write(filename, text, value, merge(read(path.join(source, 'config/opencode.example.json')).value, value));
+    const defaults = read(path.join(source, 'config/opencode.example.json')).value;
+    // V2 accepts V1 fields, but native defaults would override their values.
+    // Preserve personal legacy policy/provider/agent settings for V2 to normalize.
+    for (const [native, legacy] of Object.entries({ agents: ['agent', 'mode'], providers: ['provider'], permissions: ['permission', 'tools'] })) {
+      if (legacy.some(key => Object.hasOwn(value, key))) delete defaults[native];
+    }
+    if (object(value.compaction) && ['reserved', 'preserve_recent_tokens'].some(key => Object.hasOwn(value.compaction, key))) delete defaults.compaction;
+    if (Object.hasOwn(value, 'subagent_depth')) defaults.experimental.subagent_depth = value.subagent_depth;
+    if (object(value.mcp)) {
+      for (const name of Object.keys(defaults.mcp.servers)) {
+        if (Object.hasOwn(value.mcp, name)) delete defaults.mcp.servers[name];
+      }
+    }
+    write(filename, text, value, merge(defaults, value));
   } else throw Error('Unknown setup configuration action.');
 } catch (error) {
   // Never echo configuration, tokens, authenticated URLs or raw fetch errors.

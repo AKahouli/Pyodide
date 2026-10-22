@@ -1,8 +1,9 @@
 # OpenCode SDLC harness
 
-The versioned configuration snapshot, native plugin, and focused tests live
+The versioned V2-native configuration snapshot, native plugin, and focused tests live
 here. `config/opencode.example.json` supplies integration and permission defaults;
-merge it with working provider settings rather than replacing them.
+merge it with working provider settings rather than replacing them. File-based agent
+definitions use V2 `permissions` rules; skills remain in their existing file format.
 The structural graph is the local graphify CLI querying each worktree's `graphify-out/graph.json`; its git hooks keep the graph fresh.
 
 For developer onboarding and manual steps, start with
@@ -13,7 +14,9 @@ and the reviewed repository context profile with a manifest and hashes.
 ## Install
 
 For guided Windows installation, double-click [Install-Harness.cmd](Install-Harness.cmd).
-It installs the graphify CLI and its freshness hooks, reuses `install.ps1` and preserves
+It installs native Windows OpenCode **2.1.2** (including when V1 is already installed),
+the matching `@opencode/plugin` SDK, the graphify CLI and its freshness hooks,
+reuses `install.ps1` and preserves
 personal configuration with backups. See [the one-click procedure](docs/DEVELOPER-SETUP.md#one-click-installer)
 for prerequisites and partial-success exit codes.
 
@@ -26,9 +29,15 @@ configuration. It preserves `opencode.json`, authentication, and provider keys.
 Existing owned runtime/agent/skill/instruction files are backed up under the
 destination's `.sdlc-backups/` before replacement. Reconcile personal instruction
 or model overrides from that backup after installation.
-The installed plugin SDK must already exist in that configuration directory.
-Native parallel-session checks are verified against OpenCode CLI 1.18.34;
-the graphify index probe is also verified in the desktop's Node 24.15 runtime.
+For the lower-level `install.ps1`, `@opencode/plugin@2.1.2` must already exist in
+that configuration directory. The one-click setup installs it automatically.
+The CLI is installed at `%USERPROFILE%\.opencode\bin\opencode.exe`, with that
+directory first in User PATH. Setup checks command resolution and rejects a
+machine-wide V1 command that still shadows it. Open a new terminal after setup;
+existing terminals retain their old PATH. Desktop is a separate installation:
+use V2 Desktop with this harness. V1 plugins do not run in V2; personal third-party
+plugins need their own migration. Historical V1 live-test results below do not
+qualify the V2 server API.
 
 Checkpoint/edit workflow activates in worktrees containing
 `tools/opencode-harness/policy.json`. Startup diagnostics also run elsewhere:
@@ -60,10 +69,11 @@ The user can message while children run; integrate automatic completion without
 polling or repeating discovery. Independent checkpoint history and private QA
 isolation remain unchanged. Full completion still includes affected documentation.
 Detailed recipes are loaded only when relevant from [WORKFLOW](docs/WORKFLOW.md).
-The reusable `tests/live-background.mjs --create-fixture` prepares an isolated
-headless acceptance run; see [setup](docs/DEVELOPER-SETUP.md). It checks interaction,
-checkpoint retention, maintainer scheduling and automatic completion with the
-installed plugin. Desktop UI behavior needs separate verification.
+Use `node tools/opencode-harness/tests/live-v2.mjs` for isolated native V2 plugin
+loading/tool/checkpoint verification without model calls. The older
+`live-background.mjs`, `live-startup.mjs` and `live-opencode.mjs` use the V1 API
+and are historical fixtures; they do not qualify V2 background execution.
+Desktop UI and subagent interaction need separate verification.
 
 ## Interruption, resume and parallel sessions
 

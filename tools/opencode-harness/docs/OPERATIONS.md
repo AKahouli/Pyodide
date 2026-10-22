@@ -25,6 +25,8 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Symptom | Check / recovery |
 | --- | --- |
 | `sdlc_health` missing | SDK installed, `plugins/sdlc.js` discovered, correct config directory; fully restart the host. Do not list the SDLC plugin twice. |
+| `opencode pair` tries to open a `pair` directory | V1 is still first on PATH. Run `where.exe opencode` and `opencode --version`; rerun `Install-Harness.cmd`, then open a new terminal. Expected: native `%USERPROFILE%\.opencode\bin\opencode.exe`, v2.1.2. Remove a machine-wide V1 PATH entry if setup reports shadowing. |
+| Desktop IPC failure / server process exited | Desktop must also be V2. Run `opencode service status`, `opencode api get /api/info`, then `opencode service restart` for an unhealthy service. Check `%USERPROFILE%\.local\share\opencode\log\opencode.log` for port conflicts; do not launch competing servers on the managed port or delete service/database files. |
 | Old loaded version / same failures in new chats | Stop the entire host, reinstall from the intended source commit, restart. New chat alone cannot reload cached plugin code. |
 | Checkpoints FAIL / missing policy | Launch in the intended Git checkout; verify `tools/opencode-harness/policy.json`, committed HEAD, local writable `.opencode/sdlc/` and routed documents. |
 | Checkpoint initialization lock budget exceeded | Identify competing writers, live owner or a nonlocal/symlinked store; recover the environment, then refresh health. Continue normal coding while recovering checkpoint memory. |
@@ -36,7 +38,7 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Browser isolation or page routing missing | Install the pinned Chrome MCP and proper flags, fully restart. Never use a shared default tab as fallback. |
 | Evidence save denied by Chrome | Verify MCP roots/allowed active repository workspace; keep files in owned `qa-artifacts/` and avoid unrestricted path flags. |
 | Specialist model unavailable | Change/remove its explicit `model:` override, select an accessible primary model, restart the host. |
-| `Task(background: true)` unsupported/foreground only | Enable `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1` in the launching process and restart the host; verify the tested OpenCode version. |
+| Background task argument unsupported | V2 uses its native subagent tool; inspect its current schema rather than copying V1 Task arguments. The old background environment flag is not required. Complete required documentation directly when background routing is unavailable. |
 | Background maintainer unavailable | Primary completes the scoped docs from the existing handoff, or uses supported bounded foreground delegation. No repeated authorization or routing-only pending state. |
 | Shell command denied | Inspect the current agent's native permissions. Restricted specialists return runtime/log needs to the primary; the plugin no longer filters shell commands. Authored source changes still use native edit tools. |
 | Resume has several candidates | Select the real task ID; reconcile source/check fingerprints before continuing. An active old process must park/interrupt its task first. |

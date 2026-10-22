@@ -2,11 +2,12 @@
   "$schema": "https://opencode.ai/config.json",
   "compaction": {
     "auto": true,
-    "prune": true,
-    "reserved": 60000,
-    "preserve_recent_tokens": 20000
+    "buffer": 60000,
+    "keep": {
+      "tokens": 20000
+    }
   },
-  "provider": {
+  "providers": {
     "openai": {
       "models": {
         "gpt-6-luna": { "limit": { "context": 1050000, "input": 460000, "output": 128000 } },
@@ -23,64 +24,58 @@
     }
   },
   "mcp": {
-    "chrome-devtools": {
-      "type": "local",
-      "enabled": true,
-      "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@1.10.1",
-        "--isolated",
-        "--page-id-routing"
-      ]
-    },
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "enabled": true
-    }
-  },
-  "permission": {
-    "skill": {
-      "*": "deny"
-    }
-  },
-  "agent": {
-    "build": {
-      "permission": {
-        "bash": {
-          "*": "allow",
-          "git push*": "ask",
-          "git reset --hard*": "ask",
-          "git rebase*": "ask",
-          "git checkout -- *": "ask",
-          "del *": "ask",
-          "rm *": "ask",
-          "Remove-Item*": "ask"
-        },
-        "task": {
-          "*": "deny",
-          "explore": "allow",
-          "plan": "allow",
-          "diagnostics": "allow",
-          "frontend-qa": "allow",
-          "reviewer": "allow",
-          "maintainer": "allow",
-          "worker": "allow"
-        },
-        "skill": {
-          "*": "deny",
-          "impeccable": "allow",
-          "frontend-design": "allow",
-          "context7-mcp": "allow",
-          "archify": "allow",
-          "find-skills": "allow",
-          "graphify-navigation": "allow",
-          "ponytail": "allow"
-        },
-        "chrome-devtools_*": "deny"
+    "servers": {
+      "chrome-devtools": {
+        "type": "local",
+        "disabled": false,
+        "command": [
+          "npx",
+          "-y",
+          "chrome-devtools-mcp@1.10.1",
+          "--isolated",
+          "--page-id-routing"
+        ]
+      },
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+        "disabled": false
       }
     }
   },
-  "subagent_depth": 1
+  "permissions": [
+    { "action": "skill", "resource": "*", "effect": "deny" }
+  ],
+  "agents": {
+    "build": {
+      "permissions": [
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "git push*", "effect": "ask" },
+        { "action": "shell", "resource": "git reset --hard*", "effect": "ask" },
+        { "action": "shell", "resource": "git rebase*", "effect": "ask" },
+        { "action": "shell", "resource": "git checkout -- *", "effect": "ask" },
+        { "action": "shell", "resource": "del *", "effect": "ask" },
+        { "action": "shell", "resource": "rm *", "effect": "ask" },
+        { "action": "shell", "resource": "Remove-Item*", "effect": "ask" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "explore", "effect": "allow" },
+        { "action": "subagent", "resource": "plan", "effect": "allow" },
+        { "action": "subagent", "resource": "diagnostics", "effect": "allow" },
+        { "action": "subagent", "resource": "frontend-qa", "effect": "allow" },
+        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
+        { "action": "subagent", "resource": "maintainer", "effect": "allow" },
+        { "action": "subagent", "resource": "worker", "effect": "allow" },
+        { "action": "skill", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "impeccable", "effect": "allow" },
+        { "action": "skill", "resource": "frontend-design", "effect": "allow" },
+        { "action": "skill", "resource": "context7-mcp", "effect": "allow" },
+        { "action": "skill", "resource": "archify", "effect": "allow" },
+        { "action": "skill", "resource": "find-skills", "effect": "allow" },
+        { "action": "skill", "resource": "graphify-navigation", "effect": "allow" },
+        { "action": "skill", "resource": "ponytail", "effect": "allow" },
+        { "action": "chrome-devtools_*", "resource": "*", "effect": "deny" }
+      ]
+    }
+  },
+  "experimental": { "subagent_depth": 1 }
 }

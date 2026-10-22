@@ -3,8 +3,8 @@ param([string]$Destination = (Join-Path $env:USERPROFILE '.config\opencode'))
 $ErrorActionPreference = 'Stop'
 $runtime = Join-Path $PSScriptRoot 'runtime'
 $config = Join-Path $PSScriptRoot 'config'
-if (-not (Test-Path -LiteralPath (Join-Path $Destination 'node_modules\@opencode-ai\plugin'))) {
-    throw 'Install the OpenCode plugin SDK in the destination configuration directory first.'
+if (-not (Test-Path -LiteralPath (Join-Path $Destination 'node_modules\@opencode\plugin'))) {
+    throw 'Install the OpenCode V2 plugin SDK (@opencode/plugin@2.1.2) in the destination configuration directory first, or run Install-Harness.cmd.'
 }
 $files = @{
     'plugins\sdlc.js' = Join-Path $runtime 'plugins\sdlc.js'

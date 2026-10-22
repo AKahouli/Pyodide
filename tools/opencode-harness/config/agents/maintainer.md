@@ -3,28 +3,27 @@ description: Scoped documentation updates alongside implementation. Prefer backg
 mode: subagent
 model: openai/gpt-6-luna
 reasoningEffort: low
-temperature: 0
+request:
+  body:
+    temperature: 0
 steps: 12
-permission:
-  "*": deny
-  sdlc_health: allow
-  sdlc_checkpoint: allow
-  sdlc_resume: allow
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  edit:
-    "*": deny
-    "docs/agent-context/**": allow
-  bash:
-    "*": deny
-    "git status*": allow
-    "git diff*": allow
-  skill: deny
+permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: sdlc_health, resource: "*", effect: allow }
+  - { action: sdlc_checkpoint, resource: "*", effect: allow }
+  - { action: sdlc_resume, resource: "*", effect: allow }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: deny }
+  - { action: read, resource: "*.env.*", effect: deny }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: list, resource: "*", effect: allow }
+  - { action: edit, resource: "*", effect: deny }
+  - { action: edit, resource: "docs/agent-context/**", effect: allow }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "git status*", effect: allow }
+  - { action: shell, resource: "git diff*", effect: allow }
+  - { action: skill, resource: "*", effect: deny }
 ---
 
 You update only `docs/agent-context/` in the active repository. The changed Git files remain proposals until reviewed. Never modify executable code, scoped instruction files, schemas, or an accepted ADR in place.

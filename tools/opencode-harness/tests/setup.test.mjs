@@ -17,7 +17,7 @@ before(() => {
     execFileSync(process.execPath, [path.join(path.dirname(npm), 'node_modules/npm/bin/npm-cli.js'), ...install], { stdio: 'pipe' });
   } else execFileSync('npm', install, { stdio: 'pipe' });
   jsonc = createRequire(path.join(sdk, 'package.json'))('jsonc-parser');
-  mkdirSync(path.join(sdk, 'node_modules/@opencode-ai/plugin'), { recursive: true });
+  mkdirSync(path.join(sdk, 'node_modules/@opencode/plugin'), { recursive: true });
 });
 after(() => rmSync(sdk, { recursive: true, force: true }));
 function fixture() {
@@ -44,22 +44,22 @@ test('setup merges defaults into JSONC without changing personal configuration o
   const f = fixture();
   try {
     const file = path.join(f.config, 'opencode.jsonc');
-    const original = '{\n // Personal provider remains intact\n "provider": {"custom":{"options":{"apiKey":"fixture-secret"}}},\n "model":"custom/model", "plugin":["personal-plugin"],\n "permission":{"bash":"ask"}, "mcp":{"context7":{"enabled":false}},\n}\n';
+    const original = '{\n // Personal provider remains intact\n "providers": {"custom":{"options":{"apiKey":"fixture-secret"}}},\n "model":"custom/model", "plugins":["personal-plugin"],\n "permissions":[{"action":"shell","resource":"*","effect":"ask"}], "mcp":{"servers":{"context7":{"disabled":true}}},\n}\n';
     writeFileSync(file, original);
     const result = await run(f, 'opencode'); assert.equal(result.code, 0, result.stderr);
     const text = readFileSync(file, 'utf8'), cfg = jsonc.parse(text);
     assert.ok(text.includes('// Personal provider remains intact'));
-    assert.deepEqual(cfg.provider.custom, jsonc.parse(original).provider.custom);
-    for (const model of Object.values(cfg.provider.openai.models)) {
-      assert.equal(model.limit.input - cfg.compaction.reserved, 400000);
+    assert.deepEqual(cfg.providers.custom, jsonc.parse(original).providers.custom);
+    for (const model of Object.values(cfg.providers.openai.models)) {
+      assert.equal(model.limit.input - cfg.compaction.buffer, 400000);
       assert.ok(model.limit.input + model.limit.output <= model.limit.context);
     }
-    assert.equal(cfg.model, 'custom/model'); assert.deepEqual(cfg.plugin, ['personal-plugin']);
-    assert.equal(cfg.permission.bash, 'ask'); assert.equal(cfg.mcp.context7.enabled, false);
-    assert.equal(cfg.mcp['code-review-graph'], undefined, 'code-review-graph MCP must not be reintroduced');
-    assert.equal(cfg.mcp['chrome-devtools'].enabled, true);
+    assert.equal(cfg.model, 'custom/model'); assert.deepEqual(cfg.plugins, ['personal-plugin']);
+    assert.equal(cfg.mcp.servers.context7.disabled, true);
+    assert.equal(cfg.mcp.servers['code-review-graph'], undefined, 'code-review-graph MCP must not be reintroduced');
+    assert.equal(cfg.mcp.servers['chrome-devtools'].disabled, false);
     assert.equal(cfg.compaction.auto, true);
-    assert.equal(cfg.agent.build.permission.skill['graphify-navigation'], 'allow');
+    assert.ok(cfg.agents.build.permissions.some(rule => rule.action === 'skill' && rule.resource === 'graphify-navigation' && rule.effect === 'allow'));
     assert.ok(backups(f.backup).some(name => readFileSync(path.join(f.backup, name), 'utf8') === original));
     assert.ok(!result.stdout.includes('fixture-secret') && !result.stderr.includes('fixture-secret'));
     const again = await run(f, 'opencode'); assert.equal(again.code, 0, again.stderr);
@@ -81,13 +81,38 @@ test('invalid or competing OpenCode configs fail without rewriting', async () =>
   } finally { f.cleanup(); }
 });
 
+test('V2 defaults do not override personal V1 policy, providers or agents', async () => {
+  const f = fixture();
+  try {
+    const file = path.join(f.config, 'opencode.json');
+    const legacy = {
+      permission: { bash: 'ask', external_directory: 'ask' },
+      provider: { custom: { options: { apiKey: 'fixture-secret' } } },
+      agent: { build: { permission: { bash: 'deny' } } },
+      compaction: { reserved: 12000, preserve_recent_tokens: 6000 },
+      mcp: { context7: { type: 'remote', url: 'https://example.invalid/private', enabled: false } },
+    };
+    writeFileSync(file, JSON.stringify(legacy));
+    const result = await run(f, 'opencode'); assert.equal(result.code, 0, result.stderr);
+    const config = JSON.parse(readFileSync(file, 'utf8'));
+    for (const [key, value] of Object.entries(legacy)) {
+      if (key !== 'mcp') assert.deepEqual(config[key], value);
+    }
+    assert.deepEqual(config.mcp.context7, legacy.mcp.context7);
+    assert.equal(config.mcp.servers.context7, undefined);
+    assert.equal(config.mcp.servers['chrome-devtools'].disabled, false);
+    for (const key of ['permissions', 'providers', 'agents']) assert.equal(config[key], undefined);
+    assert.equal(config.experimental.subagent_depth, 1);
+  } finally { f.cleanup(); }
+});
+
 test('existing plain JSON remains the selected config and keeps personal model', async () => {
   const f = fixture();
   try {
     const file = path.join(f.config, 'opencode.json'); writeFileSync(file, '{"model":"personal/model"}');
     const result = await run(f, 'opencode'); assert.equal(result.code, 0, result.stderr);
     const cfg = JSON.parse(readFileSync(file, 'utf8'));
-    assert.equal(cfg.model, 'personal/model'); assert.equal(cfg.compaction.prune, true);
+    assert.equal(cfg.model, 'personal/model'); assert.equal(cfg.compaction.auto, true);
     assert.equal(readdirSync(f.config).includes('opencode.jsonc'), false);
   } finally { f.cleanup(); }
 });
@@ -105,13 +130,31 @@ test('setup preserves relative permission order and effective last-match denial'
   const f = fixture();
   try {
     const file = path.join(f.config, 'opencode.json');
-    writeFileSync(file, JSON.stringify({ agent: { build: { permission: { bash: { 'git push*': 'allow', '*': 'deny' } } } } }));
+    writeFileSync(file, JSON.stringify({ agents: { build: { permissions: [
+      { action: 'shell', resource: 'git push*', effect: 'allow' },
+      { action: 'shell', resource: '*', effect: 'deny' },
+    ] } } }));
     const result = await run(f, 'opencode'); assert.equal(result.code, 0, result.stderr);
-    const rules = JSON.parse(readFileSync(file, 'utf8')).agent.build.permission.bash;
-    const keys = Object.keys(rules);
-    assert.ok(keys.indexOf('git push*') < keys.indexOf('*'));
-    const matching = Object.entries(rules).filter(([pattern]) => pattern === '*' || pattern === 'git push*');
-    assert.equal(matching.at(-1)[1], 'deny');
+    const rules = JSON.parse(readFileSync(file, 'utf8')).agents.build.permissions;
+    const matching = rules.filter(rule => rule.action === 'shell' && ['*', 'git push*'].includes(rule.resource));
+    assert.equal(matching.at(-1).effect, 'deny');
+  } finally { f.cleanup(); }
+});
+
+test('an existing final permission exception keeps precedence over default duplicates', async () => {
+  const f = fixture();
+  try {
+    const file = path.join(f.config, 'opencode.json');
+    const permissions = [
+      { action: 'shell', resource: '*', effect: 'deny' },
+      { action: 'shell', resource: 'git push*', effect: 'ask' },
+    ];
+    writeFileSync(file, JSON.stringify({ agents: { build: { permissions } } }));
+    const result = await run(f, 'opencode'); assert.equal(result.code, 0, result.stderr);
+    const text = readFileSync(file, 'utf8');
+    assert.deepEqual(JSON.parse(text).agents.build.permissions.slice(-2), permissions);
+    assert.equal((await run(f, 'opencode')).code, 0);
+    assert.equal(readFileSync(file, 'utf8'), text);
   } finally { f.cleanup(); }
 });
 
@@ -129,7 +172,7 @@ test('core installation survives graphify pending and preserves core files', { s
         '$script:calls = [Collections.Generic.List[string]]::new()',
         'function Show-SetupHostWarning { }',
         'function Install-SetupPrerequisite { }',
-        "function Enable-SetupBackground { $script:calls.Add('background') }",
+        "function Install-SetupOpenCode { $script:calls.Add('opencode-v2') }",
         'function Get-SetupConfigDirectory { $env:TEST_CONFIG }',
         "function Install-SetupGraphify { $script:calls.Add('graphify'); if ($env:TEST_SCENARIO -eq 'pending') { throw 'mock pending' } }",
         'function Invoke-SetupNative([string]$Command, [string[]]$Arguments) {',
@@ -149,7 +192,9 @@ test('core installation survives graphify pending and preserves core files', { s
       const report = JSON.parse(readFileSync(result, 'utf8').replace(/^\uFEFF/, ''));
       assert.equal(report.code, scenario === 'pending' ? 2 : 0);
       assert.ok(readdirSync(path.join(f.config, 'plugins')).includes('sdlc.js'));
-      assert.ok(report.calls.includes('background'));
+      assert.ok(report.calls.includes('opencode-v2'));
+      assert.ok(report.calls.some(call => call.includes('@opencode/plugin@2.1.2')));
+      assert.ok(!report.calls.some(call => call.includes('opencode-ai@')));
       assert.ok(report.calls.includes('graphify'));
       assert.equal(readdirSync(path.join(f.config, 'agents')).includes('frontend-qa.md'), true);
       assert.equal(readdirSync(path.join(f.config, 'skills')).includes('graphify-navigation'), true);

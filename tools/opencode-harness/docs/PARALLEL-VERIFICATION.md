@@ -1,5 +1,10 @@
 # Optional two-process startup verification
 
+**Historical V1 procedure.** The `live-startup.mjs` runner below uses the V1
+server API and is not compatible with OpenCode V2. For the current model-free
+V2 smoke check use `node tools/opencode-harness/tests/live-v2.mjs`; background
+and two-process interaction need separate V2 verification.
+
 Install/configure the harness and services using [the user guide](DEVELOPER-SETUP.md)
 first. This checks real session identity/readiness; it does not send model prompts,
 test application behavior or prove memory extraction.

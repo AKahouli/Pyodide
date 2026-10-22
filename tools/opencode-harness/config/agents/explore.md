@@ -3,33 +3,32 @@ description: Read-only code locator. Finds owners, callers, tests, and boundarie
 mode: subagent
 model: openai/gpt-6-luna
 reasoningEffort: medium
-temperature: 0
+request:
+  body:
+    temperature: 0
 steps: 16
-permission:
-  "*": deny
-  sdlc_health: allow
-  sdlc_checkpoint: allow
-  sdlc_resume: allow
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.env.example": allow
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  bash:
-    "*": deny
-    "graphify query*": allow
-    "graphify path*": allow
-    "graphify explain*": allow
-    "graphify affected*": allow
-    "graphify god-nodes*": allow
-    "graphify hook status*": allow
-  skill:
-    "*": deny
-    graphify-navigation: allow
+permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: sdlc_health, resource: "*", effect: allow }
+  - { action: sdlc_checkpoint, resource: "*", effect: allow }
+  - { action: sdlc_resume, resource: "*", effect: allow }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: deny }
+  - { action: read, resource: "*.env.*", effect: deny }
+  - { action: read, resource: "*.env.example", effect: allow }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: list, resource: "*", effect: allow }
+  - { action: lsp, resource: "*", effect: allow }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "graphify query*", effect: allow }
+  - { action: shell, resource: "graphify path*", effect: allow }
+  - { action: shell, resource: "graphify explain*", effect: allow }
+  - { action: shell, resource: "graphify affected*", effect: allow }
+  - { action: shell, resource: "graphify god-nodes*", effect: allow }
+  - { action: shell, resource: "graphify hook status*", effect: allow }
+  - { action: skill, resource: "*", effect: deny }
+  - { action: skill, resource: graphify-navigation, effect: allow }
 ---
 
 You locate code and report evidence. You never edit anything.

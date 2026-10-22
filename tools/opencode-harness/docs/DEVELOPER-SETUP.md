@@ -47,8 +47,9 @@ you can read the result. Internet access is needed for missing dependencies.
 
 The script checks Git, Node 24+ and uv, installs missing prerequisites through
 WinGet, installs the graphify CLI and its freshness hooks (building an initial
-code-only graph when none exists), installs the pinned SDK and OpenCode if absent,
-merges missing config defaults, installs the harness, enables background tasks,
+code-only graph when none exists), installs native Windows OpenCode **2.1.2** even
+when V1 is present, installs the matching V2 SDK,
+merges missing config defaults, installs the harness,
 and prepares Chrome. It backs up existing personal settings, preserves
 JSON/JSONC/provider configuration and serializes installers per Windows user.
 It never stops an active OpenCode host. Detected OpenCode processes produce an
@@ -56,7 +57,15 @@ advisory warning with their PIDs; they do not block setup, including Desktop
 processes left running after closing a window. Fully exit/restart OpenCode after
 setup to load the installed changes. If a file is in use, exit the listed hosts
 and rerun the installer. An existing Node older than 24 needs an upgrade before
-rerunning.
+rerunning. The CLI download uses the official versioned Windows artifact and
+verifies its SHA-512 integrity before installation. x64 uses the baseline binary
+for CPUs with or without AVX2; Windows ARM64 uses its native binary. No WSL is used.
+The binary directory `%USERPROFILE%\.opencode\bin` is placed first in User PATH.
+Setup rejects a machine-wide V1 command that still takes precedence. Open a new
+terminal after setup and check `opencode --version`; an already open terminal keeps
+its old PATH. Restart the terminal application or sign out/in if it still inherits
+the old environment. The installer does not upgrade Desktop: install V2 Desktop
+separately before launching it with the V2 harness.
 
 For explicit command-line use, from the repository root:
 
@@ -91,8 +100,8 @@ latest releases. Upgrade deliberately and repeat onboarding checks.
 
 | Component | Tested version |
 | --- | --- |
-| OpenCode CLI | 1.18.34 |
-| OpenCode plugin SDK | `@opencode-ai/plugin@1.1.42` |
+| OpenCode CLI | 2.1.2 (native Windows) |
+| OpenCode plugin SDK | `@opencode/plugin@2.1.2` |
 | One-click JSON/JSONC configuration helper | `jsonc-parser@3.3.1` |
 | Structural graph | `graphifyy` (PyPI; installed via `uv tool install graphifyy`) |
 | Chrome MCP | `chrome-devtools-mcp@1.10.1` |
@@ -100,7 +109,9 @@ latest releases. Upgrade deliberately and repeat onboarding checks.
 Use a normal developer PowerShell terminal for the remaining Windows commands:
 
 ```powershell
-npm install -g opencode-ai@1.18.34
+# Install the native Windows CLI using the same verified artifact as guided setup:
+. .\tools\opencode-harness\setup.ps1
+Install-SetupOpenCode
 node --version
 git --version
 uv --version
@@ -143,7 +154,7 @@ Back up personal OpenCode configuration before configuring integrations.
 From the Git root:
 
 ```powershell
-npm install --prefix "$configDir" --save-exact @opencode-ai/plugin@1.1.42
+npm install --prefix "$configDir" --save-exact @opencode/plugin@2.1.2
 .\tools\opencode-harness\install.ps1
 ```
 
@@ -167,14 +178,17 @@ Preserve provider settings. Do not create a competing config file or blindly
 replace the existing one.
 
 The template configures Chrome MCP with `--isolated --page-id-routing`,
-Context7, specialist permissions, subagent depth and context compaction/pruning.
+Context7, specialist permissions, `experimental.subagent_depth` and context compaction.
+The setup helper leaves supported V1 settings for OpenCode to normalize, avoiding
+native defaults that would override personal V1 permissions, providers or agents.
+It does not port personal third-party V1 plugins; those require V2 implementations.
 Graph queries run through the graphify CLI with read-only bash permissions in
 the agent files; no graph MCP server is registered.
 For the shipped GPT-6 models and their listed speed variants, the template caps
 the input budget at 460,000 tokens with a 60,000-token compaction reserve:
 automatic compaction starts at 400,000 reported context tokens. The actual model
 context capacity remains 1,050,000; this is a configured working budget. OpenCode
-1.19.3 checks usage between steps, so a large response can cross the threshold
+checks usage between steps, so a large response can cross the threshold
 before compaction starts. This counts current context usage, including cached
 tokens, rather than cumulative tokens spent across the session. Recent context
 retention is configured at 20,000 tokens. Smaller models retain their native
@@ -183,7 +197,7 @@ Other large models need an equivalent input-budget override based on verified
 model limits. Existing personal model/buffer overrides survive installer merges
 and must be reconciled to obtain the same threshold. Restart hosts after changes.
 The SDLC plugin is discovered from `plugins/sdlc.js`; do not also register it in
-the `plugin` array.
+the `plugins` array.
 
 Connect your provider through `/connect` and select an available model through
 `/models`. Review specialist files in `$configDir\agents`:
@@ -202,16 +216,10 @@ If a model is unavailable, remove its `model:` override to inherit the primary,
 or choose a model your provider actually offers. Reasoning settings must also
 be supported. Reapply personal overrides after harness upgrades.
 
-Enable native background tasks for this terminal and future user processes:
-
-```powershell
-$env:OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS = '1'
-[Environment]::SetEnvironmentVariable('OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS', '1', 'User')
-```
-
-Launch the CLI from this terminal initially. A desktop launcher must inherit the
-new environment; fully restart it, or sign out/in if needed. Subagent depth alone
-does not enable background execution.
+V2 provides native background subagent execution; the V1
+`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` flag is no longer installed by setup.
+Use only the arguments exposed by the installed subagent tool. Restart the
+OpenCode host after upgrading the runtime and agents.
 
 ### 3. Install graphify and its freshness hooks
 
@@ -269,7 +277,7 @@ For any failure, give the specific recovery action and say whether coding can
 continue.
 ```
 
-Expected runtime for this guide: `2026-10-20-graphify`.
+Expected runtime for this guide: `2026-10-22-opencode-v2`.
 The SDLC tools are `sdlc_checkpoint`, `sdlc_resume` and `sdlc_health`.
 
 | Startup result | Expected action |
@@ -293,25 +301,25 @@ Tests use disposable repositories/mocked integrations. They do not validate your
 provider sign-in or application. Report failed tests with the failing policy/path;
 do not remove guards to obtain a green result.
 
-For the reusable native background acceptance test:
+For a model-free native V2 plugin loading/tool/checkpoint smoke check:
 
 ```powershell
-node tools/opencode-harness/tests/live-background.mjs --create-fixture
+node tools/opencode-harness/tests/live-v2.mjs
 ```
 
-Follow its printed two-terminal instructions. It uses an owned localhost server
-and your accessible test model; the shipped probe selects `openai/gpt-6-luna`.
-It verifies a second parent response during child execution, persistent child
-references, automatic completion and initial/resumed maintainer background rules.
-Stop only the test server you launched; never stop another session's host.
-The verified CLI result does not establish desktop GUI behavior.
+This uses a disposable repository/config and its own localhost server, without
+provider credentials or model calls. It requires the native V2 executable and
+SDK installed above. It does not verify desktop GUI behavior or background
+subagent execution. The older `live-background.mjs`, `live-startup.mjs` and
+`live-opencode.mjs` runners use the V1 server API and are historical fixtures;
+do not use them to qualify V2.
 
 In your desktop session, request one bounded background task, then send another
 message while it runs. Expect the main agent to answer and later report completion.
 Prefer background maintainer tasks when the current Task schema supports them. If background execution is unavailable, the primary completes the exact scoped documentation directly using the existing handoff and evidence; a bounded foreground maintainer is also allowed when useful. Do not invent unsupported arguments, ask for authorization again, or leave documentation pending solely because background routing is unavailable.
 
-For advanced two-process startup verification, use
-[the parallel readiness procedure](PARALLEL-VERIFICATION.md).
+The [parallel readiness procedure](PARALLEL-VERIFICATION.md) is a historical V1
+procedure and needs a V2 API port before use.
 
 ## Daily use
 
@@ -463,7 +471,7 @@ Only committed changes enter an exported release; see
 - [Harness internals and guard limits](../README.md)
 - [Detailed handoff/QA/documentation recipes](WORKFLOW.md)
 - [Graphify documentation](https://docs.graphify.com)
-- [OpenCode configuration](https://opencode.ai/docs/config/) and [providers](https://opencode.ai/docs/providers/)
+- [OpenCode V2 migration](https://opencode.ai/v2/docs/migrate-v1/), [configuration](https://opencode.ai/v2/docs/config/) and [providers](https://opencode.ai/v2/docs/providers/)
 - [uv installation](https://docs.astral.sh/uv/getting-started/installation/)
 
 Commands and examples follow the pinned harness baseline. Clean-machine onboarding

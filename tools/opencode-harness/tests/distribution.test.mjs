@@ -10,7 +10,7 @@ const installer = fileURLToPath(new URL('../install.ps1', import.meta.url));
 function sandbox(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'opencode-distribution-'));
   const destination = path.join(root, 'personal config');
-  mkdirSync(path.join(destination, 'node_modules/@opencode-ai/plugin'), { recursive: true });
+  mkdirSync(path.join(destination, 'node_modules/@opencode/plugin'), { recursive: true });
   t.after(() => { assert.equal(path.dirname(root), tmpdir()); rmSync(root, { recursive: true, force: true }); });
   return { root, destination };
 }

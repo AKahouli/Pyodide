@@ -3,28 +3,27 @@ description: Verifies supplied UI acceptance criteria in the browser and returns
 mode: subagent
 model: openai/gpt-6.1-sol
 reasoningEffort: low
-temperature: 0
+request:
+  body:
+    temperature: 0
 steps: 60
-permission:
-  "*": deny
-  sdlc_health: allow
-  sdlc_checkpoint: allow
-  sdlc_resume: allow
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  edit:
-    "*": deny
-    "qa-artifacts/**": allow
-  bash: deny
-  "chrome-devtools_*": allow
-  skill:
-    "*": deny
-    chrome-devtools: allow
+permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: sdlc_health, resource: "*", effect: allow }
+  - { action: sdlc_checkpoint, resource: "*", effect: allow }
+  - { action: sdlc_resume, resource: "*", effect: allow }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: deny }
+  - { action: read, resource: "*.env.*", effect: deny }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: list, resource: "*", effect: allow }
+  - { action: edit, resource: "*", effect: deny }
+  - { action: edit, resource: "qa-artifacts/**", effect: allow }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: chrome-devtools_*, resource: "*", effect: allow }
+  - { action: skill, resource: "*", effect: deny }
+  - { action: skill, resource: chrome-devtools, effect: allow }
 ---
 
 You validate frontend-visible changes in a real browser and return a verdict with evidence. Never modify source code.
