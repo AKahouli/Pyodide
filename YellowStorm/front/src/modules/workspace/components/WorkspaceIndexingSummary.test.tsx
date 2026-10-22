@@ -26,4 +26,16 @@ describe('WorkspaceIndexingSummary', () => {
     expect(count('processing')).toBe('2');
     expect(count('total')).toBe('7');
   });
+
+  it('colours each total with the colour of the state it counts', () => {
+    const files: WorkspaceFile[] = [file('indexed', 'ready'), file('failed', 'failed'), file('processing', 'processing')];
+    render(<WorkspaceIndexingSummary files={files} workspaceId='workspace' />);
+    const value = (key: string) => screen.getByText(`indexing.count.${key}`).parentElement?.querySelector('dd');
+    expect(value('total')).toHaveClass('text-foreground');
+    expect(value('indexed')).toHaveClass('text-green-700');
+    expect(value('failed')).toHaveClass('text-destructive');
+    // In-progress work is orange, never red.
+    expect(value('processing')).toHaveClass('text-orange-700');
+    expect(value('processing')).not.toHaveClass('text-destructive');
+  });
 });

@@ -10,6 +10,7 @@ import { useApiAction } from '@/lib/use-api-action';
 import { showSuccess, showWarning } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { INDEXING_TONE, statusFilterTone } from './indexing-status-tone';
 import { useCanWriteWorkspace, useWorkspaceStore } from '../store';
 import * as pageApi from '../page-api';
 import * as api from '../api';
@@ -178,7 +179,7 @@ export function WorkspaceFileBrowser({ workspaceId, folders, files, artifacts, c
     <aside aria-label={t('explorer.folderNavigation')} className={cn('w-full shrink-0 border-b bg-muted/20 p-3 md:w-52 md:overflow-y-auto md:border-b-0 md:border-e lg:w-60', !mobileFolders && 'hidden md:block')}>
       <nav className='space-y-1'>
         <Button variant='ghost' disabled={busy} onClick={() => changeView('all')} className={cn('w-full justify-start gap-2', view === 'all' && 'bg-accent')}><FileText className='h-4 w-4' />{t('explorer.allFiles')}<span className='ms-auto text-xs text-muted-foreground'>{workspaceFiles.length}</span></Button>
-        <Button variant='ghost' disabled={busy} onClick={() => changeView('attention')} className={cn('w-full justify-start gap-2', view === 'attention' && 'bg-accent')}><AlertCircle className='h-4 w-4' />{t('explorer.attention')}<span className='ms-auto text-xs text-muted-foreground'>{attentionCount}</span></Button>
+        <Button variant='ghost' disabled={busy} onClick={() => changeView('attention')} className={cn('w-full justify-start gap-2', view === 'attention' && 'bg-accent')}><AlertCircle className={cn('h-4 w-4', attentionCount > 0 && INDEXING_TONE.failed.text)} />{t('explorer.attention')}<span className={cn('ms-auto text-xs', attentionCount > 0 ? INDEXING_TONE.failed.text : 'text-muted-foreground')}>{attentionCount}</span></Button>
         <p className='px-2 pb-2 pt-6 text-xs font-medium text-muted-foreground'>{t('explorer.folders')}</p>
         <Button variant='ghost' disabled={busy} onClick={() => navigate(null)} aria-current={view === 'folder' && !currentFolderId ? 'page' : undefined} className={cn('w-full justify-start gap-2', view === 'folder' && !currentFolderId && 'bg-primary/10 text-primary')}><Home className='h-4 w-4' />{t('explorer.root')}</Button>
         <ul>{renderTree(null)}</ul>
@@ -188,7 +189,10 @@ export function WorkspaceFileBrowser({ workspaceId, folders, files, artifacts, c
       <div className='mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground'><nav aria-label={t('explorer.breadcrumbs')} className='flex min-w-0 flex-wrap items-center gap-1'>{view === 'folder' ? <><button type='button' className='rounded px-1 py-1 hover:bg-accent hover:text-foreground' disabled={busy} onClick={() => navigate(null)}>{t('explorer.root')}</button>{folderTrail.map((folder, i) => <span key={folder.id} className='flex min-w-0 items-center gap-1'><ChevronRight className='h-3 w-3 shrink-0 rtl:rotate-180' /><button type='button' disabled={busy} aria-current={i === folderTrail.length - 1 ? 'page' : undefined} className='max-w-48 truncate rounded px-1 py-1 hover:bg-accent hover:text-foreground' onClick={() => navigate(folder.id)}>{folder.name}</button></span>)}</> : t(view === 'all' ? 'explorer.allFiles' : 'explorer.attention')}</nav><span>{t('explorer.itemCount', { count: matching.length })}</span></div>
       <div className='mb-4 flex flex-wrap gap-2'>
         <div className='relative min-w-40 flex-1'><Search className='pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-muted-foreground' /><Input aria-label={t('explorer.search')} placeholder={t(view === 'folder' ? 'explorer.searchFolder' : 'explorer.searchWorkspace')} value={search} disabled={busy} onChange={e => { resetSelection(); onSearch(e.target.value); }} className='h-9 ps-9' /></div>
-        <select className='h-9 max-w-full rounded-md border bg-background px-3 text-sm' aria-label={t('explorer.statusFilter')} value={status} disabled={busy} onChange={e => { resetSelection(); setStatus(e.target.value); }}><option value='all'>{t('explorer.allStatuses')}</option>{(['none', 'pending', 'processing', 'ready', 'failed'] as const).map(s => <option key={s} value={s}>{t(`explorer.status.${s}`)}</option>)}</select>
+        <label className='relative flex h-9 items-center'>
+          <span aria-hidden='true' className={cn('pointer-events-none absolute start-3 size-2 rounded-full', INDEXING_TONE[statusFilterTone(status)].dot)} />
+          <select className='h-9 max-w-full rounded-md border bg-background py-0 pe-3 ps-7 text-sm' aria-label={t('explorer.statusFilter')} value={status} disabled={busy} onChange={e => { resetSelection(); setStatus(e.target.value); }}><option value='all'>{t('explorer.allStatuses')}</option>{(['none', 'pending', 'processing', 'ready', 'failed'] as const).map(s => <option key={s} value={s} className={INDEXING_TONE[statusFilterTone(s)].text}>{t(`explorer.status.${s}`)}</option>)}</select>
+        </label>
       </div>
       {picked.length > 0 && <div className='mb-3 rounded-md bg-primary/10 p-2' aria-label={t('explorer.batchActions')}>
         <div className='flex flex-wrap items-center gap-1'><strong className='me-auto px-2 text-sm font-medium'>{t('explorer.selected', { count: picked.length })}</strong>
