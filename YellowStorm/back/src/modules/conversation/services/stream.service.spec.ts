@@ -574,6 +574,7 @@ describe('StreamService guardrail metadata buffering', () => {
       resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
       attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
       agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+      logger: { warn: jest.fn(), log: jest.fn() },
     });
 
     await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
@@ -640,6 +641,7 @@ describe('StreamService guardrail metadata buffering', () => {
       resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
       attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
       agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+      logger: { warn: jest.fn(), log: jest.fn() },
     });
 
     await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
@@ -686,6 +688,7 @@ describe('StreamService guardrail metadata buffering', () => {
       probeRootBackgroundReadiness: jest.fn().mockResolvedValue(undefined),
       buildRootDelegationContext: jest.fn().mockResolvedValue(undefined),
       agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+      logger: { warn: jest.fn(), log: jest.fn() },
     });
 
     await service.buildAgentExecutionRequest('user-1', 'conversation-1', {

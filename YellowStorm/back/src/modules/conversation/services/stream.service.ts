@@ -1252,6 +1252,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // The ADK capability probe is an external round trip whose result is only
     // consulted once the pool policy is known; start it alongside resolution.
     const backgroundReadinessProbe = boundRootId ? this.probeRootBackgroundReadiness() : undefined;
+    // Server-derived scope identity for the Code Interpreter and Pyodide
+    // connectors; conversation streaming stamps the same sandbox headers the
+    // playbook runtime uses, so mcp-pyodide can attribute publications.
+    const sandboxScope = {
+      userId,
+      scopeType: 'conversation' as const,
+      scopeId: `conversation:${conversationId}`,
+      laneId: 'main',
+    };
     const [workspaceContexts, agents] = await Promise.all([
       continuation?.preparedContext ? Promise.resolve(continuation.preparedContext.workspaceContexts as IGrpcWorkspaceContext[])
         : request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
@@ -1261,11 +1270,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             teamDefinition.nodes.map((node) => node.agentId),
             request.modelId,
             sessionId,
-            undefined,
+            {
+              conversationId,
+              correlationId: runtimeCorrelationId,
+              ...sandboxScope,
+            },
             compaction,
           )
         : governanceOverride
-          ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds, compaction)
+          ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds, compaction, undefined, {
+              conversationId,
+              correlationId: runtimeCorrelationId,
+              sandboxScope,
+            })
           : this.agentService.buildAgentsForStream(
               userId,
               request.modelId,
@@ -1281,6 +1298,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 conversationId,
                 correlationId: runtimeCorrelationId,
                 playbookHandoffAttached: Boolean(request.playbookHandoffId),
+                sandboxScope,
                 implicitRoot: Boolean(boundRootId && request.agentIds.length === 0),
               },
               request.reasoningEffort,

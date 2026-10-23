@@ -631,7 +631,14 @@ export class AgentService {
     groupMembers?: any[],
     selectedConnectorId?: string,
     semanticModel?: { id: string; name: string },
-    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean; implicitRoot?: boolean },
+    runtimeContext?: {
+      conversationId: string;
+      correlationId: string;
+      playbookHandoffAttached?: boolean;
+      implicitRoot?: boolean;
+      /** Server-derived scope for the Code Interpreter (MCP Manus) connector. */
+      sandboxScope?: SandboxRuntimeContext;
+    },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
     webConnectorAccessEnabled = true,
@@ -975,6 +982,19 @@ export class AgentService {
             'X-Correlation-Id': runtimeContext.correlationId,
           };
         }
+      }
+      // Conversation and team streams must carry the same signed scope JWT as
+      // playbooks: in SANDBOX_IDENTITY_MODE=jwt, MCP Manus rejects /mcp
+      // without x-scope-token. The scope is server-derived by StreamService.
+      if (runtimeContext?.sandboxScope) {
+        applySandboxScopeHeaders(
+          connectorBindings as {
+            connector_slug?: string;
+            auth_headers?: Record<string, string>;
+          }[],
+          runtimeContext.sandboxScope,
+          (b) => b.connector_slug,
+        );
       }
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
@@ -1358,9 +1378,33 @@ export class AgentService {
   }
 
   /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
-  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], compaction?: IGrpcCompaction, fallbackModelId?: string): Promise<IGrpcAgent[]> {
+  async buildGovernedAgentsForStream(
+    userId: string,
+    agentIds: string[],
+    workspaceIds: string[],
+    compaction?: IGrpcCompaction,
+    fallbackModelId?: string,
+    runtimeContext?: {
+      conversationId?: string;
+      correlationId?: string;
+      sandboxScope?: SandboxRuntimeContext;
+    },
+  ): Promise<IGrpcAgent[]> {
     const requestedIds = [...new Set(agentIds)];
-    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId, undefined, undefined, compaction);
+    const agents = await this.buildGrpcAgentsForPlaybook(
+      userId,
+      requestedIds,
+      fallbackModelId,
+      undefined,
+      runtimeContext
+        ? {
+            conversationId: runtimeContext.conversationId,
+            correlationId: runtimeContext.correlationId,
+            ...runtimeContext.sandboxScope,
+          }
+        : undefined,
+      compaction,
+    );
     const builtIds = new Set(agents.map((agent) => agent.id));
     if (requestedIds.some((id) => !builtIds.has(id))) {
       throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');

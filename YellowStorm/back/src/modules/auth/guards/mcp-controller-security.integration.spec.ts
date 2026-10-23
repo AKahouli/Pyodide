@@ -21,7 +21,7 @@ import { SemanticModelAssistantService } from '@modules/semantic-model/services/
 import { PyodideRuntimeInternalController } from '@modules/pyodide-runtime/pyodide-runtime-internal.controller';
 import { PyodideFileResolver } from '@modules/pyodide-runtime/pyodide-file.resolver';
 import { PyodideRuntimeDispatcher } from '@modules/pyodide-runtime/pyodide-runtime.dispatcher';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
