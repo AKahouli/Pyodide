@@ -97,9 +97,11 @@ export class ConversationAgentRequestBuilder {
       conversation_id: input.conversationId,
       query: this.buildContextualQuery(input.request),
       ...(input.request.taskSummary ? { task_summary: input.request.taskSummary } : {}),
-      workspace_context: workspaceContexts.length
-        ? workspaceContexts
-        : [{ workspace_id: input.conversationId, workspace_name: input.conversationId, workspace_documents: [] }],
+      // Callers resolve a real fallback (the user's personal workspace) when the
+      // conversation has no bound workspace. The retired conversation-id
+      // placeholder never leaves the backend: a nonexistent id made workspace
+      // file tools fail with "Workspace not found" mid-relay.
+      workspace_context: workspaceContexts.length ? workspaceContexts : [],
       attached_files: input.attachedFiles,
       previous_attached_files: input.previousAttachedFiles,
       deep_search_enabled: input.request.deepSearchEnabled,

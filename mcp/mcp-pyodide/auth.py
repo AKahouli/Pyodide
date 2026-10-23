@@ -130,7 +130,12 @@ class TrustedIdentityMiddleware:
         values = {
             "user_id": jwt_user_id,
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
-            "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
+            # The ADK tool wrapper stamps the generic streamable-HTTP context name
+            # (x-conversation-id); accept it as the platform conversation header.
+            "conversation_id": (
+                headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip()
+                or headers.get(b"x-conversation-id", b"").decode("utf-8", errors="replace").strip()
+            ),
             "correlation_id": headers.get(b"x-correlation-id", b"").decode("utf-8", errors="replace").strip(),
         }
         invalid_identity = any(

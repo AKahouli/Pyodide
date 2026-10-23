@@ -127,7 +127,7 @@ sinon `PYODIDE_RUNTIME_OFFLINE` (pas de retry infini, pas de serveur de secours)
 
 ## 7. Contrats
 
-### 7.1 Outil MCP
+### 7.1 Outils MCP
 ```python
 execute_python(
     code: str,
@@ -137,6 +137,16 @@ execute_python(
     outputs: list[str] = [],  # optionnel : restreint les fichiers capturés depuis /workspace/output
 ) -> PyodideExecutionResultV1
 ```
+
+Le même serveur expose aussi les **outils sandbox Manus** (package `sandbox_mcp` vendu depuis
+mcp-manus `develop`) : `sandbox_create/info/destroy`, `shell_exec`, `file_read/write/list/find/delete`,
+`file_upload_base64`, `file_download_base64`, `send_file_to_user`. Routage agent-level : Pyodide d'abord
+(calculs, données, petits documents) ; sandbox seulement quand Pyodide ne suffit pas (shell, binaires
+natifs, packages système, gros/longs travaux). Contrats VM : lectures `/mnt/workspace/<ws>/` (read-only),
+livrables `/mnt/yellowmind/run/outputs/` ; `send_file_to_user` publie via le manager
+(`resolve_ceph_path`) et l'ADK projette la carte artifact (même contrat que code-interpreter). Les en-têtes
+de scope runtime (`x-user-id`, `x-sandbox-scope-*`, `x-workspace-paths`) sont stampés par le backend sur
+les slugs `pyodide*` (`applySandboxScopeHeaders`) ; l'ingress reste JWT-only (une seule porte).
 
 ### 7.2 Résultat
 ```ts
@@ -182,6 +192,10 @@ MCP → autorisation YellowStorm → le navigateur reçoit des données autoris�
   de confiance (`X-YellowStorm-Input-Files`) par le backend, transmis par le MCP. Le `inputs` du modèle reste prioritaire.
 - **Sorties** : tout fichier écrit dans `/workspace/output` est capturé puis persisté comme document du workspace
   (MIME déduit de l'extension ; écrasement si même nom).
+- **Workspace par défaut** : si la conversation n'a aucun workspace lié, le backend résout le **workspace
+  personnel de l'utilisateur** (`getOrCreatePersonalWorkspace`) au lieu de l'ancien placeholder « id de
+  conversation » (qui produisait `Workspace not found`). Sans workspace résoluble, l'outil répond
+  « trusted workspace required » au lieu d'échouer au milieu du relais.
 - **Sécurité** : aucun chemin Ceph/URL fourni par le LLM ; tailles bornées ; transfert géré par l'hôte.
 
 ---

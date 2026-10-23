@@ -1458,7 +1458,8 @@ def create_connector_tools(
                             await validate_prepared_assets(context, _session_id, _sandbox_lifecycle["receipts"])
                         except SandboxMountValidationError:
                             merged_params["failed"] = True
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"} and _action_key != "sandbox_destroy":
+                if ((_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
+                        or _connector_slug.startswith("pyodide")) and _action_key != "sandbox_destroy"):
                     from src.smart_rag.tools.utilities.conversation_assets import get_asset_revocation
                     try:
                         revocation = await get_asset_revocation(context, _session_id)
@@ -1516,7 +1517,8 @@ def create_connector_tools(
                         return {"error": "Required image inputs were not mounted after bounded sandbox validation. No substitute paths were used."}
                 else:
                     response = await call_action(_action_key, merged_params)
-                if _connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}:
+                if (_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
+                        or _connector_slug.startswith("pyodide")):
                     if _action_key == "sandbox_destroy":
                         if confirmed_destroy(response):
                             reset_lifecycle()
@@ -1548,7 +1550,8 @@ def create_connector_tools(
                 )
                 if isinstance(registered_response, dict):
                     registered_response.pop("_conversation_output_receipt", None)
-                if (_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
+                if ((_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
+                        or _connector_slug.startswith("pyodide"))
                         and _action_key == "send_file_to_user"):
                     # A coordinator copy receipt alone is not a registered conversation file.
                     # Verify bytes/quota through the platform before emitting any ready artifact.
@@ -1582,6 +1585,9 @@ def create_connector_tools(
                                     "inputReceipts": [{"ref": receipt["ref"], "sha256": receipt["sha256"]} for receipt in asset_receipts.values()],
                                     "sandboxEpoch": sandbox_epoch,
                                     "mimeType": publication.get("mime_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"})
+                            if response.is_error:
+                                logger.error("asset_register_rejected status=%s body=%s",
+                                    response.status_code, response.text[:400])
                             response.raise_for_status()
                             body = response.json()
                             data = body.get("data", body) if isinstance(body, dict) else None
@@ -1594,8 +1600,12 @@ def create_connector_tools(
                             "_conversation_output_receipt": {"invocationId": invocation_id,
                                 "storagePrefix": f"{owner}/system_{_session_id}", "artifactId": data["artifactId"],
                                 "storagePath": data["storagePath"]}}
-                    except (httpx.HTTPError, ValueError, TypeError, KeyError):
-                        return {"error": "Output could not be registered or saved within the conversation quota. No ready output was published."}
+                    except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+                        # Wrap the user-facing message but keep the decisive reason in the logs.
+                        logger.warning("output_publication_failed connector=%s action=%s reason=%s",
+                            _connector_slug, _action_key, exc)
+                        return {"error": f"Output could not be registered or saved within the conversation quota "
+                            f"(cause exacte: {type(exc).__name__}: {exc}). No ready output was published."}
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations.bounded_response import bound_web_response
                     return bound_web_response(registered_response)

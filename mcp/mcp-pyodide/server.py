@@ -13,6 +13,9 @@ from auth import TrustedIdentityMiddleware, require_actor_context
 from clients.yellowstorm_pyodide_client import PyodideBackendError, YellowStormPyodideClient
 from config import Settings
 from contracts import error_result
+from sandbox_mcp.config import get_settings as get_sandbox_settings
+from sandbox_mcp.server import make_sandbox_lifespan, register_sandbox_tools
+from sandbox_mcp.server import RequestHeaderLogMiddleware as SandboxHeaderMiddleware
 
 
 INSTRUCTIONS = """Execute Python code in the user's browser using Pyodide.
@@ -22,7 +25,17 @@ Use it for calculations, Python data transformations and supported scientific Py
 The runtime has no server shell, system processes, native binaries or raw sockets. Execution requires the
 user's Yellowmind browser to be connected.
 
-Return JSON-compatible values when possible."""
+Write deliverables under /workspace/output/<name> and declare their exact names in the ``outputs`` argument:
+YellowStorm persists them and the user gets a download link in the conversation.
+
+Return JSON-compatible values when possible.
+
+You also have a Firecracker microVM sandbox (Manus) for work Pyodide cannot do: shell commands, native
+binaries, pip/apt system packages, very large files or long-running jobs. Route each task to exactly one
+runtime: prefer Pyodide for calculations, data transformations and small documents; use the sandbox only
+when Pyodide cannot do the work. Sandbox lifecycle: sandbox_create once, then shell_exec/file_* tools,
+send_file_to_user(path) after each deliverable, sandbox_destroy when done. READ: /mnt/workspace/<workspace>/
+(user inputs, read-only). DELIVERABLES: /mnt/yellowmind/run/outputs/. Never run the same task on both."""
 
 settings = Settings.from_env()
 try:  # Unified logging is provided by the shared runtime when deployed.
@@ -32,7 +45,11 @@ except Exception:  # pragma: no cover - optional dependency in bare test install
         return None
 
 setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "mcp-pyodide")
-mcp = FastMCP("Pyodide MCP", instructions=INSTRUCTIONS)
+mcp = FastMCP(
+    "YellowStorm Runtime MCP",
+    instructions=INSTRUCTIONS,
+    lifespan=make_sandbox_lifespan(),
+)
 _client: YellowStormPyodideClient | None = None
 
 
@@ -157,15 +174,25 @@ async def execute_python(
         return error_result(exc.code, str(exc))
 
 
+# The Manus sandbox tools join execute_python on the same FastMCP instance, so the
+# YellowStorm ADK connector exposes one runtime endpoint with both toolsets.
+register_sandbox_tools(mcp)
+
+
 if __name__ == "__main__":
     settings.validate()
     public_key = Path(settings.jwt_public_key_file).read_text(encoding="utf-8")
-    middleware = [Middleware(
-        TrustedIdentityMiddleware,
-        jwt_public_key=public_key,
-        jwt_issuer=settings.jwt_issuer,
-        jwt_audience=settings.jwt_audience,
-    )]
+    middleware = [
+        Middleware(
+            TrustedIdentityMiddleware,
+            jwt_public_key=public_key,
+            jwt_issuer=settings.jwt_issuer,
+            jwt_audience=settings.jwt_audience,
+        ),
+        # Inner: extracts the sandbox request headers into ContextVars (no auth gate —
+        # the JWT middleware above is the single ingress).
+        Middleware(SandboxHeaderMiddleware, settings=get_sandbox_settings()),
+    ]
     mcp.run(
         transport="streamable-http",
         host="0.0.0.0",

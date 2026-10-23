@@ -130,6 +130,9 @@ interface StreamTerminalCoordinator {
   cancelIdleTimeout?: () => void;
 }
 
+/** Storage allocation used only when the fallback must create the personal workspace. */
+const PERSONAL_WORKSPACE_FALLBACK_STORAGE_BYTES = 100 * 1024 * 1024;
+
 @Injectable()
 export class StreamService implements OnModuleInit, OnModuleDestroy {
   private chatbotClient: any;
@@ -512,6 +515,31 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         error: (error as Error).message,
       });
       return [];
+    }
+  }
+
+  /**
+   * Real workspace for runs in conversations with none bound: the acting user's
+   * personal workspace. Replaces the retired conversation-id placeholder so
+   * workspace-file tools (Pyodide §27) resolve against storage the user owns.
+   * Null = resolution failed; callers then send no workspace context at all
+   * (the tool answers with a clear "trusted workspace required" error instead
+   * of a mid-relay "Workspace not found").
+   */
+  private async resolveDefaultWorkspaceContext(
+    userId: string,
+    logOpts?: LogOptions,
+  ): Promise<{ workspace_id: string; workspace_name: string; workspace_documents: IGrpcWorkspaceContext['workspace_documents'] } | null> {
+    try {
+      const workspace = await this.workspaceService.getOrCreatePersonalWorkspace(userId, PERSONAL_WORKSPACE_FALLBACK_STORAGE_BYTES);
+      return { workspace_id: workspace.id, workspace_name: workspace.name, workspace_documents: [] };
+    } catch (error) {
+      this.logger.warn('Personal workspace fallback unavailable, continuing without workspace context', {
+        userId,
+        error: (error as Error).message,
+        ...logOpts,
+      });
+      return null;
     }
   }
 
@@ -1481,12 +1509,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         ...runCodeSources.map((source) => source.workspaceId),
       ].filter(Boolean))]);
     }
+    const fallbackWorkspaceContext = workspaceContexts.length
+      ? null
+      : await this.resolveDefaultWorkspaceContext(userId, logOpts);
     return this.agentRequestBuilder.build({
       userId,
       username,
       conversationId: seedHistory ? conversationId : sessionId,
       request,
-      workspaceContexts,
+      workspaceContexts: fallbackWorkspaceContext ? [...workspaceContexts, fallbackWorkspaceContext] : workspaceContexts,
       agents,
       attachedFiles,
       previousAttachedFiles,
@@ -2969,6 +3000,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       previousAttachedFiles.flatMap((file) => (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : [])),
     );
 
+    const fallbackWorkspaceContext = workspaceContexts.length
+      ? null
+      : await this.resolveDefaultWorkspaceContext(params.userId, logOpts);
+
     const grpcRequest = {
       user_context: { user_id: params.userId, username: params.username || '' },
       conversation_id: params.conversationId,
@@ -2976,13 +3011,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       agent: grpcAgents[0],
       workspace_context: workspaceContexts.length
         ? workspaceContexts
-        : [
-            {
-              workspace_id: params.conversationId,
-              workspace_name: params.conversationId,
-              workspace_documents: [],
-            },
-          ],
+        : fallbackWorkspaceContext
+          ? [fallbackWorkspaceContext]
+          : [],
       attached_files: [],
       previous_attached_files: previousAttachedFiles,
     };

@@ -191,7 +191,19 @@ async def test_production_stateless_entrypoint_mounts_jwt_middleware(keys, monke
                 "Authorization": f"Bearer {signed(keys)}",
                 "Accept": "application/json, text/event-stream",
                 "MCP-Protocol-Version": "2025-03-26",
+                # The connector binding carries the sandbox context headers on every call.
+                "x-user-id": "65f000000000000000000001",
+                "x-conversation-id": "65f0000000000000000000cc",
             }, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": initialization})
             assert response.status_code == 200, response.text
             # Stateless mode: no server-managed session is issued.
             assert "mcp-session-id" not in response.headers
+
+            # MCP-inspector style handshake: valid JWT but no sandbox headers — the
+            # sandbox context falls back to the verified JWT identity instead of 400.
+            response = await client.post("/mcp", headers={
+                "Authorization": f"Bearer {signed(keys)}",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-03-26",
+            }, json={"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": initialization})
+            assert response.status_code == 200, response.text

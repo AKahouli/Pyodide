@@ -49,7 +49,6 @@ describe('PyodideWorkerController', () => {
 
       expect(worker.terminate).toHaveBeenCalled();
       await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'PYODIDE_EXECUTION_TIMEOUT' } });
-      expect(controller.isStarted).toBe(false);
     } finally {
       vi.useRealTimers();
     }

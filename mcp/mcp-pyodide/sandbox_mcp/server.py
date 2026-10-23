@@ -1,0 +1,1436 @@
+"""MCP server exposing Firecracker sandbox tools."""
+from __future__ import annotations
+
+import base64
+import hmac
+import json
+import logging
+import os
+import re
+
+import asyncio
+import contextlib
+import httpx
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from contextvars import ContextVar
+
+from fastmcp.exceptions import ToolError
+
+from .config import get_settings, Settings
+from .client import SandboxLeaseGone
+from .errors import SandboxAcquireError
+from .eviction import run_ttl_eviction_loop
+from .manager import MultiUserSandboxManager, SandboxManager
+from .runtime import SandboxRuntime
+from .python_source import python_write_error
+
+logger = logging.getLogger(__name__)
+
+
+def _trusted_acting_user_id() -> str:
+    """The acting user verified by the host JWT middleware (auth.py), when present."""
+    try:
+        from auth import acting_user_id
+
+        return acting_user_id.get() or ""
+    except Exception:  # pragma: no cover - vendored package used standalone
+        return ""
+
+
+def _trusted_conversation_id() -> str:
+    """The conversation id bound to the verified actor context, when present."""
+    try:
+        from auth import actor_context
+
+        context = actor_context.get()
+        return context.conversation_id if context is not None else ""
+    except Exception:  # pragma: no cover - vendored package used standalone
+        return ""
+
+# Only these deliverable types are published to the webapp (must match the Coordinator's
+# TOP_LEVEL_OUTPUT_GLOBS). Non-deliverables (e.g. .py scripts, .log) are never registered
+# or synced, so they don't show up as phantom, un-openable files in the Files panel.
+PUBLISHABLE_EXTS = (
+    ".pdf", ".txt", ".csv", ".json", ".md", ".doc", ".docx",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".zip",
+)
+
+
+def _is_publishable(path: str) -> bool:
+    return os.path.splitext(str(path).rstrip("/"))[1].lower() in PUBLISHABLE_EXTS
+
+
+# VM layout used to judge whether the agent wrote the deliverable in the contract path.
+OUTPUT_ROOT = "/mnt/yellowmind/run/outputs"
+ARTIFACTS_ROOT = "/mnt/yellowmind/run/artifacts"
+SCRATCH_ROOT = "/mnt/yellowmind/scratch"
+WORKSPACE_ROOT = "/mnt/workspace"
+HOME_ROOT = "/home/ubuntu"
+
+_FLOW_CTX_FMT = "user_id=%s scope_id=%s lane_id=%s node_id=%s"
+
+_ABS_VM_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9:])(/(?:mnt|home|tmp)(?:/[A-Za-z0-9._+-]+)*)"
+)
+_WIN_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s'\"<>|]+")
+_REL_FILE_RE = re.compile(
+    r"(?<![A-Za-z0-9_/])"
+    r"((?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+"
+    r"\.(?:pdf|txt|csv|json|md|docx?|xlsx?|pptx?|zip|py|png|jpe?g|html|xml))",
+    re.IGNORECASE,
+)
+_SKIP_ABS_PREFIXES = (
+    "/usr/", "/bin/", "/sbin/", "/lib/", "/dev/", "/proc/", "/etc/",
+)
+_SKIP_ABS_EXACT = {
+    "/mnt", "/home", "/tmp", "/usr", "/bin", "/var", "/opt", "/dev", "/proc", "/etc",
+}
+
+
+def _normalize_vm_path(path: str) -> str:
+    return str(path or "").replace("\\", "/").strip()
+
+
+def _path_filename(path: str) -> str:
+    p = _normalize_vm_path(path).rstrip("/")
+    return os.path.basename(p) or p
+
+
+def _path_file_type(path: str) -> str:
+    ext = os.path.splitext(_path_filename(path))[1].lower()
+    return ext.lstrip(".") or "(none)"
+
+
+def _is_workspace_input_write(path: str) -> bool:
+    p = _normalize_vm_path(path)
+    if not p.startswith("/mnt/workspace/"):
+        return False
+    cw = "/mnt/workspace/conversation_workspace/"
+    if p.startswith(cw):
+        rest = p[len(cw):].strip("/")
+        return bool(rest) and "/" in rest
+    return True
+
+
+def _is_valid_deliverable_path(path: str) -> bool:
+    p = _normalize_vm_path(path)
+    if any(part in (".", "..") for part in p.split("/")) or "\x00" in p:
+        return False
+    out = OUTPUT_ROOT.rstrip("/")
+    if p == out or p.startswith(out + "/"):
+        return True
+    if p.startswith("/home/ubuntu/"):
+        rest = p[len("/home/ubuntu/"):].strip("/")
+        return bool(rest) and "/" not in rest
+    cw = "/mnt/workspace/conversation_workspace"
+    if p.startswith(cw + "/"):
+        return bool(p[len(cw) + 1:].strip("/"))
+    return False
+
+
+def _path_zone(path: str) -> str:
+    """Where a VM path sits in the sandbox contract."""
+    p = _normalize_vm_path(path)
+    out = OUTPUT_ROOT.rstrip("/")
+    if p == out or p.startswith(out + "/"):
+        return "outputs"
+    if p == ARTIFACTS_ROOT or p.startswith(ARTIFACTS_ROOT.rstrip("/") + "/"):
+        return "artifacts"
+    if p == SCRATCH_ROOT or p.startswith(SCRATCH_ROOT.rstrip("/") + "/"):
+        return "scratch"
+    cw = "/mnt/workspace/conversation_workspace"
+    if p == cw or p.startswith(cw + "/"):
+        return "conversation_workspace"
+    if p.startswith("/mnt/workspace/"):
+        return "workspace_input"
+    if p == "/tmp" or p.startswith("/tmp/"):
+        return "tmp"
+    if p == HOME_ROOT or p.startswith(HOME_ROOT + "/"):
+        rest = p[len(HOME_ROOT):].lstrip("/")
+        if not rest:
+            return "home"
+        if "/" not in rest:
+            return "legacy_home"
+        return "home_nested"
+    if p.startswith("/mnt/yellowmind/"):
+        return "yellowmind_other"
+    if re.match(r"^[A-Za-z]:/", p) or p.startswith("C:/") or ":\\" in str(path or ""):
+        return "windows_path"
+    return "other"
+
+
+def _path_verdict(path: str, *, action: str) -> str:
+    """Human tag: expected contract path vs wrong location for this action."""
+    p = _normalize_vm_path(path)
+    zone = _path_zone(p)
+    if action == "read":
+        if zone == "workspace_input":
+            return "EXPECTED_INPUT"
+        if zone == "artifacts":
+            return "EXPECTED_UPSTREAM_ARTIFACT"
+        if zone in ("outputs", "legacy_home", "conversation_workspace"):
+            return "READ_OUTPUT"
+        if zone == "tmp":
+            return "UNEXPECTED_TMP"
+        return f"READ_{zone.upper()}"
+    if _is_workspace_input_write(p):
+        return "WRONG_PATH_WORKSPACE"
+    if zone == "tmp":
+        return "WRONG_PATH_TMP"
+    if zone == "windows_path":
+        return "WRONG_PATH_WINDOWS"
+    if zone == "home_nested":
+        return "WRONG_PATH_HOME_SUBDIR"
+    if zone == "scratch":
+        return "WORK_AREA_SCRATCH"
+    if zone == "outputs":
+        return "EXPECTED_OUTPUT"
+    if zone == "legacy_home":
+        return "EXPECTED_LEGACY_HOME"
+    if zone == "conversation_workspace":
+        return "EXPECTED_LEGACY_CONV_WS"
+    if zone == "artifacts":
+        return "WRONG_PATH_ARTIFACTS_READONLY"
+    return "WRONG_PATH_OTHER"
+
+
+def _preview(text: str, limit: int = 400) -> str:
+    s = str(text or "").replace("\n", "\\n")
+    if len(s) <= limit:
+        return s
+    return s[:limit] + f"...<{len(s) - limit} more chars>"
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in paths:
+        p = _normalize_vm_path(raw)
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+def _extract_abs_vm_paths(text: str) -> list[str]:
+    found = [m.group(1) for m in _ABS_VM_PATH_RE.finditer(str(text or ""))]
+    interesting: list[str] = []
+    for p in found:
+        if p in _SKIP_ABS_EXACT:
+            continue
+        if any(p.startswith(prefix) for prefix in _SKIP_ABS_PREFIXES):
+            continue
+        interesting.append(p)
+    interesting.extend(_WIN_PATH_RE.findall(str(text or "")))
+    return _dedupe_paths(interesting)
+
+
+def _extract_rel_files(text: str) -> list[str]:
+    return _dedupe_paths(_REL_FILE_RE.findall(str(text or "")))
+
+
+def _resolve_against(path: str, exec_dir: str) -> str:
+    p = _normalize_vm_path(path)
+    if p.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", p):
+        return p
+    base = _normalize_vm_path(exec_dir).rstrip("/") or OUTPUT_ROOT
+    return f"{base}/{p}"
+
+
+def _flow_ctx() -> tuple[str, str, str, str]:
+    return (
+        _current_user_id.get() or "-",
+        _current_scope_id.get() or "-",
+        _current_lane_id.get() or "-",
+        _current_node_id.get() or "-",
+    )
+
+
+def _is_wrong_path(verdict: str) -> bool:
+    return str(verdict).startswith("WRONG_PATH")
+
+
+def _describe_paths(paths: list[str], *, action: str) -> str:
+    bits: list[str] = []
+    for raw in paths:
+        p = _normalize_vm_path(raw)
+        bits.append(
+            f"{p}[filename={_path_filename(p)} type={_path_file_type(p)} "
+            f"zone={_path_zone(p)} verdict={_path_verdict(p, action=action)}]"
+        )
+    return "; ".join(bits) if bits else "(none)"
+
+
+def _script_write_targets(content: str, dest_path: str) -> tuple[list[str], list[str]]:
+    """Absolute and resolved relative paths the agent mentioned inside a script."""
+    abs_paths = _extract_abs_vm_paths(content)
+    rel_files = _extract_rel_files(content)
+    dest_dir = os.path.dirname(_normalize_vm_path(dest_path)) or OUTPUT_ROOT
+    resolved_rel = [_resolve_against(name, dest_dir) for name in rel_files]
+    return abs_paths, _dedupe_paths(resolved_rel)
+
+# Set by the ASGI middleware on every request; read by tools to identify the caller.
+_current_user_id: ContextVar[str] = ContextVar("current_user_id", default="")
+_current_conversation_id: ContextVar[str] = ContextVar("current_conversation_id", default="")
+_current_workspace_paths: ContextVar[list] = ContextVar("current_workspace_paths", default=[])
+_current_file_paths: ContextVar[list] = ContextVar("current_file_paths", default=[])
+_current_scope_type: ContextVar[str] = ContextVar("current_scope_type", default="")
+_current_scope_id: ContextVar[str] = ContextVar("current_scope_id", default="")
+_current_lane_id: ContextVar[str] = ContextVar("current_lane_id", default="main")
+_current_node_id: ContextVar[str] = ContextVar("current_node_id", default="")
+
+
+def _replace_initialize_instructions(body: bytes, instructions: str) -> bytes:
+    def replace_payload(payload: dict) -> dict:
+        result = payload.get("result")
+        if isinstance(result, dict) and "instructions" in result:
+            result["instructions"] = instructions
+        return payload
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        return json.dumps(replace_payload(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    output: list[str] = []
+    changed = False
+    try:
+        lines = body.decode("utf-8").splitlines(keepends=True)
+    except UnicodeDecodeError:
+        return body
+
+    for line in lines:
+        if line.endswith("\r\n"):
+            line_ending = "\r\n"
+        elif line.endswith("\n"):
+            line_ending = "\n"
+        else:
+            line_ending = ""
+        content = line[:-len(line_ending)] if line_ending else line
+        if content.startswith("data:"):
+            prefix, raw_payload = content.split(":", 1)
+            try:
+                event_payload = json.loads(raw_payload.strip())
+            except json.JSONDecodeError:
+                output.append(line)
+                continue
+            if isinstance(event_payload, dict):
+                output.append(
+                    f"{prefix}: "
+                    f"{json.dumps(replace_payload(event_payload), ensure_ascii=False, separators=(',', ':'))}"
+                    f"{line_ending}"
+                )
+                changed = True
+                continue
+        output.append(line)
+
+    return "".join(output).encode("utf-8") if changed else body
+
+
+# ---------------------------------------------------------------------------
+# ASGI middleware — logs headers and injects user_id / conversation_id into ContextVars
+# ---------------------------------------------------------------------------
+
+class RequestHeaderLogMiddleware:
+    """Pure ASGI middleware: logs all request headers and sets _current_user_id / _current_conversation_id."""
+
+    def __init__(self, app, settings: Settings) -> None:
+        self.app = app
+        self._settings = settings
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = {
+                k.decode().lower(): v.decode()
+                for k, v in scope.get("headers", [])
+            }
+            redacted = dict(headers)
+            if "authorization" in redacted:
+                redacted["authorization"] = "<redacted>"
+            logger.info(
+                "Incoming %s %s — headers: %s",
+                scope["method"],
+                scope["path"],
+                redacted,
+            )
+
+
+            user_id = (
+                headers.get(self._settings.sandbox_user_id_header.lower(), "")
+                or headers.get("x-yellowstorm-user-id", "")
+            )
+            conversation_id = headers.get(
+                self._settings.sandbox_conversation_id_header.lower(),
+                "",
+            )
+            # Fall back to the verified JWT identity when the sandbox headers are
+            # absent (e.g. MCP inspector handshakes): the outer JWT middleware has
+            # already authenticated the caller, so its contextvars are trusted.
+            if not user_id:
+                user_id = _trusted_acting_user_id() or ""
+            if not conversation_id:
+                conversation_id = _trusted_conversation_id() or ""
+            if not conversation_id:
+                # Playbook callers send an execution_id instead of a conversation_id;
+                # use it as the sandbox session key so per-run isolation still works.
+                conversation_id = headers.get(
+                    self._settings.sandbox_execution_id_header.lower(),
+                    "",
+                )
+            if (not user_id or not conversation_id) and scope["path"].rstrip("/") == "/mcp":
+                logger.warning(
+                    "Rejected request to %s missing user_id/conversation_id header",
+                    scope["path"],
+                )
+                await send({
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b'{"error":"missing user id or conversation id header"}',
+                })
+                return
+
+            # Canonical runtime scope (remediation §6/§7). YellowStorm sends these; if
+            # absent, derive an isolating scope from the session id so scope is always present.
+            scope_type = headers.get(self._settings.sandbox_scope_type_header.lower(), "").strip()
+            scope_id = headers.get(self._settings.sandbox_scope_id_header.lower(), "").strip()
+            lane_id = headers.get(self._settings.sandbox_lane_id_header.lower(), "").strip() or "main"
+            node_id = headers.get(self._settings.sandbox_node_id_header.lower(), "").strip()
+            if not scope_id and conversation_id:
+                scope_type = scope_type or "conversation"
+                scope_id = f"{scope_type}:{conversation_id}"
+            if not scope_type and scope_id:
+                scope_type = scope_id.split(":", 1)[0] if ":" in scope_id else "conversation"
+
+            raw_workspace_paths = headers.get(
+                self._settings.sandbox_workspace_paths_header.lower(),
+                "",
+            )
+            workspace_paths = [p.strip() for p in raw_workspace_paths.split(",") if p.strip()]
+            raw_file_paths = headers.get(
+                self._settings.sandbox_file_paths_header.lower(),
+                "",
+            )
+            file_paths = [p.strip() for p in raw_file_paths.split(",") if p.strip()]
+            instructions = headers.get(self._settings.mcp_instructions_header.lower(), "").strip()
+            should_override_instructions = (
+                bool(instructions)
+                and scope["method"].upper() == "POST"
+                and scope["path"].rstrip("/") == "/mcp"
+            )
+
+            logger.info(
+                "[mcp-fs-audit] REQUEST path=%s user=%s scope=%s/%s lane=%s node=%s "
+                "workspace_paths=%s file_paths_count=%s file_paths=%s",
+                scope.get("path"),
+                user_id,
+                scope_type,
+                scope_id,
+                lane_id,
+                node_id,
+                workspace_paths,
+                len(file_paths),
+                file_paths,
+            )
+
+            t1 = _current_user_id.set(user_id)
+            t2 = _current_conversation_id.set(conversation_id)
+            t3 = _current_workspace_paths.set(workspace_paths)
+            t4 = _current_file_paths.set(file_paths)
+            t5 = _current_scope_type.set(scope_type)
+            t6 = _current_scope_id.set(scope_id)
+            t7 = _current_lane_id.set(lane_id)
+            t8 = _current_node_id.set(node_id)
+            try:
+                if should_override_instructions:
+                    response_start = None
+                    response_started = False
+
+                    async def capture_send(message):
+                        nonlocal response_start, response_started
+                        if message["type"] == "http.response.start":
+                            response_start = dict(message)
+                            response_start["headers"] = [
+                                (name, value)
+                                for name, value in response_start.get("headers", [])
+                                if name.lower() != b"content-length"
+                            ]
+                            return
+                        if message["type"] == "http.response.body":
+                            if response_start is not None and not response_started:
+                                await send(response_start)
+                                response_started = True
+                            body = _replace_initialize_instructions(message.get("body", b""), instructions)
+                            forwarded = dict(message)
+                            forwarded["body"] = body
+                            await send(forwarded)
+                            return
+                        await send(message)
+
+                    await self.app(scope, receive, capture_send)
+                    if response_start is not None and not response_started:
+                        await send(response_start)
+                else:
+                    await self.app(scope, receive, send)
+            finally:
+                _current_user_id.reset(t1)
+                _current_conversation_id.reset(t2)
+                _current_workspace_paths.reset(t3)
+                _current_file_paths.reset(t4)
+                _current_scope_type.reset(t5)
+                _current_scope_id.reset(t6)
+                _current_lane_id.reset(t7)
+                _current_node_id.reset(t8)
+        else:
+            await self.app(scope, receive, send)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Merged-server runtime state. The host (mcp-pyodide server.py) starts the
+# sandbox runtime through the lifespan below; tools read the singletons from
+# _STATE instead of the MCP Context so they stay framework-agnostic.
+# ---------------------------------------------------------------------------
+
+_STATE: dict = {}
+
+
+def _get_runtime() -> SandboxRuntime:
+    runtime = _STATE.get("runtime")
+    if runtime is None:
+        raise RuntimeError("Sandbox runtime is not started")
+    return runtime
+
+
+def _get_manager() -> SandboxManager:
+    multi: MultiUserSandboxManager = _STATE.get("multi_manager")
+    if multi is None:
+        raise RuntimeError("Sandbox manager is not started")
+    user_id = _current_user_id.get()
+    conversation_id = _current_conversation_id.get()
+    workspace_paths = _current_workspace_paths.get()
+    file_paths = _current_file_paths.get()
+    scope_type = _current_scope_type.get()
+    scope_id = _current_scope_id.get()
+    lane_id = _current_lane_id.get()
+    node_id = _current_node_id.get()
+    logger.info(
+        "[mcp-fs-audit] TOOL_CONTEXT user_id=%s scope=%s lane=%s node=%s "
+        "workspace_paths=%s file_paths=%s",
+        user_id, scope_id, lane_id, node_id, workspace_paths, file_paths,
+    )
+    return multi.get_manager(
+        user_id, conversation_id, workspace_paths=workspace_paths, file_paths=file_paths,
+        scope_type=scope_type, scope_id=scope_id, lane_id=lane_id, node_id=node_id,
+    )
+
+
+def _format_result(stdout: str, stderr: str, exit_code: int) -> str:
+    parts = []
+    if stdout:
+        parts.append(stdout.rstrip())
+    if stderr:
+        parts.append(f"[stderr]\n{stderr.rstrip()}")
+    if exit_code != 0:
+        parts.append(f"[exit_code: {exit_code}]")
+    return "\n\n".join(parts) if parts else "(no output)"
+
+
+async def _with_sandbox(op):
+    runtime = _get_runtime()
+    manager = _get_manager()
+    try:
+        client = await runtime.acquire(manager)
+        try:
+            return await op(client)
+        except SandboxLeaseGone:
+            logger.warning(
+                "Stale sandbox lease; recreating for scope=%s",
+                _current_scope_id.get(),
+            )
+            await runtime.invalidate(manager)
+            client = await runtime.acquire(manager)
+            return await op(client)
+    except SandboxAcquireError as exc:
+        raise RuntimeError(exc.format_user_message()) from exc
+
+
+async def _outputs_dir_listing() -> str:
+    try:
+        result = await _with_sandbox(
+            lambda sandbox: sandbox.exec_command(
+                "/",
+                "ls -la /mnt/yellowmind/run/outputs 2>&1 | head -40",
+            ),
+        )
+        return ((result.data or {}).get("stdout") or "").strip()[:1500] or "(empty)"
+    except Exception as exc:
+        return f"(listing failed: {type(exc).__name__}: {exc})"
+
+
+async def _stat_vm_paths(paths: list[str]) -> str:
+    interesting = [
+        p for p in _dedupe_paths(paths)
+        if p not in (OUTPUT_ROOT, "/home/ubuntu", "/tmp", "/mnt/workspace")
+    ][:12]
+    if not interesting:
+        return "(none)"
+    parts: list[str] = []
+    for vm_path in interesting:
+        quoted = vm_path.replace("'", "'\\''")
+        cmd = (
+            f"if [ ! -e '{quoted}' ]; then echo 'path={vm_path} exists=0'; "
+            f"elif [ -d '{quoted}' ]; then echo 'path={vm_path} exists=1 is_dir=1'; "
+            f"else stat -c 'path={vm_path} exists=1 is_dir=0 size=%s mtime=%y' '{quoted}'; fi"
+        )
+        try:
+            result = await _with_sandbox(
+                lambda sandbox, c=cmd: sandbox.exec_command("/", c),
+            )
+            parts.append(((result.data or {}).get("stdout") or "").strip())
+        except Exception as exc:
+            parts.append(f"path={vm_path} stat_error={type(exc).__name__}:{exc}")
+    return " | ".join(p for p in parts if p) or "(none)"
+
+
+SANDBOX_INSTRUCTIONS = (
+    "You have access to a Firecracker microVM sandbox. "
+    "Use shell_exec to run commands, file_* tools to manage files inside the VM. "
+    "Call sandbox_create first if the sandbox is not yet running. "
+    "READ: /mnt/workspace/<workspace>/ (user inputs, read-only) and "
+    "/mnt/yellowmind/run/artifacts/ (committed outputs from upstream Playbook nodes). "
+    "WORK: /mnt/yellowmind/scratch/<lane> for temporary files. "
+    "DELIVERABLES: write every output file to /mnt/yellowmind/run/outputs/ "
+    "(legacy alias: top-level /home/ubuntu/<file>). "
+    "Do NOT write deliverables to /mnt/workspace/, /tmp, scratch, or inputs. "
+    "Workspace folders under /mnt/workspace/ are slugs (credit-risk), not UI names "
+    "(Credit Risk) — always ls /mnt/workspace/ first. "
+    "Conversation mode: call send_file_to_user(path) after each deliverable so the "
+    "user can see it in the Files panel. "
+    "Playbook mode: write deliverables under run/outputs/; the coordinator commits "
+    "them automatically when the node releases successfully. "
+    "When writing Python that builds Excel workbooks (openpyxl): "
+    "Excel refs like 'Sheet'!B4 are A1 notation, not Python — always put them in a "
+    "string, e.g. ws['A1'] = \"='3. Verdict & Gaps'!B4\". "
+    "Never emit 'Sheet Name'!B4 as a bare Python expression."
+)
+
+
+def make_sandbox_lifespan():
+    """Lifespan for the host fastmcp server: owns the sandbox singletons and the TTL eviction loop."""
+    @asynccontextmanager
+    async def _lifespan(_server) -> AsyncIterator[dict]:
+        settings = get_settings()
+        multi_manager = MultiUserSandboxManager(settings)
+        runtime = SandboxRuntime(settings)
+        _STATE["multi_manager"] = multi_manager
+        _STATE["runtime"] = runtime
+        eviction_task = asyncio.create_task(
+            run_ttl_eviction_loop(multi_manager, settings),
+            name="sandbox-ttl-eviction",
+        )
+        logger.info(
+            "Sandbox runtime started — manager=%s user_id_header=%s",
+            settings.sandbox_manager_url,
+            settings.sandbox_user_id_header,
+        )
+        try:
+            yield {"multi_manager": multi_manager, "runtime": runtime}
+        finally:
+            eviction_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await eviction_task
+            logger.info("Server shutting down — destroying all sandboxes")
+            await multi_manager.destroy_all()
+    return _lifespan
+
+
+async def sandbox_create() -> str:
+    """Boot a Firecracker microVM sandbox for this session.
+
+    Idempotent: returns info about the existing sandbox if one is already running.
+    The sandbox stays alive until sandbox_destroy() is called or the server shuts down.
+    """
+    manager = _get_manager()
+    ws = list(getattr(manager, "_workspace_paths", []) or [])
+    fps = list(getattr(manager, "_file_paths", []) or [])
+    logger.info(
+        "[mcp-fs-audit] sandbox_create begin workspace_paths=%s file_paths=%s",
+        ws,
+        fps,
+    )
+    runtime = _get_runtime()
+    try:
+        client = await runtime.acquire(manager)
+    except SandboxAcquireError as exc:
+        return exc.format_user_message()
+    info = manager.info()
+    inventory_preview = await runtime.get_inventory_preview(client)
+    for line in (inventory_preview or "").splitlines()[:80]:
+        if line.startswith("===") or "BROKEN" in line or "/mnt/workspace" in line:
+            logger.info("[mcp-fs-audit] sandbox_create inventory | %s", line)
+    return (
+        f"Sandbox is running.\n"
+        f"  User:    {info['user_id']}\n"
+        f"  ID:      {info['sandbox_id']}\n"
+        f"  IP:      {info['ip']}\n"
+        f"  VNC:     {info['vnc_url']}\n"
+        f"  CDP:     {info['cdp_url']}\n"
+        f"  Created: {info['created_at']}\n"
+        f"  Inputs workspace_paths: {ws}\n"
+        f"  Inputs filename_paths ({len(fps)}): {fps}\n"
+        f"--- mounted FS preview ---\n"
+        f"{inventory_preview or '(empty)'}"
+    )
+
+async def sandbox_info() -> str:
+    """Return current sandbox status and connection details (IP, VNC, CDP)."""
+    manager = _get_manager()
+    info = manager.info()
+    if info["status"] == "not_running":
+        return f"No sandbox running for user {info['user_id']}. Call sandbox_create() to boot one."
+    return (
+        f"Status:  {info['status']}\n"
+        f"User:    {info['user_id']}\n"
+        f"ID:      {info['sandbox_id']}\n"
+        f"IP:      {info['ip']}\n"
+        f"VNC:     {info['vnc_url']}\n"
+        f"CDP:     {info['cdp_url']}\n"
+        f"Created: {info['created_at']}"
+    )
+
+async def sandbox_destroy(failed: bool = False) -> str:
+    """Destroy the current sandbox and release the microVM resources.
+
+    Args:
+        failed: If True, skip committing draft outputs (use when the Playbook node failed).
+    """
+    manager = _get_manager()
+    if not manager.is_alive:
+        return "No sandbox is running."
+    await manager.destroy(failed=failed)
+    return "Sandbox destroyed."
+
+# -------------------------------------------------------------------------
+# Shell
+# -------------------------------------------------------------------------
+
+async def shell_exec(command: str, exec_dir: str = "/mnt/yellowmind/run/outputs") -> str:
+    """Execute a shell command inside the sandbox microVM.
+
+    Args:
+        command: Shell command to run (e.g. "python3 script.py", "pip install pandas")
+        exec_dir: Working directory for the command (default: /mnt/yellowmind/run/outputs)
+
+    Returns:
+        stdout, stderr, and exit code if non-zero.
+
+    Write OUTPUT files under /mnt/yellowmind/run/outputs/ (legacy: /home/ubuntu/<file>).
+    After creating deliverables in Conversation mode, call send_file_to_user(path) for each.
+    """
+    exec_dir_n = _normalize_vm_path(exec_dir) or OUTPUT_ROOT
+    command_s = str(command or "")
+    abs_paths = _extract_abs_vm_paths(command_s)
+    rel_files = _extract_rel_files(command_s)
+    resolved_rel = [_resolve_against(name, exec_dir_n) for name in rel_files]
+    all_targets = _dedupe_paths(abs_paths + resolved_rel)
+    input_refs = [
+        p for p in all_targets if _path_zone(p) in ("workspace_input", "artifacts")
+    ]
+    output_refs = [
+        p for p in all_targets
+        if _path_zone(p) in ("outputs", "legacy_home", "conversation_workspace")
+    ]
+    wrong_refs = [
+        p for p in all_targets if _is_wrong_path(_path_verdict(p, action="write"))
+    ]
+    exec_verdict = _path_verdict(exec_dir_n, action="write")
+    start_log = (
+        logger.warning
+        if (wrong_refs or _is_wrong_path(exec_verdict))
+        else logger.info
+    )
+    start_log(
+        "vm_file_flow PROCESS start — shell_exec | " + _FLOW_CTX_FMT
+        + " exec_dir=%s exec_dir_zone=%s exec_dir_verdict=%s command=%s"
+        + " input_files=%s output_files=%s wrong_paths=%s referenced=%s",
+        *_flow_ctx(),
+        exec_dir_n,
+        _path_zone(exec_dir_n),
+        exec_verdict,
+        _preview(command_s, 500),
+        _describe_paths(input_refs, action="read"),
+        _describe_paths(output_refs, action="write"),
+        _describe_paths(wrong_refs, action="write"),
+        _describe_paths(all_targets, action="write"),
+    )
+    try:
+        result = await _with_sandbox(lambda sandbox: sandbox.exec_command(exec_dir_n, command)
+        )
+    except Exception as exc:
+        logger.error(
+            "vm_file_flow PROCESS FAILED — shell_exec | " + _FLOW_CTX_FMT
+            + " exec_dir=%s command=%s error=%s: %s",
+            *_flow_ctx(),
+            exec_dir_n,
+            _preview(command_s, 500),
+            type(exc).__name__,
+            exc,
+        )
+        raise
+    stdout = result.data.get("stdout", "") or ""
+    stderr = result.data.get("stderr", "") or ""
+    exit_code = result.data.get("exit_code", 0) or 0
+    listing = await _outputs_dir_listing()
+    candidate_stat = await _stat_vm_paths(output_refs + wrong_refs + resolved_rel)
+    done_log = logger.error if exit_code else (
+        logger.warning if wrong_refs else logger.info
+    )
+    done_log(
+        "vm_file_flow PROCESS done — shell_exec | " + _FLOW_CTX_FMT
+        + " exec_dir=%s exit_code=%s stdout_len=%s stderr_len=%s stderr=%s"
+        + " candidate_stat=%s outputs_dir_listing=%s",
+        *_flow_ctx(),
+        exec_dir_n,
+        exit_code,
+        len(stdout),
+        len(stderr),
+        _preview(stderr, 300),
+        candidate_stat,
+        _preview(listing, 800),
+    )
+    return _format_result(stdout, stderr, exit_code)
+
+# -------------------------------------------------------------------------
+# File tools
+# -------------------------------------------------------------------------
+
+async def file_read(path: str) -> str:
+    """Read the full content of a file inside the sandbox.
+
+    Files provided by the user are mounted under /mnt/workspace/<workspace>/.
+
+    Args:
+        path: Absolute path to the file (e.g. /home/ubuntu/script.py or /mnt/workspace/<workspace>/input.csv)
+    """
+    p = _normalize_vm_path(path)
+    verdict = _path_verdict(p, action="read")
+    read_log = logger.warning if verdict.startswith("UNEXPECTED") else logger.info
+    read_log(
+        "vm_file_flow INPUT_READ start | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s"
+        + " workspace_paths=%s file_paths=%s",
+        *_flow_ctx(),
+        p,
+        _path_filename(p),
+        _path_file_type(p),
+        _path_zone(p),
+        verdict,
+        _current_workspace_paths.get(),
+        _current_file_paths.get(),
+    )
+    result = await _with_sandbox(lambda sandbox: sandbox.file_read(path))
+    if not result.success:
+        logger.error(
+            "vm_file_flow INPUT_READ FAILED | " + _FLOW_CTX_FMT
+            + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s error=%s",
+            *_flow_ctx(),
+            p,
+            _path_filename(p),
+            _path_file_type(p),
+            _path_zone(p),
+            verdict,
+            result.message,
+        )
+        return f"Error reading {path}: {result.message}"
+    content = result.data.get("content", "")
+    logger.info(
+        "vm_file_flow INPUT_READ OK | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s bytes=%s",
+        *_flow_ctx(),
+        p,
+        _path_filename(p),
+        _path_file_type(p),
+        _path_zone(p),
+        verdict,
+        len(content) if isinstance(content, str) else "n/a",
+    )
+    return content
+
+async def file_write(path: str, content: str, append: bool = False) -> str:
+    """Write content to a file inside the sandbox. Creates parent directories automatically.
+
+    Write deliverables under /mnt/yellowmind/run/outputs/. Do not write into /mnt/workspace/.
+
+    Args:
+        path: Absolute path under run/outputs/ or legacy /home/ubuntu/<file>
+        content: Text content to write
+        append: Append to existing file instead of overwriting (default: False)
+
+    For .py files: Excel A1 refs ('Sheet'!B4) must be Python strings for openpyxl,
+    e.g. ws['A1'] = \"='Sheet'!B4\". Bare 'Sheet'!B4 is a SyntaxError.
+    """
+    p = _normalize_vm_path(path)
+    filename = _path_filename(p)
+    file_type = _path_file_type(p)
+    zone = _path_zone(p)
+    verdict = _path_verdict(p, action="write")
+    content_s = str(content or "")
+    abs_targets, rel_targets = _script_write_targets(content_s, p)
+    script_wrong = [
+        t for t in _dedupe_paths(abs_targets + rel_targets)
+        if _is_wrong_path(_path_verdict(t, action="write"))
+    ]
+    write_log = (
+        logger.warning
+        if (_is_wrong_path(verdict) or script_wrong)
+        else logger.info
+    )
+    write_log(
+        "vm_file_flow OUTPUT_WRITE start — file_write | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s"
+        + " append=%s content_bytes=%s publishable=%s"
+        + " script_abs_targets=%s script_rel_targets=%s script_wrong_paths=%s",
+        *_flow_ctx(),
+        p,
+        filename,
+        file_type,
+        zone,
+        verdict,
+        append,
+        len(content_s),
+        _is_publishable(p),
+        _describe_paths(abs_targets, action="write"),
+        _describe_paths(rel_targets, action="write"),
+        _describe_paths(script_wrong, action="write"),
+    )
+    if _is_workspace_input_write(path):
+        logger.error(
+            "vm_file_flow OUTPUT_WRITE REJECTED — workspace input | " + _FLOW_CTX_FMT
+            + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s",
+            *_flow_ctx(),
+            p,
+            filename,
+            file_type,
+            zone,
+            verdict,
+        )
+        return json.dumps({
+            "status": "error",
+            "path": path,
+            "message": "cannot write into input workspace — put deliverables in /mnt/yellowmind/run/outputs/",
+        })
+    if not append:
+        py_err = python_write_error(path, content)
+        if py_err:
+            logger.error(
+                "vm_file_flow OUTPUT_WRITE REJECTED — python syntax | " + _FLOW_CTX_FMT
+                + " path=%s filename=%s error=%s",
+                *_flow_ctx(),
+                p,
+                filename,
+                py_err,
+            )
+            return json.dumps({"status": "error", "message": py_err, "path": path})
+    result = await _with_sandbox(lambda sandbox: sandbox.file_write(path, content, append=append)
+    )
+    if not result.success:
+        logger.error(
+            "vm_file_flow OUTPUT_WRITE FAILED | " + _FLOW_CTX_FMT
+            + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s error=%s",
+            *_flow_ctx(),
+            p,
+            filename,
+            file_type,
+            zone,
+            verdict,
+            result.message,
+        )
+        return json.dumps({"status": "error", "message": result.message, "path": path})
+    done_log = logger.warning if (_is_wrong_path(verdict) or script_wrong) else logger.info
+    done_log(
+        "vm_file_flow OUTPUT_WRITE OK | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s"
+        + " expected_output_root=%s script_wrong_paths=%s",
+        *_flow_ctx(),
+        p,
+        filename,
+        file_type,
+        zone,
+        verdict,
+        OUTPUT_ROOT,
+        _describe_paths(script_wrong, action="write"),
+    )
+    return json.dumps({"status": "success", "path": path})
+
+async def file_list(path: str = "/home/ubuntu") -> str:
+    """List the contents of a directory inside the sandbox.
+
+    Files provided by the user are mounted under /mnt/workspace/, with one subfolder
+    per workspace — list /mnt/workspace/ to discover the user's input files.
+
+    Args:
+        path: Directory path to list (default: /home/ubuntu)
+    """
+    p = _normalize_vm_path(path)
+    logger.info(
+        "vm_file_flow LIST | " + _FLOW_CTX_FMT
+        + " path=%s zone=%s",
+        *_flow_ctx(),
+        p,
+        _path_zone(p),
+    )
+    result = await _with_sandbox(lambda sandbox: sandbox.file_list(path))
+    if not result.success:
+        hint = ""
+        msg = result.message or ""
+        logger.error(
+            "vm_file_flow LIST FAILED | " + _FLOW_CTX_FMT
+            + " path=%s zone=%s error=%s",
+            *_flow_ctx(),
+            p,
+            _path_zone(p),
+            result.message,
+        )
+        if "No such file" in msg and str(path).startswith("/mnt/workspace/"):
+            hint = (
+                " List /mnt/workspace/ first — mounts use slugs "
+                "(e.g. credit-risk), not display names (Credit Risk)."
+            )
+        return f"Error listing {path}: {result.message}{hint}"
+    listing = result.data.get("listing", "(empty)")
+    logger.info(
+        "vm_file_flow LIST OK | " + _FLOW_CTX_FMT
+        + " path=%s zone=%s listing=%s",
+        *_flow_ctx(),
+        p,
+        _path_zone(p),
+        _preview(listing, 800),
+    )
+    return listing
+
+async def file_delete(path: str) -> str:
+    """Delete a file or directory inside the sandbox (uses rm -rf).
+
+    Args:
+        path: Absolute path to delete
+    """
+    p = _normalize_vm_path(path)
+    logger.info(
+        "vm_file_flow DELETE | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s",
+        *_flow_ctx(),
+        p,
+        _path_filename(p),
+        _path_file_type(p),
+        _path_zone(p),
+        _path_verdict(p, action="write"),
+    )
+    result = await _with_sandbox(lambda sandbox: sandbox.file_delete(path))
+    if not result.success:
+        logger.error(
+            "vm_file_flow DELETE FAILED | " + _FLOW_CTX_FMT
+            + " path=%s error=%s",
+            *_flow_ctx(),
+            p,
+            result.message,
+        )
+        return f"Error deleting {path}: {result.message}"
+    logger.info(
+        "vm_file_flow DELETE OK | " + _FLOW_CTX_FMT + " path=%s",
+        *_flow_ctx(),
+        p,
+    )
+    return f"Deleted {path}"
+
+async def file_find(path: str, pattern: str = "*") -> str:
+    """Find files matching a name pattern inside the sandbox.
+
+    Files provided by the user are mounted under /mnt/workspace/<workspace>/ — search
+    there (or /mnt/workspace/) to locate the user's input files.
+
+    Args:
+        path: Directory to search in (e.g. /home/ubuntu or /mnt/workspace)
+        pattern: Glob pattern to match filenames (e.g. *.py, report*.pdf)
+    """
+    p = _normalize_vm_path(path)
+    logger.info(
+        "vm_file_flow FIND | " + _FLOW_CTX_FMT
+        + " path=%s zone=%s pattern=%s",
+        *_flow_ctx(),
+        p,
+        _path_zone(p),
+        pattern,
+    )
+    result = await _with_sandbox(lambda sandbox: sandbox.file_find(path, pattern))
+    if not result.success:
+        logger.error(
+            "vm_file_flow FIND FAILED | " + _FLOW_CTX_FMT
+            + " path=%s pattern=%s error=%s",
+            *_flow_ctx(),
+            p,
+            pattern,
+            result.message,
+        )
+        return f"Error searching {path}: {result.message}"
+    files = result.data.get("files", [])
+    logger.info(
+        "vm_file_flow FIND OK | " + _FLOW_CTX_FMT
+        + " path=%s pattern=%s matches=%s",
+        *_flow_ctx(),
+        p,
+        pattern,
+        _preview("\n".join(files) if files else "(none)", 800),
+    )
+    if not files:
+        return f"No files matching '{pattern}' found under {path}"
+    return "\n".join(files)
+
+async def send_file_to_user(path: str) -> str:
+    """Send a file to the user so they can see and download it.
+
+    Call this after creating any deliverable in Conversation mode.
+    The coordinator commits the file to Ceph and returns the real ceph_path.
+
+    Args:
+        path: Absolute path inside the sandbox (e.g. /mnt/yellowmind/run/outputs/report.pdf)
+    """
+    vm_path = str(path or "").replace("\\", "/")
+    user_id = _current_user_id.get()
+    scope_id = _current_scope_id.get()
+    lane_id = _current_lane_id.get()
+    ext = os.path.splitext(vm_path.rstrip("/"))[1].lower()
+    logger.info(
+        "vm_file_flow PUBLISH start — send_file_to_user | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s",
+        *_flow_ctx(),
+        vm_path,
+        _path_filename(vm_path),
+        _path_file_type(vm_path),
+        _path_zone(vm_path),
+        _path_verdict(vm_path, action="write"),
+    )
+    log_prefix = (
+        "send_file_to_user vm_path=%s user_id=%s scope_id=%s lane_id=%s"
+    )
+    log_ctx = (vm_path, user_id, scope_id, lane_id)
+
+    logger.info(
+        "send_file_to_user start — publication requested | " + log_prefix,
+        *log_ctx,
+    )
+
+    if not _is_valid_deliverable_path(vm_path):
+        reason = (
+            "path not under output contract — write deliverables to "
+            "/mnt/yellowmind/run/outputs/"
+        )
+        logger.warning(
+            "send_file_to_user path_validation FAILED | " + log_prefix
+            + " reason=%s",
+            *log_ctx,
+            reason,
+        )
+        raise ToolError(json.dumps({"path": vm_path, "error": reason}))
+    logger.info(
+        "send_file_to_user path_validation OK | " + log_prefix
+        + " contract=run/outputs_or_legacy_home",
+        *log_ctx,
+    )
+
+    if not _is_publishable(vm_path):
+        reason = f"file type not published (ext={ext or '<none>'})"
+        logger.warning(
+            "send_file_to_user publishable_type FAILED | " + log_prefix
+            + " ext=%s reason=%s",
+            *log_ctx,
+            ext,
+            reason,
+        )
+        raise ToolError(json.dumps({"path": vm_path, "error": "file type not published"}))
+    logger.info(
+        "send_file_to_user publishable_type OK | " + log_prefix + " ext=%s",
+        *log_ctx,
+        ext,
+    )
+
+    try:
+        quoted_vm_path = vm_path.replace("'", "'\\''")
+        stat_cmd = (
+            f"if [ ! -e '{quoted_vm_path}' ]; then echo 'exists=0'; "
+            f"elif [ -d '{quoted_vm_path}' ]; then echo 'exists=1 is_dir=1'; "
+            f"else stat -c 'exists=1 is_dir=0 size=%s mtime=%y' '{quoted_vm_path}'; fi"
+        )
+        stat_result = await _with_sandbox(lambda sandbox: sandbox.exec_command("/", stat_cmd),
+        )
+        vm_stat = ((stat_result.data or {}).get("stdout") or "").strip()
+        vm_stat_err = ((stat_result.data or {}).get("stderr") or "").strip()
+        vm_stat_rc = (stat_result.data or {}).get("exit_code", 0)
+        logger.info(
+            "send_file_to_user vm_stat | " + log_prefix
+            + " stdout=%s stderr=%s exit_code=%s",
+            *log_ctx,
+            vm_stat,
+            vm_stat_err,
+            vm_stat_rc,
+        )
+        if "exists=0" in vm_stat or "is_dir=1" in vm_stat:
+            logger.error(
+                "send_file_to_user vm_file MISSING_OR_DIRECTORY — publication stopped | "
+                + log_prefix,
+                *log_ctx,
+            )
+            raise ToolError(json.dumps({"path": vm_path, "error": "Deliverable is missing or is a directory"}))
+    except ToolError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "send_file_to_user vm_stat FAILED (non-blocking) | " + log_prefix
+            + " error=%s: %s",
+            *log_ctx,
+            type(exc).__name__,
+            exc,
+        )
+
+    s = get_settings()
+    resolve_url = f"{s.sandbox_manager_url.rstrip('/')}/sandbox/resolve_ceph_path"
+    payload = {
+        "user_id": user_id,
+        "file_path": vm_path,
+        "scope_id": scope_id,
+        "lane_id": lane_id,
+    }
+    logger.info(
+        "send_file_to_user resolve_ceph_path CALL — Ceph copy starting | "
+        + log_prefix
+        + " url=%s payload_file_path=%s",
+        *log_ctx,
+        resolve_url,
+        vm_path,
+    )
+
+    headers = {"Authorization": f"Bearer {s.sandbox_manager_token}"} if s.sandbox_manager_token else {}
+    try:
+        async with httpx.AsyncClient(timeout=s.sandbox_publish_timeout_seconds, headers=headers) as c:
+            r = await c.post(resolve_url, json=payload)
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "send_file_to_user resolve_ceph_path TIMEOUT | " + log_prefix
+            + " url=%s error=%s",
+            *log_ctx,
+            resolve_url,
+            exc,
+        )
+        raise ToolError(json.dumps({
+            "path": vm_path,
+            "error": f"resolve_ceph_path timed out: {exc}",
+        }))
+    except httpx.RequestError as exc:
+        logger.error(
+            "send_file_to_user resolve_ceph_path REQUEST_ERROR | " + log_prefix
+            + " url=%s error_type=%s error=%s",
+            *log_ctx,
+            resolve_url,
+            type(exc).__name__,
+            exc,
+        )
+        raise ToolError(json.dumps({
+            "path": vm_path,
+            "error": f"resolve_ceph_path request failed: {type(exc).__name__}: {exc}",
+        }))
+
+    body_preview = (r.text or "")[:500]
+    logger.info(
+        "send_file_to_user resolve_ceph_path RESPONSE | " + log_prefix
+        + " http_status=%s body=%s",
+        *log_ctx,
+        r.status_code,
+        body_preview,
+    )
+    if r.status_code >= 400:
+        logger.error(
+            "send_file_to_user resolve_ceph_path HTTP_ERROR — Ceph copy failed | "
+            + log_prefix
+            + " http_status=%s body=%s",
+            *log_ctx,
+            r.status_code,
+            body_preview,
+        )
+        raise ToolError(json.dumps({
+            "path": vm_path,
+            "error": f"resolve_ceph_path HTTP {r.status_code}: {body_preview}",
+        }))
+
+    try:
+        data = r.json()
+    except ValueError as exc:
+        logger.error(
+            "send_file_to_user resolve_ceph_path INVALID_JSON | " + log_prefix
+            + " error=%s body=%s",
+            *log_ctx,
+            exc,
+            body_preview,
+        )
+        raise ToolError(json.dumps({
+            "path": vm_path,
+            "error": f"resolve_ceph_path returned invalid JSON: {exc}",
+        }))
+
+    if isinstance(data, dict):
+        if data.get("status") == "error":
+            message = data.get("message", "resolve failed")
+            logger.error(
+                "send_file_to_user Ceph copy FAILED | " + log_prefix
+                + " coordinator_message=%s",
+                *log_ctx,
+                message,
+            )
+            raise ToolError(json.dumps({"path": vm_path, "error": str(message)}))
+        ceph_path = data.get("ceph_path")
+        relative_path = data.get("relative_path")
+    else:
+        ceph_path = data
+        relative_path = None
+
+    if (not isinstance(ceph_path, str) or not ceph_path.strip()
+            or (relative_path is not None and not isinstance(relative_path, str))):
+        logger.error(
+            "send_file_to_user Ceph copy INCOMPLETE — empty ceph_path | "
+            + log_prefix
+            + " response=%s",
+            *log_ctx,
+            data,
+        )
+        raise ToolError(json.dumps({
+            "path": vm_path,
+            "error": "resolve_ceph_path returned an invalid publication receipt",
+        }))
+
+    logger.info(
+        "[mcp-fs-audit] OUTPUT publish_ok vm_path=%s ceph_path=%s relative_path=%s "
+        "user=%s scope=%s lane=%s",
+        vm_path,
+        ceph_path,
+        relative_path,
+        user_id,
+        scope_id,
+        lane_id,
+    )
+    logger.info(
+        "send_file_to_user Ceph copy OK — file available | " + log_prefix
+        + " ceph_path=%s relative_path=%s",
+        *log_ctx,
+        ceph_path,
+        relative_path,
+    )
+    out = {"path": vm_path, "ceph_path": ceph_path}
+    if relative_path:
+        out["relative_path"] = relative_path
+    return json.dumps(out)
+
+async def file_upload_base64(path: str, content_base64: str) -> str:
+    """Upload a file to the sandbox by providing its content as a base64-encoded string.
+
+    Args:
+        path: Absolute destination path inside the sandbox
+        content_base64: Base64-encoded binary content of the file
+    """
+    p = _normalize_vm_path(path)
+    filename = _path_filename(p)
+    file_type = _path_file_type(p)
+    zone = _path_zone(p)
+    verdict = _path_verdict(p, action="write")
+    upload_log = logger.warning if _is_wrong_path(verdict) else logger.info
+    try:
+        raw = base64.b64decode(content_base64)
+    except Exception as exc:
+        logger.error(
+            "vm_file_flow OUTPUT_WRITE FAILED — file_upload_base64 invalid base64 | "
+            + _FLOW_CTX_FMT
+            + " path=%s filename=%s error=%s",
+            *_flow_ctx(),
+            p,
+            filename,
+            exc,
+        )
+        return json.dumps({"status": "error", "message": f"Invalid base64 content: {exc}", "path": path})
+    upload_log(
+        "vm_file_flow OUTPUT_WRITE start — file_upload_base64 | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s size=%s",
+        *_flow_ctx(),
+        p,
+        filename,
+        file_type,
+        zone,
+        verdict,
+        len(raw),
+    )
+    import io
+    result = await _with_sandbox(lambda sandbox: sandbox.file_upload(io.BytesIO(raw), path))
+    if not result.success:
+        logger.error(
+            "vm_file_flow OUTPUT_WRITE FAILED — file_upload_base64 | " + _FLOW_CTX_FMT
+            + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s error=%s",
+            *_flow_ctx(),
+            p,
+            filename,
+            file_type,
+            zone,
+            verdict,
+            result.message,
+        )
+        return json.dumps({"status": "error", "message": result.message, "path": path})
+    upload_log(
+        "vm_file_flow OUTPUT_WRITE OK — file_upload_base64 | " + _FLOW_CTX_FMT
+        + " path=%s filename=%s file_type=%s zone=%s path_verdict=%s size=%s",
+        *_flow_ctx(),
+        p,
+        filename,
+        file_type,
+        zone,
+        verdict,
+        len(raw),
+    )
+    out = {"status": "success", "path": path, "size": len(raw)}
+    return json.dumps(out)
+
+async def file_download_base64(path: str) -> str:
+    """Download a file from the sandbox as a base64-encoded string.
+
+    Args:
+        path: Absolute path to the file inside the sandbox
+    """
+    try:
+        raw = await _with_sandbox(lambda sandbox: sandbox.file_download(path))
+        return base64.b64encode(raw).decode()
+    except FileNotFoundError:
+        return f"Error: file not found: {path}"
+    except Exception as exc:
+        return f"Error downloading {path}: {exc}"
+
+
+def register_sandbox_tools(mcp) -> None:
+    """Register the Manus sandbox tools on the host FastMCP (fastmcp v2) instance."""
+    for tool in (
+        sandbox_create,
+        sandbox_info,
+        sandbox_destroy,
+        shell_exec,
+        file_read,
+        file_write,
+        file_list,
+        file_delete,
+        file_find,
+        send_file_to_user,
+        file_upload_base64,
+        file_download_base64,
+    ):
+        mcp.tool()(tool)

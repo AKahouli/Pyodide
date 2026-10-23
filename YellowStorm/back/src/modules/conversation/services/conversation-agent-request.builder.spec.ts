@@ -42,8 +42,8 @@ describe('ConversationAgentRequestBuilder', () => {
   const buildWithAttachments = (workspaceContexts: unknown[], attachedFiles: unknown[], previousAttachedFiles: unknown[] = []) => new ConversationAgentRequestBuilder().build({
     userId: 'user-1', conversationId: 'a'.repeat(24), request, workspaceContexts, attachedFiles, previousAttachedFiles, agents: [{id: 'agent-1'}], skills: [],
   }).payload;
-  it('preserves the legacy conversation fallback when no current trusted document workspace exists', () => {
-    expect(buildWithAttachments([], [], [currentDocument]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+  it('sends no workspace context instead of the retired conversation-id placeholder', () => {
+    expect(buildWithAttachments([], [], [currentDocument]).workspace_context).toEqual([]);
   });
   it('uses the real current attachment workspace instead of the conversation fallback', () => {
     const result = buildWithAttachments([], [currentDocument]);
@@ -61,7 +61,7 @@ describe('ConversationAgentRequestBuilder', () => {
       {type:'document',document:{workspace_id:'foreign',document_id:'c'.repeat(24)}},
       {type:'document',document:{workspace_id:attachmentWorkspace,document_id:'bad'}},
       {type:'document',document:{workspace_id:attachmentWorkspace}}]) {
-      expect(buildWithAttachments([], [file]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+      expect(buildWithAttachments([], [file]).workspace_context).toEqual([]);
     }
   });
 

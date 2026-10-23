@@ -50,7 +50,9 @@ describe('PyodideRuntimeRegistry', () => {
     registry.register({ userId: 'user-1', socket: fakeSocket('socket-1'), runtimeId: 'rt-1' });
     const connection = registry.get('user-1')!;
 
-    expect(registry.isStale(connection, connection.lastHeartbeatAt + 30_001)).toBe(true);
+    // 90s default: covers hidden-tab timer throttling (≥60s per tick).
+    expect(registry.isStale(connection, connection.lastHeartbeatAt + 30_001)).toBe(false);
+    expect(registry.isStale(connection, connection.lastHeartbeatAt + 90_001)).toBe(true);
     registry.touch('user-1');
     expect(registry.isStale(registry.get('user-1')!)).toBe(false);
   });

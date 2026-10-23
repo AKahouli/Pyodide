@@ -30,14 +30,21 @@ class YellowStormPyodideClient:
         await self._client.aclose()
 
     async def execute(self, payload: dict[str, Any]) -> Any:
+        return await self._post_relay(
+            "/api/v1/internal/pyodide-runtime/execute",
+            payload,
+            "Pyodide execution timed out",
+        )
+
+    async def _post_relay(self, path: str, payload: dict[str, Any], timeout_message: str) -> Any:
         try:
             response = await self._client.post(
-                "/api/v1/internal/pyodide-runtime/execute",
+                path,
                 json=payload,
                 headers=self._actor_headers(),
             )
         except httpx.TimeoutException as exc:
-            raise PyodideBackendError("PYODIDE_EXECUTION_TIMEOUT", "Pyodide execution timed out") from exc
+            raise PyodideBackendError("PYODIDE_EXECUTION_TIMEOUT", timeout_message) from exc
         except httpx.HTTPError as exc:
             raise PyodideBackendError("PYODIDE_RUNTIME_OFFLINE", "Pyodide runtime relay is unavailable") from exc
 

@@ -1,8 +1,18 @@
-# mcp-pyodide — Browser Python MCP Server
+# mcp-pyodide — YellowStorm Runtime MCP Server
 
-FastMCP server (Streamable HTTP, `/mcp`, default port `8027`) exposing a single tool, `execute_python`, that
-runs bounded Python in the **user's connected Yellowmind browser** through the YellowStorm pyodide-runtime
-relay. The MCP process never executes Python itself.
+FastMCP server (Streamable HTTP, `/mcp`, default port `8027`) exposing **two toolsets on one endpoint**:
+
+- `execute_python` — runs bounded Python in the **user's connected Yellowmind browser** through the
+  YellowStorm pyodide-runtime relay. The MCP process never executes Python itself; the browser does.
+- The **Manus sandbox tools** (vendored from [YellowsysOrg/mcp-manus](https://github.com/YellowsysOrg/mcp-manus),
+  `sandbox_mcp` package): `sandbox_create`, `sandbox_info`, `sandbox_destroy`, `shell_exec`, `file_read`,
+  `file_write`, `file_list`, `file_find`, `file_delete`, `file_upload_base64`, `file_download_base64`,
+  `send_file_to_user`. They run commands and manage files inside a Firecracker microVM reached through the
+  sandbox manager.
+
+Routing is agent-level (server instructions + the `smart-code-runtime` skill): **Pyodide first** for
+calculations, data transformations and small documents; the sandbox only for work Pyodide cannot do (shell,
+native binaries, pip/apt system packages, very large or long-running jobs). One task, one runtime.
 
 ## Environment
 
@@ -19,6 +29,11 @@ relay. The MCP process never executes Python itself.
 | `PYODIDE_MCP_MAX_RESULT_BYTES` | `524288` | Maximum result size |
 | `PYODIDE_MCP_MAX_LOG_BYTES` | `262144` | Maximum aggregate stdout/stderr |
 | `PYODIDE_MCP_MAX_QUEUE` | `3` | Backend relay queue bound |
+| `SANDBOX_MANAGER_URL` | `http://sandbox.yellowsys.org` | Sandbox manager boundary (Manus tools) |
+| `SANDBOX_MANAGER_TOKEN` | — | Manager bearer token (secret — never commit) |
+| `SANDBOX_ADDRESS` | — | Dev-only: fixed VM IP, skips the manager |
+| `SANDBOX_TTL_MINUTES` | `30` | Idle sandbox lifetime before eviction |
+| `SANDBOX_PUBLISH_TIMEOUT_SECONDS` | `120` | `send_file_to_user` Ceph-copy timeout (1–600) |
 
 ## Run
 
@@ -39,7 +54,15 @@ foreign-audience or invalid-signature assertions fail closed with 401. The retir
 tracing context, and `workspace_id` / `X-YellowStorm-Input-Files` carry the connector binding's
 workspace context. The model never controls these values: they come from the connector binding.
 
-## Tool
+The sandbox tools additionally read the canonical runtime scope headers
+(`x-user-id`, `x-conversation-id`, `x-sandbox-scope-*`, `x-workspace-paths`) that the backend stamps on the
+connector binding (`applySandboxScopeHeaders`, pyodide* slugs); requests to `/mcp` without a user and
+conversation id are rejected with 400. There is no second auth mechanism: the JWT middleware is the single
+ingress; the inner sandbox middleware only extracts request context into `ContextVar`s.
+
+## Tools
+
+### Pyodide (browser)
 
 ```
 execute_python(
@@ -56,15 +79,29 @@ names), never a storage path or URL. Inputs are mounted read-only under `/worksp
 `/workspace/output` and named in `outputs` are persisted by YellowStorm and returned as bounded `artifacts`
 references (no file content through MCP). Sizes/limits remain those of the MVP.
 
+### Manus sandbox (Firecracker microVM)
+
+Contract paths inside the VM: READ `/mnt/workspace/<workspace>/` (user inputs, read-only) and
+`/mnt/yellowmind/run/artifacts/`; WORK `/mnt/yellowmind/scratch/<lane>`; DELIVERABLES
+`/mnt/yellowmind/run/outputs/` (legacy alias top-level `/home/ubuntu/<file>`). `send_file_to_user(path)`
+publishes a deliverable to the conversation storage through the manager (`resolve_ceph_path`) and the ADK
+projects it into the conversation as an artifact card — same contract as the Code Interpreter connector.
+
 ## Connect it to an agent
 
 1. **Admin → Connectors → New connector**: MCP, transport *Streamable HTTP*, URL `http://<host>:8027/mcp`,
    security profile *Internal JWT* with audience `mcp-pyodide` and verified-user delegation.
-2. **Agent edit → Connectors**: add the connector and select `execute_python`. A Playbook task can bind the
-   same connector/action.
+2. **Agent edit → Connectors**: add the connector and select `execute_python` plus the sandbox tools the
+   agent should be able to use. A Playbook task can bind the same connector/action.
 
 ## Tests
 
 ```bash
 pytest tests -q
 ```
+
+The `sandbox_mcp` package is vendored from the upstream repository's `develop` branch (client, runtime,
+manager, eviction, tests) with two integration adaptations: tools are registered on the host FastMCP
+instance (`register_sandbox_tools`, no nested server) and read manager/runtime from module state installed
+by `make_sandbox_lifespan()` instead of the MCP `Context`; the upstream `MCP_API_KEY` gate is intentionally
+absent because the JWT middleware is the single ingress.

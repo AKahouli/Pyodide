@@ -28,10 +28,6 @@ export class PyodideWorkerController {
 
   constructor(private readonly options: PyodideWorkerControllerOptions) {}
 
-  get isStarted(): boolean {
-    return this.worker !== null;
-  }
-
   warmup(): void {
     this.ensureWorker();
   }

@@ -6,6 +6,16 @@
  */
 export const CODE_INTERPRETER_CONNECTOR_SLUG = 'code-interpreter';
 
+/**
+ * Bindings that carry the canonical runtime scope headers: the Code Interpreter
+ * (MCP Manus → Runtime Coordinator) and the Pyodide connectors — the merged
+ * MCP Pyodide server serves the Manus sandbox tools (shell_exec, file_*,
+ * send_file_to_user), which enforce the same (scopeId, laneId) ownership.
+ */
+function carriesRuntimeScope(slug: string | undefined): boolean {
+  return slug === CODE_INTERPRETER_CONNECTOR_SLUG || (slug?.startsWith('pyodide') ?? false);
+}
+
 export interface SandboxRuntimeContext {
   userId: string;
   scopeType: 'conversation' | 'playbook';
@@ -42,7 +52,7 @@ export function applySandboxScopeHeaders<T extends { auth_headers?: Record<strin
 ): T[] {
   const scopeHeaders = buildSandboxScopeHeaders(ctx);
   for (const binding of bindings) {
-    if (slugOf(binding) !== CODE_INTERPRETER_CONNECTOR_SLUG) continue;
+    if (!carriesRuntimeScope(slugOf(binding))) continue;
     binding.auth_headers = { ...(binding.auth_headers || {}), ...scopeHeaders };
   }
   return bindings;

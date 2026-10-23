@@ -86,7 +86,8 @@ export class PyodideRuntimeRegistry {
   }
 
   isStale(connection: PyodideRuntimeConnection, now = Date.now()): boolean {
-    const timeoutMs = this.config.get<number>('pyodideRuntime.heartbeatTimeoutMs', 30_000);
+    // Default matches the config default: 90s covers hidden-tab timer throttling.
+    const timeoutMs = this.config.get<number>('pyodideRuntime.heartbeatTimeoutMs', 90_000);
     return now - connection.lastHeartbeatAt > timeoutMs;
   }
 }

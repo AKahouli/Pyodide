@@ -77,15 +77,31 @@ export class PyodideRuntimeClient {
       this.disconnect();
     });
     socket.on('disconnect', () => this.stopHeartbeat());
+    // Hidden tabs throttle timers (≥60s), so the 10s heartbeat stalls while the
+    // user is elsewhere; refresh it the moment the tab is visible again.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
   }
 
   disconnect(): void {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
     this.stopHeartbeat();
     this.controller.dispose();
     this.socket?.removeAllListeners();
     this.socket?.disconnect();
     this.socket = null;
     this.cancelled.clear();
+  }
+
+  private handleVisibilityChange = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') this.emitHeartbeat();
+  };
+
+  private emitHeartbeat(): void {
+    this.socket?.emit(PyodideRuntimeEvents.RUNTIME_HEARTBEAT, { runtimeId: this.runtimeId });
   }
 
   private async handleRequest(payload: ExecutionRequestPayload): Promise<void> {
@@ -112,9 +128,7 @@ export class PyodideRuntimeClient {
 
   private startHeartbeat(): void {
     this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      this.socket?.emit(PyodideRuntimeEvents.RUNTIME_HEARTBEAT, { runtimeId: this.runtimeId });
-    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer = setInterval(() => this.emitHeartbeat(), HEARTBEAT_INTERVAL_MS);
   }
 
   private stopHeartbeat(): void {

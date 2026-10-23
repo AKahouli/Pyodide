@@ -134,4 +134,5 @@ describe('PyodideRuntimeInternalController', () => {
     expect(response.error?.code).toBe('PYODIDE_EXECUTION_ERROR');
     expect(dispatcher.execute).not.toHaveBeenCalled();
   });
+
 });

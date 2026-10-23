@@ -191,6 +191,23 @@ async def test_keeps_optional_trace_headers_when_present(keys):
 
 
 @pytest.mark.asyncio
+async def test_accepts_the_adk_context_conversation_header_as_fallback(keys):
+    seen = {}
+
+    async def context_app(_scope, _receive, send):
+        seen["context"] = actor_context.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = await invoke_with_app(context_app, keys, signed(keys), [
+        (b"x-conversation-id", b"conversation-adk-1"),
+    ])
+
+    assert messages[0]["status"] == 200
+    assert seen["context"].conversation_id == "conversation-adk-1"
+
+
+@pytest.mark.asyncio
 async def test_extracts_the_first_workspace_object_id_from_a_json_array(keys):
     seen = []
 

@@ -66,4 +66,11 @@ describe('applySandboxScopeHeaders', () => {
     applySandboxScopeHeaders([ci], convCtx, slugOf);
     expect(ci.auth_headers?.['x-sandbox-scope-type']).toBe('conversation');
   });
+
+  it('stamps pyodide bindings so the merged MCP sandbox tools carry the acting user', () => {
+    const pyodide = { connector_slug: 'pyodide-local', auth_headers: {} as Record<string, string> };
+    applySandboxScopeHeaders([pyodide], convCtx, slugOf);
+    expect(pyodide.auth_headers['x-user-id']).toBe('user-1');
+    expect(pyodide.auth_headers['x-sandbox-scope-id']).toBe('conversation:sess-1');
+  });
 });

@@ -36,10 +36,15 @@ def actor_headers():
 
 
 @pytest.mark.asyncio
-async def test_registers_only_execute_python():
+async def test_registers_execute_python_and_sandbox_tools():
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    assert {tool.name for tool in tools} == {"execute_python"}
+    assert {tool.name for tool in tools} == {
+        "execute_python",
+        "sandbox_create", "sandbox_info", "sandbox_destroy",
+        "shell_exec", "file_read", "file_write", "file_list", "file_delete", "file_find",
+        "send_file_to_user", "file_upload_base64", "file_download_base64",
+    }
 
 
 @pytest.mark.asyncio

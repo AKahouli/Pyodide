@@ -64,6 +64,11 @@ export class PyodideRuntimeDispatcher {
   async execute(userId: string, request: ExecutePyodideRequest): Promise<PyodideExecutionResult> {
     const connection = this.registry.get(userId);
     if (!connection || !this.registry.isUsable(connection)) {
+      this.logger.warn(
+        `Pyodide execution rejected offline userId=${userId} `
+        + `registered=${Boolean(connection)} socketConnected=${connection?.socket.connected ?? false} `
+        + `lastHeartbeatAgeMs=${connection ? Date.now() - connection.lastHeartbeatAt : 'n/a'}`,
+      );
       return this.failure(PyodideErrorCode.RUNTIME_OFFLINE, 'The browser Python runtime is not connected.');
     }
 

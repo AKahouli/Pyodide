@@ -26,9 +26,14 @@ def build_tool_result_artifacts(
     if not isinstance(result, dict):
         return []
     receipt = result.get("_conversation_output_receipt", {})
-    if require_receipt and (producer_tool_name not in {
-            "code-interpreter_send_file_to_user", "code-interpreort-aga_send_file_to_user",
-            "code-interpretor-aga_send_file_to_user"}
+    trusted_producers = {
+        "code-interpreter_send_file_to_user", "code-interpreort-aga_send_file_to_user",
+        "code-interpretor-aga_send_file_to_user"}
+    is_pyodide_sender = (
+        isinstance(producer_tool_name, str)
+        and producer_tool_name.startswith("pyodide")
+        and producer_tool_name.endswith("_send_file_to_user"))
+    if require_receipt and ((producer_tool_name not in trusted_producers and not is_pyodide_sender)
             or not isinstance(receipt, dict)
             or receipt.get("storagePrefix") != trusted_storage_prefix
             or not isinstance(receipt.get("invocationId"), str) or not receipt["invocationId"]):

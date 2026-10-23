@@ -128,3 +128,16 @@ def test_actual_interpreter_alias_requires_same_trusted_publication_receipt():
             producer_tool_name=f"{slug}_send_file_to_user")
     assert not build_tool_result_artifacts(result, "producer", "owner/system_run", require_receipt=True,
         producer_tool_name="unrelated_send_file_to_user")
+
+
+def test_pyodide_send_file_projects_conversation_artifact_with_trusted_receipt():
+    result = {"ceph_path": "owner/system_c1/report.pdf", "path": "/mnt/yellowmind/run/outputs/report.pdf",
+        "_conversation_output_receipt": {"storagePrefix": "owner/system_c1", "invocationId": "turn"}}
+    assert len(build_tool_result_artifacts(result, "producer", "owner/system_c1", require_receipt=True,
+        producer_tool_name="pyodide-local_send_file_to_user")) == 1
+    assert not build_tool_result_artifacts({"ceph_path": result["ceph_path"]}, "producer", "owner/system_c1",
+        require_receipt=True, producer_tool_name="pyodide-local_send_file_to_user")
+    assert not build_tool_result_artifacts(result, "producer", "other/system_c1", require_receipt=True,
+        producer_tool_name="pyodide-local_send_file_to_user")
+    assert not build_tool_result_artifacts(result, "producer", "owner/system_c1", require_receipt=True,
+        producer_tool_name="unrelated_send_file_to_user")

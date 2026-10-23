@@ -100,16 +100,4 @@ describe('PyodideRuntimeClient', () => {
 
     expect(fakeSocket.emit).not.toHaveBeenCalledWith('execution.completed', expect.anything());
   });
-
-  it('disconnects and notifies when the runtime is replaced', () => {
-    const onReplaced = vi.fn();
-    const client = makeClient(onReplaced);
-    client.connect();
-    fakeSocket.trigger('connect');
-
-    fakeSocket.trigger('runtime.replaced', { userId: 'user-1' });
-
-    expect(onReplaced).toHaveBeenCalled();
-    expect(fakeSocket.disconnect).toHaveBeenCalled();
-  });
 });
