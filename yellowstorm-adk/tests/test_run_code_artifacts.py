@@ -135,6 +135,9 @@ def test_pyodide_send_file_projects_conversation_artifact_with_trusted_receipt()
         "_conversation_output_receipt": {"storagePrefix": "owner/system_c1", "invocationId": "turn"}}
     assert len(build_tool_result_artifacts(result, "producer", "owner/system_c1", require_receipt=True,
         producer_tool_name="pyodide-local_send_file_to_user")) == 1
+    assert len(build_tool_result_artifacts({**result, "path": "/workspace/output/report.pdf"},
+        "producer", "owner/system_c1", require_receipt=True,
+        producer_tool_name="pyodide-local_send_file_to_user_simple")) == 1
     assert not build_tool_result_artifacts({"ceph_path": result["ceph_path"]}, "producer", "owner/system_c1",
         require_receipt=True, producer_tool_name="pyodide-local_send_file_to_user")
     assert not build_tool_result_artifacts(result, "producer", "other/system_c1", require_receipt=True,

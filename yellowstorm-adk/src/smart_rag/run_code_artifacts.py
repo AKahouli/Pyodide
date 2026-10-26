@@ -32,7 +32,7 @@ def build_tool_result_artifacts(
     is_pyodide_sender = (
         isinstance(producer_tool_name, str)
         and producer_tool_name.startswith("pyodide")
-        and producer_tool_name.endswith("_send_file_to_user"))
+        and producer_tool_name.endswith(("_send_file_to_user", "_send_file_to_user_simple")))
     if require_receipt and ((producer_tool_name not in trusted_producers and not is_pyodide_sender)
             or not isinstance(receipt, dict)
             or receipt.get("storagePrefix") != trusted_storage_prefix

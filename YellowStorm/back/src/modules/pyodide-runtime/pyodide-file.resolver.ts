@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId } from '@common/postgres/object-id';
+import { DocumentService } from '@modules/document/document.service';
 import { WorkspaceDocumentService } from '../workspace/workspace-document.service';
 import { GuardedUrlDownloaderService } from '../workspace/services/guarded-url-downloader.service';
 import { PgWorkspaceStore } from '../workspace/stores/postgres/pg-workspace-store';
@@ -54,6 +55,7 @@ function inferMimeType(name: string, fallback?: string): string {
 export class PyodideFileResolver {
   constructor(
     private readonly documents: WorkspaceDocumentService,
+    private readonly documentStore: DocumentService,
     private readonly downloader: GuardedUrlDownloaderService,
     private readonly workspaceStore: PgWorkspaceStore,
     private readonly shareStore: PgShareStore,
@@ -135,6 +137,46 @@ export class PyodideFileResolver {
       });
     }
     return artifacts;
+  }
+
+  /**
+   * Publishes one persisted execute_python output to the conversation's scoped storage
+   * ({owner}/system_<conversationId>/) so the ADK can register it as a conversation
+   * artifact (View/Download card). Server-side Ceph copy — no browser round-trip.
+   */
+  async publishOutput(
+    userId: string,
+    workspaceId: string,
+    conversationId: string,
+    name: string,
+  ): Promise<{ ceph_path: string; filename: string; mime_type: string; size: number }> {
+    if (!isObjectId(workspaceId)) {
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', 'A trusted workspace context is required to publish files.');
+    }
+    if (!isObjectId(conversationId)) {
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', 'A trusted conversation context is required to publish files.');
+    }
+    if (name !== name.trim() || /[\\/\x00-\x1f\x7f]/.test(name) || name.split('.').some((p) => !p || p === '.' || p === '..')) {
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', 'file names must be simple basenames without paths');
+    }
+    await this.assertAccess(userId, workspaceId, false);
+
+    const document = await this.resolveDocument(workspaceId, name);
+    if (!document.path) {
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', `The output file is not ready: ${name}`);
+    }
+    const destination = `${userId}/system_${conversationId}/${name}`;
+    try {
+      await this.documentStore.copy(document.path, destination);
+    } catch {
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', `The output file could not be published: ${name}`);
+    }
+    return {
+      ceph_path: destination,
+      filename: document.originalName,
+      mime_type: document.mimeType || inferMimeType(name),
+      size: document.size ?? 0,
+    };
   }
 
   private async resolveDocument(workspaceId: string, name: string): Promise<DocumentResponse> {

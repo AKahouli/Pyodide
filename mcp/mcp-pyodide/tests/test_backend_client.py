@@ -217,3 +217,30 @@ async def test_rejects_oversized_response():
         restore(tokens, set_tokens)
 
     assert error.value.code == "PYODIDE_RESULT_TOO_LARGE"
+
+
+@pytest.mark.asyncio
+async def test_publish_output_relays_name_and_returns_receipt():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json={
+            "ceph_path": "65f000000000000000000001/system_conversation-1/rapport.pdf",
+            "filename": "rapport.pdf",
+            "mime_type": "application/pdf",
+            "size": 1234,
+        })
+
+    tokens, set_tokens = apply(actor())
+    try:
+        client = YellowStormPyodideClient("http://backend", transport=httpx.MockTransport(handler))
+        receipt = await client.publish_output("rapport.pdf")
+        await client.close()
+    finally:
+        restore(tokens, set_tokens)
+
+    assert seen["path"] == "/api/v1/internal/pyodide-runtime/publish-output"
+    assert seen["body"] == '{"name":"rapport.pdf"}'
+    assert receipt["ceph_path"].endswith("/system_conversation-1/rapport.pdf")

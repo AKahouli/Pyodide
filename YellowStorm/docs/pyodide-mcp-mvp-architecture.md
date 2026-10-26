@@ -138,7 +138,13 @@ execute_python(
 ) -> PyodideExecutionResultV1
 ```
 
-Le même serveur expose aussi les **outils sandbox Manus** (package `sandbox_mcp` vendu depuis
+Le même serveur expose aussi :
+
+- **`send_file_to_user_simple(name)`** — publie un output Pyodide déjà persisté (`outputs`) vers le stockage
+  de la conversation (copie Ceph serveur-side vers `{owner}/system_<conversationId}/`) ; l'ADK l'enregistre
+  (`assets/register`, epoch présenté sans cycle sandbox) et rend la **carte Voir/Télécharger**. Appairé à
+  `execute_python`, sans sandbox ni worker vivant (le document workspace fait foi).
+- Les **outils sandbox Manus** (package `sandbox_mcp` vendu depuis
 mcp-manus `develop`) : `sandbox_create/info/destroy`, `shell_exec`, `file_read/write/list/find/delete`,
 `file_upload_base64`, `file_download_base64`, `send_file_to_user`. Routage agent-level : Pyodide d'abord
 (calculs, données, petits documents) ; sandbox seulement quand Pyodide ne suffit pas (shell, binaires

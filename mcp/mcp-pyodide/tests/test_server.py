@@ -8,16 +8,25 @@ from server import mcp
 
 
 class BackendStub:
-    def __init__(self, response=None, error=None):
+    def __init__(self, response=None, error=None, publication=None, publication_error=None):
         self._response = response
         self._error = error
+        self._publication = publication
+        self._publication_error = publication_error
         self.payloads = []
+        self.published = []
 
     async def execute(self, payload):
         self.payloads.append(payload)
         if self._error is not None:
             raise self._error
         return self._response
+
+    async def publish_output(self, name):
+        self.published.append(name)
+        if self._publication_error is not None:
+            raise self._publication_error
+        return self._publication
 
 
 def result_dict(response):
@@ -41,6 +50,7 @@ async def test_registers_execute_python_and_sandbox_tools():
         tools = await client.list_tools()
     assert {tool.name for tool in tools} == {
         "execute_python",
+        "send_file_to_user_simple",
         "sandbox_create", "sandbox_info", "sandbox_destroy",
         "shell_exec", "file_read", "file_write", "file_list", "file_delete", "file_find",
         "send_file_to_user", "file_upload_base64", "file_download_base64",
@@ -69,6 +79,53 @@ async def test_execute_python_relays_the_bounded_payload(monkeypatch):
 
     assert stub.payloads == [{"code": "print(1 + 1)", "input": {"a": 1}, "timeoutMs": 30000}]
     assert result_dict(response)["stdout"] == "2\n"
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_user_simple_publishes_by_exact_name(monkeypatch):
+    receipt = {
+        "ceph_path": "user-1/system_conversation-1/rapport.pdf",
+        "filename": "rapport.pdf",
+        "mime_type": "application/pdf",
+        "size": 1234,
+    }
+    stub = BackendStub(publication=receipt)
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("send_file_to_user_simple", {"name": "rapport.pdf"})
+    finally:
+        actor_context.reset(token)
+
+    assert stub.published == ["rapport.pdf"]
+    assert result_dict(response) == receipt
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_user_simple_rejects_paths(monkeypatch):
+    stub = BackendStub()
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("send_file_to_user_simple", {"name": "../escape.pdf"})
+    finally:
+        actor_context.reset(token)
+
+    assert result_dict(response)["error"]["code"] == "PYODIDE_EXECUTION_ERROR"
+    assert stub.published == []
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_user_simple_requires_a_trusted_actor(monkeypatch):
+    stub = BackendStub()
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    async with Client(mcp) as client:
+        response = await client.call_tool("send_file_to_user_simple", {"name": "rapport.pdf"})
+
+    assert result_dict(response)["error"]["code"] == "PYODIDE_EXECUTION_ERROR"
+    assert stub.published == []
 
 
 @pytest.mark.asyncio

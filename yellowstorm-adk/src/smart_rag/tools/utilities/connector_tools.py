@@ -1464,7 +1464,12 @@ def create_connector_tools(
                     try:
                         revocation = await get_asset_revocation(context, _session_id)
                         sandbox_epoch = revocation["epoch"]
-                        if revocation["cleanupPending"] or (sandbox_epoch is not None and _sandbox_epochs.get(invocation_id) != sandbox_epoch):
+                        if _action_key == "send_file_to_user_simple":
+                            # Browser-runtime publication: no sandbox lifecycle to reset —
+                            # present the just-fetched epoch as the freshness proof.
+                            if revocation["cleanupPending"]:
+                                return {"error": "Conversation files changed. Finish pending deletion cleanup before continuing."}
+                        elif revocation["cleanupPending"] or (sandbox_epoch is not None and _sandbox_epochs.get(invocation_id) != sandbox_epoch):
                             _image_mount_guards.pop(invocation_id, None)
                             _sandbox_epochs.pop(invocation_id, None)
                             if "sandbox_destroy" not in _available_actions:
@@ -1552,7 +1557,7 @@ def create_connector_tools(
                     registered_response.pop("_conversation_output_receipt", None)
                 if ((_connector_slug in {"code-interpreter", "code-interpreort-aga", "code-interpretor-aga"}
                         or _connector_slug.startswith("pyodide"))
-                        and _action_key == "send_file_to_user"):
+                        and _action_key in {"send_file_to_user", "send_file_to_user_simple"}):
                     # A coordinator copy receipt alone is not a registered conversation file.
                     # Verify bytes/quota through the platform before emitting any ready artifact.
                     try:

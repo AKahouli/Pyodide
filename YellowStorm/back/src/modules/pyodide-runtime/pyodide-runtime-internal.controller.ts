@@ -7,6 +7,7 @@ import { actingUserIdFrom, DelegatedActorGuard } from '@modules/auth/guards/dele
 import { McpRouteAudience } from '@modules/auth/guards/mcp-route-audience';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
 import { ExecutePyodideDto } from './dto/execute-pyodide.dto';
+import { PublishPyodideOutputDto } from './dto/publish-output.dto';
 import { PyodideFileError, PyodideFileResolver } from './pyodide-file.resolver';
 import { PyodideRuntimeDispatcher } from './pyodide-runtime.dispatcher';
 import { PyodideErrorCode, PyodideExecutionResult } from './pyodide-runtime.types';
@@ -89,8 +90,39 @@ export class PyodideRuntimeInternalController {
     return result;
   }
 
+  @Post('publish-output')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Publish a persisted Pyodide output file to the conversation storage' })
+  @ApiHeader({ name: 'X-YellowStorm-Mcp-Assertion', required: true })
+  @ApiHeader({ name: 'X-YellowStorm-Conversation-Id', required: true })
+  async publishOutput(
+    @Req() request: ActorRequest,
+    @Body() dto: PublishPyodideOutputDto,
+  ): Promise<{ ceph_path: string; filename: string; mime_type: string; size: number } | { error: { code: string; message: string } }> {
+    const userId = actingUserIdFrom(request.headers);
+    const workspaceId = this.workspaceIdFrom(request.headers);
+    const conversationId = this.conversationIdFrom(request.headers);
+    if (!conversationId) {
+      return { error: { code: 'PYODIDE_EXECUTION_ERROR', message: 'A trusted conversation context is required to publish files.' } };
+    }
+    try {
+      return await this.resolver.publishOutput(userId, workspaceId ?? '', conversationId, dto.name);
+    } catch (error) {
+      if (error instanceof PyodideFileError) {
+        return { error: { code: error.code, message: error.message } };
+      }
+      throw error;
+    }
+  }
+
   private workspaceIdFrom(headers: Record<string, string | string[] | undefined>): string | undefined {
     const raw = headers[WORKSPACE_HEADER];
+    const value = (Array.isArray(raw) ? raw[0] : raw)?.trim().toLowerCase();
+    return value && isObjectId(value) ? value : undefined;
+  }
+
+  private conversationIdFrom(headers: Record<string, string | string[] | undefined>): string | undefined {
+    const raw = headers['x-yellowstorm-conversation-id'];
     const value = (Array.isArray(raw) ? raw[0] : raw)?.trim().toLowerCase();
     return value && isObjectId(value) ? value : undefined;
   }

@@ -28,6 +28,9 @@ user's Yellowmind browser to be connected.
 Write deliverables under /workspace/output/<name> and declare their exact names in the ``outputs`` argument:
 YellowStorm persists them and the user gets a download link in the conversation.
 
+To also render a View/Download artifact card in the conversation, call send_file_to_user_simple(name) right after
+execute_python for each declared output — it publishes the already-persisted file, no sandbox involved.
+
 Return JSON-compatible values when possible.
 
 You also have a Firecracker microVM sandbox (Manus) for work Pyodide cannot do: shell commands, native
@@ -170,6 +173,30 @@ async def execute_python(
 
     try:
         return await backend().execute(payload)
+    except PyodideBackendError as exc:
+        return error_result(exc.code, str(exc))
+
+
+@mcp.tool()
+async def send_file_to_user_simple(name: str) -> dict[str, Any]:
+    """Send a file produced by execute_python to the user as a conversation artifact (View/Download card).
+
+    Publishes the workspace-persisted output declared in ``outputs`` — no sandbox involved. Call it right
+    after execute_python, once per deliverable, with the exact file name.
+    """
+    try:
+        require_actor_context()
+    except RuntimeError:
+        return error_result(
+            "PYODIDE_EXECUTION_ERROR",
+            "The connector did not provide a trusted acting user.",
+        )
+    try:
+        file_name = _safe_file_name(name)
+    except ValueError as exc:
+        return error_result("PYODIDE_EXECUTION_ERROR", str(exc))
+    try:
+        return await backend().publish_output(file_name)
     except PyodideBackendError as exc:
         return error_result(exc.code, str(exc))
 

@@ -1,11 +1,12 @@
 import { ConfigService } from '@nestjs/config';
-import { PyodideFileResolver } from './pyodide-file.resolver';
+import { PyodideFileError, PyodideFileResolver } from './pyodide-file.resolver';
 import { PyodideRuntimeInternalController } from './pyodide-runtime-internal.controller';
 import { PyodideRuntimeDispatcher } from './pyodide-runtime.dispatcher';
 import { PyodideErrorCode, PyodideExecutionResult } from './pyodide-runtime.types';
 
 const USER_ID = '65f000000000000000000001';
 const WORKSPACE_ID = '65f0000000000000000000aa';
+const CONVERSATION_ID = '65f0000000000000000000cc';
 const request = { headers: { 'x-yellowstorm-user-id': USER_ID } };
 const fileRequest = { headers: { 'x-yellowstorm-user-id': USER_ID, 'x-yellowstorm-workspace-id': WORKSPACE_ID } };
 
@@ -17,6 +18,7 @@ function resolverStub(): PyodideFileResolver {
   return {
     resolveInputs: jest.fn().mockResolvedValue([]),
     persistOutputs: jest.fn().mockResolvedValue([]),
+    publishOutput: jest.fn(),
   } as unknown as PyodideFileResolver;
 }
 
@@ -133,6 +135,71 @@ describe('PyodideRuntimeInternalController', () => {
 
     expect(response.error?.code).toBe('PYODIDE_EXECUTION_ERROR');
     expect(dispatcher.execute).not.toHaveBeenCalled();
+  });
+
+  describe('publish-output', () => {
+    const publishRequest = {
+      headers: {
+        'x-yellowstorm-user-id': USER_ID,
+        'x-yellowstorm-workspace-id': WORKSPACE_ID,
+        'x-yellowstorm-conversation-id': CONVERSATION_ID,
+      },
+    };
+
+    it('returns the ceph receipt for a persisted output', async () => {
+      const resolver = resolverStub();
+      const receipt = {
+        ceph_path: `${USER_ID}/system_${CONVERSATION_ID}/rapport.pdf`,
+        filename: 'rapport.pdf',
+        mime_type: 'application/pdf',
+        size: 123,
+      };
+      (resolver.publishOutput as jest.Mock).mockResolvedValue(receipt);
+      const controller = new PyodideRuntimeInternalController(
+        {} as unknown as PyodideRuntimeDispatcher,
+        resolver,
+        configWith(true),
+      );
+
+      const response = await controller.publishOutput(publishRequest, { name: 'rapport.pdf' });
+
+      expect(response).toEqual(receipt);
+      expect(resolver.publishOutput).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, CONVERSATION_ID, 'rapport.pdf');
+    });
+
+    it('surfaces resolver errors as clean error payloads', async () => {
+      const resolver = resolverStub();
+      (resolver.publishOutput as jest.Mock).mockRejectedValue(
+        new PyodideFileError('PYODIDE_EXECUTION_ERROR', 'File not found in the workspace: nope.pdf'),
+      );
+      const controller = new PyodideRuntimeInternalController(
+        {} as unknown as PyodideRuntimeDispatcher,
+        resolver,
+        configWith(true),
+      );
+
+      const response = await controller.publishOutput(publishRequest, { name: 'nope.pdf' });
+
+      expect(response).toEqual({
+        error: { code: 'PYODIDE_EXECUTION_ERROR', message: 'File not found in the workspace: nope.pdf' },
+      });
+    });
+
+    it('rejects publication without a conversation context', async () => {
+      const resolver = resolverStub();
+      const controller = new PyodideRuntimeInternalController(
+        {} as unknown as PyodideRuntimeDispatcher,
+        resolver,
+        configWith(true),
+      );
+
+      const response = await controller.publishOutput(fileRequest, { name: 'a.pdf' });
+
+      expect(response).toEqual({
+        error: { code: 'PYODIDE_EXECUTION_ERROR', message: expect.stringContaining('conversation') },
+      });
+      expect(resolver.publishOutput).not.toHaveBeenCalled();
+    });
   });
 
 });

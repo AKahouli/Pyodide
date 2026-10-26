@@ -79,6 +79,15 @@ names), never a storage path or URL. Inputs are mounted read-only under `/worksp
 `/workspace/output` and named in `outputs` are persisted by YellowStorm and returned as bounded `artifacts`
 references (no file content through MCP). Sizes/limits remain those of the MVP.
 
+```
+send_file_to_user_simple(name: str) -> { ceph_path, filename, mime_type, size }
+```
+
+Publishes one persisted `execute_python` output to the conversation storage (server-side Ceph copy,
+`{owner}/system_<conversationId>/`), which the ADK registers as a **View/Download artifact card** — the
+browser-runtime counterpart of the sandbox `send_file_to_user`, no sandbox involved. Pair it with
+`execute_python`: declare the file in `outputs`, then call it once per deliverable.
+
 ### Manus sandbox (Firecracker microVM)
 
 Contract paths inside the VM: READ `/mnt/workspace/<workspace>/` (user inputs, read-only) and

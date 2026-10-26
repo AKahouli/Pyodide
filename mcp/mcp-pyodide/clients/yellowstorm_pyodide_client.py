@@ -36,6 +36,13 @@ class YellowStormPyodideClient:
             "Pyodide execution timed out",
         )
 
+    async def publish_output(self, name: str) -> Any:
+        return await self._post_relay(
+            "/api/v1/internal/pyodide-runtime/publish-output",
+            {"name": name},
+            "Pyodide output publication timed out",
+        )
+
     async def _post_relay(self, path: str, payload: dict[str, Any], timeout_message: str) -> Any:
         try:
             response = await self._client.post(
